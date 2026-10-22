@@ -6746,6 +6746,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelsEdit => 'Edit…';
 
   @override
+  String get modelsDuplicate => 'Duplicate…';
+
+  @override
   String get modelsRemove => 'Remove';
 
   @override
@@ -6885,6 +6888,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsHeadersPlaceholder => 'x-session-id: my-session';
+
+  @override
+  String get modelsDuplicateProvider => 'Duplicate Upstream';
+
+  @override
+  String get modelsDuplicateProviderDescription =>
+      'A copy of this upstream, with its models, settings and key.';
+
+  @override
+  String modelsDuplicateName(String name) {
+    return '$name Copy';
+  }
 
   @override
   String get modelsDelete => 'Delete Upstream';
