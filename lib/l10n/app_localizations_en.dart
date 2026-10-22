@@ -7859,6 +7859,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String remoteStatusTooltipResuming(String host) {
+    return 'The connection to $host is lost, and being made again: its terminals and Claude Code keep running there meanwhile. Click to reconnect now';
+  }
+
+  @override
   String get remoteReconnect => 'Reconnect';
 
   @override
