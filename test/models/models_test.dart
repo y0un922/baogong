@@ -846,7 +846,11 @@ void main() {
       );
       expect(launch.hasSecrets, isFalse);
       expect(launch.settings, {
-        'env': {'ANTHROPIC_BASE_URL': 'http://127.0.0.1:1', 'X': 'y'},
+        'env': {
+          'CLAUDE_CODE_EFFORT_LEVEL': '',
+          'ANTHROPIC_BASE_URL': 'http://127.0.0.1:1',
+          'X': 'y',
+        },
       });
       const keyed = ClaudeLaunch(
         cwd: '/p',
@@ -862,6 +866,28 @@ void main() {
           env: {'ANTHROPIC_AUTH_TOKEN': ''},
         ).hasSecrets,
         isFalse,
+      );
+    });
+
+    test('the user\'s CLAUDE_CODE_EFFORT_LEVEL is set empty, Claude\'s own '
+        'session or a provider\'s: else it holds every request to it', () {
+      for (final launch in const [
+        ClaudeLaunch(cwd: '/p', effort: 'low'),
+        ClaudeLaunch(cwd: '/p', effort: 'low', env: {'X': 'y'}),
+      ]) {
+        final arguments = launch.arguments;
+        final settings =
+            jsonDecode(arguments[arguments.indexOf('--settings') + 1]) as Map;
+        expect((settings['env'] as Map)['CLAUDE_CODE_EFFORT_LEVEL'], '');
+      }
+      // Not over the provider's own env, should it set one.
+      expect(
+        (const ClaudeLaunch(
+              cwd: '/p',
+              env: {'CLAUDE_CODE_EFFORT_LEVEL': 'high'},
+            ).settings['env']
+            as Map)['CLAUDE_CODE_EFFORT_LEVEL'],
+        'high',
       );
     });
   });
