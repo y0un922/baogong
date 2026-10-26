@@ -109,6 +109,7 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     WindowCommandIds.showChat => l10n.cmdShowChatWindow,
     'workbench.action.openSettings' => l10n.cmdOpenSettings,
     'workbench.action.openGlobalKeybindings' => l10n.cmdOpenKeyboardShortcuts,
+    'baocode.openLspSettings' => l10n.cmdOpenLspSettings,
     // The chat's (chatExtraCommands).
     ChatCommandIds.newChat => l10n.cmdChatNewAgent,
     ChatCommandIds.closePane => l10n.cmdChatClosePane,

@@ -1194,6 +1194,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdOpenKeyboardShortcuts => 'Open Keyboard Shortcuts';
 
   @override
+  String get cmdOpenLspSettings => 'Open Language Server Settings (JSON)';
+
+  @override
   String get cmdJumpToBracket => 'Go to Bracket';
 
   @override

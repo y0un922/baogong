@@ -66,6 +66,7 @@ import 'ide/search/text_search.dart' show ideSearchText;
 import 'ide/ide_workspace.dart';
 import 'ide/lsp/language_features.dart';
 import 'ide/lsp/lsp_protocol.dart';
+import 'ide/lsp/packs/lsp_settings_template.dart';
 import 'ide/terminal/links/terminal_links.dart';
 import 'ide/terminal/terminal_instance.dart';
 import 'ide/terminal/terminal_panel.dart' show terminalCommandsToSkipShell;
@@ -81,6 +82,7 @@ import 'l10n/l10n.dart';
 import 'notifications/attention_host.dart';
 import 'notifications/attention_service.dart';
 import 'notifications/attention_settings.dart';
+import 'platform/data_dir.dart' show DataDirectory;
 import 'platform/local_paths.dart'
     if (dart.library.io) 'platform/local_paths_io.dart';
 import 'platform/open_requests.dart';
@@ -1411,6 +1413,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       run: () => unawaited(openSettings(SettingsSection.keyboard)),
     ),
     IdeCommand(
+      id: openLspSettingsCommandId,
+      category: 'Preferences',
+      label: commandCatalog[openLspSettingsCommandId]!.title,
+      run: () => unawaited(_openLspSettings()),
+    ),
+    IdeCommand(
       id: checkForUpdatesCommandId,
       label: commandCatalog[checkForUpdatesCommandId]!.title,
       run: _checkForUpdates,
@@ -1996,6 +2004,14 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         await _ide?.openFile(path);
       }
     });
+  }
+
+  /// The user's `lsp.json`, in an editor: made first, with its examples,
+  /// where there is none (#304).
+  Future<void> _openLspSettings() async {
+    final path = DataDirectory.current.lspSettingsFile;
+    await ensureLspSettingsFile(path);
+    if (mounted) _openIdeFiles([path]);
   }
 
   Future<void> _pickIdeFiles() async {

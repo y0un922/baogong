@@ -376,6 +376,7 @@
   "cmdBackToChat": "返回聊天",
   "cmdOpenSettings": "打开设置",
   "cmdOpenKeyboardShortcuts": "打开键盘快捷方式",
+  "cmdOpenLspSettings": "打开语言服务器设置 (JSON)",
   "cmdJumpToBracket": "转到括号",
   "cmdUndo": "撤销",
   "cmdRedo": "重做",

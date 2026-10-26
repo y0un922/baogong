@@ -2354,6 +2354,12 @@ abstract class AppLocalizations {
   /// **'Open Keyboard Shortcuts'**
   String get cmdOpenKeyboardShortcuts;
 
+  /// No description provided for @cmdOpenLspSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Language Server Settings (JSON)'**
+  String get cmdOpenLspSettings;
+
   /// No description provided for @cmdJumpToBracket.
   ///
   /// In en, this message translates to:

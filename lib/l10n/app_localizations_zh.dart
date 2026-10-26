@@ -1159,6 +1159,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdOpenKeyboardShortcuts => '打开键盘快捷方式';
 
   @override
+  String get cmdOpenLspSettings => '打开语言服务器设置 (JSON)';
+
+  @override
   String get cmdJumpToBracket => '转到括号';
 
   @override

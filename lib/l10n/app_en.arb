@@ -494,6 +494,7 @@
   "cmdBackToChat": "Back to Chat",
   "cmdOpenSettings": "Open Settings",
   "cmdOpenKeyboardShortcuts": "Open Keyboard Shortcuts",
+  "cmdOpenLspSettings": "Open Language Server Settings (JSON)",
   "cmdJumpToBracket": "Go to Bracket",
   "cmdUndo": "Undo",
   "cmdRedo": "Redo",
