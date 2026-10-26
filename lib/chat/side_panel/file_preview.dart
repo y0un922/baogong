@@ -18,6 +18,7 @@ import '../../ide/ide_code_diff.dart';
 import '../../ide/ide_code_editor.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_image_preview.dart';
+import '../../ide/ide_pdf_preview.dart';
 import '../../ide/ide_status_bar.dart' show IdeLanguageNames;
 import '../../ide/language_mode.dart';
 import '../../ide/markdown/markdown_preview.dart';
@@ -179,8 +180,10 @@ class _FilePreviewState extends State<FilePreview> {
 
   FileOpenRequest get _request => widget.request;
 
-  /// An image shows as it is, its changes too: there is no text to compare.
-  bool get _image => ideIsImagePath(_request.path);
+  /// An image or a PDF shows as it is, its changes too: there is no text to
+  /// compare.
+  bool get _media => ideIsImagePath(_request.path) || _pdf;
+  bool get _pdf => ideIsPdfPath(_request.path);
   bool get _isMarkdown => !_request.diff && isMarkdownPath(_request.path);
 
   /// The file's own text shows, to edit: not its changes, nor the index's,
@@ -204,7 +207,7 @@ class _FilePreviewState extends State<FilePreview> {
   void _languageModesChanged() {
     if (!mounted) return;
     setState(() {});
-    if (_edit == null && !_image) unawaited(_read(++_load));
+    if (_edit == null && !_media) unawaited(_read(++_load));
   }
 
   void _attach(SidePanelFileEdit edit) {
@@ -238,7 +241,7 @@ class _FilePreviewState extends State<FilePreview> {
       _detach();
       if (widget.edit case final edit? when _editable) _attach(edit);
       _start();
-    } else if (oldWidget.reveal != widget.reveal && !_image) {
+    } else if (oldWidget.reveal != widget.reveal && !_media) {
       // Asked for again (the agent wrote it again, say): read anew, what
       // shows kept until then.
       unawaited(_read(++_load));
@@ -315,7 +318,7 @@ class _FilePreviewState extends State<FilePreview> {
     // The agent's change shows in the text.
     if (_request.agentChange && _isMarkdown) _source = true;
     _dropMarkdown();
-    if (_image) return;
+    if (_media) return;
     // Its tab's edit shows as it is while the file is read anew.
     if (_edit case final edit?) {
       _loaded = const _Text([]);
@@ -504,7 +507,7 @@ class _FilePreviewState extends State<FilePreview> {
               ),
             ),
           ),
-          if (!_image && widget.language)
+          if (!_media && widget.language)
             _TextButton(
               label: IdeLanguageNames.forPath(path),
               tooltip: l10n.languageModeChange,
@@ -546,7 +549,16 @@ class _FilePreviewState extends State<FilePreview> {
   }
 
   Widget _body(BuildContext context) {
-    if (_image) {
+    if (_pdf) {
+      return IdePdfPreview(
+        path: _request.path,
+        // A file of this machine's is read as its pages are rendered.
+        read: !_request.local && widget.files is IdeHostFiles
+            ? widget.readBytes
+            : null,
+      );
+    }
+    if (_media) {
       return IdeImagePreview(path: _request.path, read: widget.readBytes);
     }
     switch (_loaded) {

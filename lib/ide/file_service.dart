@@ -208,6 +208,9 @@ const ideImageExtensions = <String>{
 bool ideIsImagePath(String path) =>
     ideImageExtensions.contains(p.extension(path).toLowerCase());
 
+/// Whether [path] opens in the PDF preview.
+bool ideIsPdfPath(String path) => p.extension(path).toLowerCase() == '.pdf';
+
 /// [path]'s bytes through [files]: read here for a local project, on the
 /// host for a remote one; other services give their text.
 Future<Uint8List> readBytesThrough(IdeFileService files, String path) async {

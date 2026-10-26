@@ -535,7 +535,7 @@ class IdeWorkspace extends ChangeNotifier
       doc = IdeDocument._shared(path, model);
     } else if (FileViews.of(path) case final view?) {
       doc = IdeDocument.media(path, view: view.id);
-    } else if (ideIsImagePath(path)) {
+    } else if (ideIsImagePath(path) || ideIsPdfPath(path)) {
       doc = IdeDocument.media(path);
     } else {
       final read = _reads.putIfAbsent(path, () => files.read(path));
@@ -590,7 +590,7 @@ class IdeWorkspace extends ChangeNotifier
       final IdeDocument doc;
       if (FileViews.of(normal) case final view?) {
         doc = IdeDocument.media(normal, view: view.id);
-      } else if (ideIsImagePath(normal)) {
+      } else if (ideIsImagePath(normal) || ideIsPdfPath(normal)) {
         doc = IdeDocument.media(normal);
       } else if (_fileModel(normal) case final model?) {
         doc = IdeDocument._shared(normal, model);

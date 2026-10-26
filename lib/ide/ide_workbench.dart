@@ -58,7 +58,12 @@ import 'explorer_history.dart'
     show explorerRedoCommandId, explorerUndoCommandId;
 import 'file_views.dart';
 import 'file_service.dart'
-    show IdeFileListing, IdeHostFiles, localizedFileError, readFileBytes;
+    show
+        IdeFileListing,
+        IdeHostFiles,
+        ideIsPdfPath,
+        localizedFileError,
+        readFileBytes;
 import 'git/commit_message.dart';
 import 'git/git_change_editor.dart';
 import 'git/git_checkout.dart';
@@ -78,6 +83,7 @@ import 'ide_dialog.dart';
 import 'ide_editor.dart';
 import 'ide_editor_placeholder.dart';
 import 'ide_image_preview.dart';
+import 'ide_pdf_preview.dart';
 import 'markdown/markdown_paste.dart';
 import 'markdown/markdown_preview.dart';
 import 'ide_explorer.dart';
@@ -3987,6 +3993,20 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                             key: ValueKey(active),
                             child: FileViews.byId(active.view!)!
                                 .build(context, active.path),
+                          )
+                        : active.isMedia && ideIsPdfPath(active.path)
+                        ? IdePdfPreview(
+                            key: ValueKey(active),
+                            path: active.path,
+                            read: switch (widget.workspace.files) {
+                              final IdeHostFiles files => files.readBytes,
+                              _ => null,
+                            },
+                            onOpenInDefaultApp:
+                                _local && WindowControls.canOpenInDefaultApp
+                                ? () =>
+                                      unawaited(_openInDefaultApp(active.path))
+                                : null,
                           )
                         : active.isMedia
                         ? IdeImagePreview(

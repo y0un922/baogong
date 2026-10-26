@@ -68,6 +68,7 @@ dependencies:
   mermaid_core: 0.3.0
   mermaid_flutter: 0.3.0
   path: ^1.9.1
+  pdfrx: ^2.10.1
   pinenacl: ^0.6.0
   qr: ^4.0.0
   super_sliver_list: ^0.4.1

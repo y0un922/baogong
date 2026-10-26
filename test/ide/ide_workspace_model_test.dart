@@ -484,4 +484,15 @@ void main() {
     expect(workspace.active!.view, isNull);
     expect(files.reads, [first]);
   });
+
+  test('a PDF opens in its preview, its text not read', () async {
+    final pdf = p.join(root, 'paper.PDF');
+    final files = _FakeIdeFileService({pdf: '%PDF-1.7'});
+    final workspace = IdeWorkspace(root, files: files);
+    addTearDown(workspace.dispose);
+
+    await workspace.open(pdf);
+    expect(workspace.active!.isMedia, isTrue);
+    expect(files.reads, isEmpty);
+  });
 }

@@ -42,6 +42,7 @@ import 'ide/file_service.dart'
         byteSizeThrough,
         IdeHostFiles,
         ideIsImagePath,
+        ideIsPdfPath,
         readBytesThrough,
         readFileBytes;
 import 'ide/ide_agent_changes.dart';
@@ -3741,7 +3742,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     // Shown as a file, on this machine: read-only, its text read here.
     if (request.local) {
       final remote = RemoteLocation.isRemote(thread.project.path);
-      if (ideIsImagePath(request.path)) {
+      if (ideIsImagePath(request.path) || ideIsPdfPath(request.path)) {
         // The IDE of a remote project reads its host's files only.
         if (remote) return unawaited(openExternal(request.path));
         return _inIdeOf(thread, (ide) => ide.open(request.path));
