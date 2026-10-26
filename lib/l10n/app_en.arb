@@ -454,6 +454,7 @@
   },
   "cmdToggleSidebar": "Toggle Primary Side Bar Visibility",
   "cmdToggleChat": "Toggle Chat",
+  "cmdToggleFullScreen": "Toggle Full Screen",
   "cmdTogglePanel": "Toggle Panel Visibility",
   "cmdToggleTerminal": "Toggle Terminal",
   "cmdNewTerminal": "Create New Terminal",

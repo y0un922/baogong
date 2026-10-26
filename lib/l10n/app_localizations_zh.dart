@@ -1039,6 +1039,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdToggleChat => '切换聊天';
 
   @override
+  String get cmdToggleFullScreen => '切换全屏';
+
+  @override
   String get cmdTogglePanel => '切换面板可见性';
 
   @override

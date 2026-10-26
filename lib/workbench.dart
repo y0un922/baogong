@@ -1049,10 +1049,16 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   Map<String, VoidCallback> _windowCommands() {
     final windows = _windows;
     final window = widget.window;
+    final fullScreen = {
+      if (WindowControls.canFullScreen)
+        WindowCommandIds.toggleFullScreen: () =>
+            unawaited(WindowControls.toggleFullScreen(viewId: _viewId)),
+    };
     if (windows == null || window == null || !windows.started) {
-      return const {};
+      return fullScreen;
     }
     return {
+      ...fullScreen,
       WindowCommandIds.newWindow: () => unawaited(windows.newWindow()),
       WindowCommandIds.closeWindow: () => unawaited(
         windows.requestClose(

@@ -336,6 +336,7 @@
   "cmdOpenEditorAtIndex": "打开第 {index} 个编辑器",
   "cmdToggleSidebar": "切换主侧边栏可见性",
   "cmdToggleChat": "切换聊天",
+  "cmdToggleFullScreen": "切换全屏",
   "cmdTogglePanel": "切换面板可见性",
   "cmdToggleTerminal": "切换终端",
   "cmdNewTerminal": "新建终端",
