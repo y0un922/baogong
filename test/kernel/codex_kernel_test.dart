@@ -300,6 +300,7 @@ void main() {
       expect(turn['clientUserMessageId'], 't1');
       expect(turn['model'], 'gpt-6-sol');
       expect(turn['effort'], 'medium');
+      expect(turn['summary'], 'auto');
       expect(turn.containsKey('sandboxPolicy'), isFalse);
       expect(kernel.sessionId, _thread);
 

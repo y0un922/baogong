@@ -817,6 +817,9 @@ class CodexKernel
                 'input': _input(turn),
                 'model': ?_modelInUse,
                 'effort': ?_effortFor(_modelInUse),
+                // Its models think unsummarized by default, leaving a thought
+                // nothing to open to.
+                'summary': 'auto',
                 'approvalPolicy': _approvalPolicy,
                 if (_sandbox != _threadSandbox)
                   'sandboxPolicy': _sandboxPolicy(_sandbox),
