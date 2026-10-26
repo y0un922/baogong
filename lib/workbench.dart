@@ -4776,6 +4776,9 @@ class _SessionTerminalTasks implements TerminalTasks {
   void stop(KernelTask task) => session.stopTask(task);
 
   @override
+  void clear(Iterable<KernelTask> tasks) => session.clearTasks(tasks);
+
+  @override
   String get root => session.root ?? '';
 
   @override

@@ -1655,6 +1655,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidePanelAddToChat => '添加到对话';
 
   @override
+  String get termClearTask => '清除';
+
+  @override
+  String get termClearEndedTasks => '清除所有已结束的任务';
+
+  @override
   String get sidePanelBackgroundTasks => '后台任务';
 
   @override

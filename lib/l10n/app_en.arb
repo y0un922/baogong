@@ -775,6 +775,8 @@
   "@sidePanelAddToChat": {
     "description": "Puts the files of a row or tab of the side panel in the chat's composer."
   },
+  "termClearTask": "Clear",
+  "termClearEndedTasks": "Clear All Ended Tasks",
   "sidePanelBackgroundTasks": "Background Tasks",
   "@sidePanelBackgroundTasks": {
     "description": "The side panel's terminal page: the group of the agent's background commands in its list."

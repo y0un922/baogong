@@ -506,6 +506,8 @@
   "sidePanelTerminals": "终端",
   "sidePanelRevealInFiles": "在文件中显示",
   "sidePanelAddToChat": "添加到对话",
+  "termClearTask": "清除",
+  "termClearEndedTasks": "清除所有已结束的任务",
   "sidePanelBackgroundTasks": "后台任务",
   "sidePanelSelectFile": "选择一个文件以预览",
   "sidePanelSelectChange": "选择一个变更的文件以查看差异",

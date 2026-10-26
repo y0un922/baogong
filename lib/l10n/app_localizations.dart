@@ -3134,6 +3134,18 @@ abstract class AppLocalizations {
   /// **'Add to Chat'**
   String get sidePanelAddToChat;
 
+  /// No description provided for @termClearTask.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get termClearTask;
+
+  /// No description provided for @termClearEndedTasks.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear All Ended Tasks'**
+  String get termClearEndedTasks;
+
   /// The side panel's terminal page: the group of the agent's background commands in its list.
   ///
   /// In en, this message translates to:

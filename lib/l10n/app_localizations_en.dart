@@ -1696,6 +1696,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidePanelAddToChat => 'Add to Chat';
 
   @override
+  String get termClearTask => 'Clear';
+
+  @override
+  String get termClearEndedTasks => 'Clear All Ended Tasks';
+
+  @override
   String get sidePanelBackgroundTasks => 'Background Tasks';
 
   @override
