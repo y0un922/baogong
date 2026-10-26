@@ -1483,6 +1483,64 @@ void main() {
     expect(workspace.isHidden(workspace.selected.project), isFalse);
   });
 
+  testWidgets('pinned projects stay on top, dragged among themselves; kept '
+      'between runs', (tester) async {
+    final store = MemoryPreferenceStore();
+    final catalog = KeptCatalog([
+      kept('a1', '/tmp/a', 1),
+      kept('b1', '/tmp/b', 2),
+      kept('c1', '/tmp/c', 3),
+    ]);
+    var workspace = await pumpKept(tester, catalog, preferences: store);
+    List<String> order() => [
+      for (final project in workspace.sidebarProjectsHere) project.name,
+    ];
+    // The headers' pins, not the menu's.
+    final pin = inSidebar(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Icon &&
+            widget.icon == Icons.push_pin &&
+            widget.size == 11,
+      ),
+    );
+    expect(pin, findsNothing);
+
+    await pickFromMenu(tester, 'a', 'Pin');
+    expect(order().first, 'a');
+    expect(top(tester, 'a'), lessThan(top(tester, 'b')));
+    expect(top(tester, 'a'), lessThan(top(tester, 'c')));
+    expect(pin, findsOneWidget);
+
+    // Not above the pinned one, nor it below the others.
+    await mouseDrag(
+      tester,
+      tester.getCenter(inSidebar(find.text('c'))),
+      () => tester.getTopLeft(inSidebar(find.text('a'))) + const Offset(20, 2),
+    );
+    expect(order().first, 'a');
+    await mouseDrag(
+      tester,
+      tester.getCenter(inSidebar(find.text('a'))),
+      () => tester.getCenter(inSidebar(find.text('Chat c1'))),
+    );
+    expect(order().first, 'a');
+
+    // The last pinned on top of those pinned.
+    await pickFromMenu(tester, 'b', 'Pin');
+    expect(order().take(2), ['b', 'a']);
+    expect(pin, findsNWidgets(2));
+
+    // The next run.
+    await tester.pumpWidget(const SizedBox());
+    workspace = await pumpKept(tester, catalog, preferences: store);
+    expect(order(), ['b', 'a', 'c']);
+
+    await pickFromMenu(tester, 'b', 'Unpin');
+    expect(order(), ['a', 'b', 'c']);
+    expect(pin, findsOneWidget);
+  });
+
   testWidgets('agents and projects keep the order they are dragged to', (
     tester,
   ) async {

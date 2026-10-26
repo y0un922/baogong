@@ -1413,6 +1413,7 @@ class _SidebarState extends State<Sidebar>
           ? null
           : _workspace.workspaceOf(project)?.folders,
       dragged: project != null && identical(project, _draggedProject),
+      pinned: project != null && _workspace.isPinnedProject(project),
       icon: project == null
           ? null
           : _Slot(
@@ -1516,6 +1517,7 @@ class _SidebarState extends State<Sidebar>
     final l10n = context.l10n;
     final editor = _workspace.preferredEditor;
     final multi = _workspace.workspaceOf(project);
+    final pinned = _workspace.isPinnedProject(project);
     return [
       SidebarMenuItem(
         l10n.sidebarNewAgentHere,
@@ -1542,6 +1544,11 @@ class _SidebarState extends State<Sidebar>
           icon: editor.icon,
           onSelected: () => _openInEditor(project, editor),
         ),
+      SidebarMenuItem(
+        pinned ? l10n.sidebarUnpin : l10n.sidebarPin,
+        icon: pinned ? Icons.push_pin : Icons.push_pin_outlined,
+        onSelected: () => _workspace.setPinnedProject(project, !pinned),
+      ),
       SidebarMenuItem(
         l10n.sidebarChangeIcon,
         icon: Icons.emoji_emotions_outlined,
@@ -1633,6 +1640,11 @@ class _SidebarState extends State<Sidebar>
         break;
       }
     }
+    // Pinned ones stay on top: the dragged one moves among its kind.
+    final pinned = projects.where(_workspace.isPinnedProject).length;
+    at = _workspace.isPinnedProject(_draggedProject!)
+        ? at.clamp(0, pinned)
+        : at.clamp(pinned, projects.length);
     final from = projects.indexOf(_draggedProject!);
     final spot = at == from || at == from + 1 ? null : at;
     if (spot != _projectSpot) setState(() => _projectSpot = spot);
@@ -1644,8 +1656,7 @@ class _SidebarState extends State<Sidebar>
     final (project, at) = (_draggedProject, _projectSpot);
     setState(() => _draggedProject = _projectSpot = null);
     if (project == null || at == null) return;
-    final from = projects.indexOf(project);
-    _workspace.moveProject(project, at > from ? at - 1 : at);
+    _workspace.moveProject(project, before: projects.elementAtOrNull(at));
   }
 
   // --- Dragging agents within the list ---------------------------------------
@@ -2173,6 +2184,7 @@ class _GroupHeader extends StatelessWidget {
     this.onCreate,
     this.menu,
     this.dragged = false,
+    this.pinned = false,
     this.icon,
     this.folders,
   });
@@ -2193,6 +2205,9 @@ class _GroupHeader extends StatelessWidget {
 
   /// Being dragged to another place among the projects.
   final bool dragged;
+
+  /// The project is pinned on top of the others: a pin after its name.
+  final bool pinned;
 
   /// The project's icon, before its name.
   final Widget? icon;
@@ -2256,6 +2271,14 @@ class _GroupHeader extends StatelessWidget {
                   child: Row(
                     children: [
                       Flexible(child: _label(project)),
+                      if (pinned) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.push_pin,
+                          size: 11,
+                          color: AppColors.textFaint,
+                        ),
+                      ],
                       if (_hiddenStatus(context) case final status?) ...[
                         const SizedBox(width: 6),
                         status,
