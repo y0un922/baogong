@@ -12,7 +12,7 @@ class FakeGit {
   /// Whether [root] is in a repository (`rev-parse --show-toplevel`).
   bool isRepository = true;
 
-  /// `git status -z --porcelain=v1 --branch` output.
+  /// `git status -z --porcelain --branch` output.
   String status = '## main\x00';
 
   /// `git log` output ([ideGitLogFormat] records).
@@ -182,7 +182,8 @@ String gitRefRecord(
   '',
   author,
   '',
-  '$time',
+  // `%(committerdate:raw)`.
+  '$time +0000',
   '',
   subject,
   '',

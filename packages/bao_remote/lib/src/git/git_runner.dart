@@ -9,6 +9,8 @@ import '../files/ide_file.dart';
 import '../files/recursive_watch.dart';
 import 'git_types.dart';
 
+// `GIT_OPTIONAL_LOCKS=0` rather than `--no-optional-locks`: the same in Git
+// 2.15+, and ignored by older ones, which fail on the option (#311).
 const _gitEnvironment = {
   'GIT_TERMINAL_PROMPT': '0',
   'GIT_EDITOR': 'true',
@@ -16,7 +18,6 @@ const _gitEnvironment = {
 };
 
 List<String> _gitArguments(List<String> arguments) => [
-  '--no-optional-locks',
   '-c',
   'core.fsmonitor=false',
   ...arguments,

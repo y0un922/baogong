@@ -688,11 +688,13 @@ class IdeGitRef {
 }
 
 /// The `git for-each-ref` format [parseGitRefs] reads (upstream
-/// `REFS_WITH_DETAILS_FORMAT` and the upstream's tracking).
+/// `REFS_WITH_DETAILS_FORMAT` and the upstream's tracking). The dates are
+/// `raw` (`<seconds> <zone>`), not upstream's `unix`, which Gits before 2.9
+/// do not know (#311).
 const ideGitRefsFormat =
     '%(refname)%00%(objectname)%00%(*objectname)%00%(parent)%00%(*parent)'
-    '%00%(authorname)%00%(*authorname)%00%(committerdate:unix)'
-    '%00%(*committerdate:unix)%00%(subject)%00%(*subject)%00%(upstream:track)';
+    '%00%(authorname)%00%(*authorname)%00%(committerdate:raw)'
+    '%00%(*committerdate:raw)%00%(subject)%00%(*subject)%00%(upstream:track)';
 
 /// Parses `git for-each-ref --format=<ideGitRefsFormat>` (upstream
 /// `parseRefs`): the local branches, remote branches and tags, an annotated
@@ -731,7 +733,7 @@ List<IdeGitRef> parseGitRefs(String output) {
             subject: subject,
             author: author,
             date: DateTime.fromMillisecondsSinceEpoch(
-              (int.tryParse(date) ?? 0) * 1000,
+              (int.tryParse(date.split(' ').first) ?? 0) * 1000,
             ),
           )
         : null;

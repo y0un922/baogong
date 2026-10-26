@@ -196,27 +196,51 @@ class IdeGitService {
 
   /// The status, or null outside a repository: at most [statusLimit]
   /// records, [IdeGitState.didHitLimit] when there were more.
+  ///
+  /// Gits before 2.16 have no `--ignored=matching`, and their plain
+  /// `--ignored` lists each file of an ignored folder (`node_modules`): the
+  /// ignored paths are listed apart, folders whole, as `!!` records (#311).
   Future<IdeGitState?> status() async {
     final top = await repositoryRoot();
     if (top == null) return null;
+    final version = await _gitVersion();
+    final matching = version == null || _atLeast(version, 2, 16);
     final output = _check(
       await _git(
         [
           'status',
           '-z',
-          '--porcelain=v1',
+          // v1, spelled as Gits before 2.11 know it.
+          '--porcelain',
           '--branch',
           '--untracked-files=all',
-          '--ignored=matching',
+          if (matching) '--ignored=matching',
         ],
         // And the branch's.
         limit: statusLimit + 1,
       ),
       'Cannot read the Git status.',
     );
+    var records = output.stdout;
+    if (!matching && !output.truncated) {
+      final ignored = await _git([
+        'ls-files',
+        '-z',
+        '--others',
+        '--ignored',
+        '--exclude-standard',
+        '--directory',
+      ], limit: statusLimit);
+      if (ignored.exitCode == 0) {
+        records += [
+          for (final path in ignored.stdout.split('\x00'))
+            if (path.isNotEmpty) '!! $path\x00',
+        ].join();
+      }
+    }
     return parseGitStatus(
       top,
-      output.stdout,
+      records,
       truncated: output.truncated,
       pathContext: pathContext,
     );

@@ -285,7 +285,7 @@ void main() {
       for (final name in ['a', 'b', 'c']) {
         File(at('$name.txt')).writeAsStringSync(name);
       }
-      const status = ['status', '-z', '--porcelain=v1'];
+      const status = ['status', '-z', '--porcelain'];
       final cut = await client().git(status, cwd: root, limit: 2);
       expect(cut.truncated, isTrue);
       expect(cut.stdout, '?? a.txt\x00?? b.txt\x00');
