@@ -1794,6 +1794,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidebarUnread => '未读';
 
   @override
+  String sidebarHoverModel(String model) {
+    return '模型：$model';
+  }
+
+  @override
   String get sidebarDone => '已完成';
 
   @override

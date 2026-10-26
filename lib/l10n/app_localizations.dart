@@ -3386,6 +3386,12 @@ abstract class AppLocalizations {
   /// **'Unread'**
   String get sidebarUnread;
 
+  /// A conversation's hover in the sidebar: the model it runs on.
+  ///
+  /// In en, this message translates to:
+  /// **'Model: {model}'**
+  String sidebarHoverModel(String model);
+
   /// No description provided for @sidebarDone.
   ///
   /// In en, this message translates to:

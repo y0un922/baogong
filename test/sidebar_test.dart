@@ -1376,6 +1376,28 @@ void main() {
     expect(find.text('/tmp/b'), findsOneWidget);
   });
 
+  testWidgets('an agent\'s hover says the model it runs on (#245)', (
+    tester,
+  ) async {
+    final workspace = await pumpKept(
+      tester,
+      KeptCatalog([kept('a1', '/tmp/a', 1), kept('b1', '/tmp/b', 2)]),
+    );
+    final thread = workspace.threads.firstWhere((t) => t.title == 'Chat b1');
+    final models = thread.session.models!;
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(inSidebar(find.text('Chat b1'))));
+    await tester.pump(const Duration(seconds: 2));
+    expect(
+      find.text(
+        'Model: ${[?models.selected.group?.label, models.selected.label].join(' · ')}',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('a project header has a menu of what can be done there', (
     tester,
   ) async {

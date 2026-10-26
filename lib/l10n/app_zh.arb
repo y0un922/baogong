@@ -548,6 +548,7 @@
   "sidebarNeedsInput": "等待输入",
   "sidebarRunning": "运行中",
   "sidebarUnread": "未读",
+  "sidebarHoverModel": "模型：{model}",
   "sidebarDone": "已完成",
   "sidebarArchived": "已归档",
   "sidebarOpenFolder": "打开文件夹…",

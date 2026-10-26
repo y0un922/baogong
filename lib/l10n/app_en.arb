@@ -917,6 +917,13 @@
   "sidebarNeedsInput": "Needs input",
   "sidebarRunning": "Running",
   "sidebarUnread": "Unread",
+  "sidebarHoverModel": "Model: {model}",
+  "@sidebarHoverModel": {
+    "description": "A conversation's hover in the sidebar: the model it runs on.",
+    "placeholders": {
+      "model": {"type": "String"}
+    }
+  },
   "sidebarDone": "Done",
   "sidebarArchived": "Archived",
   "sidebarOpenFolder": "Open folder…",

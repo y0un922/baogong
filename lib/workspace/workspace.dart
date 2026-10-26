@@ -1080,6 +1080,11 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Each agent's choices, by session: those it opens with again.
   final Map<String, Map<String, String>> _agentSettings = {};
 
+  /// [thread]'s choice of [kind] as kept for when it opens again (the
+  /// model it runs on, say); null when none is.
+  String? keptChoice(AgentThread thread, KernelChoiceKind kind) =>
+      _agentSettings[thread.id]?[kind.name];
+
   /// Agents' choices kept, the most recent ones.
   static const _keptAgents = 500;
 

@@ -20,15 +20,19 @@ import '../ide/ide_button.dart' show IdeButtonColors;
 import '../ide/ide_commands.dart' show ideUsesMacKeys;
 import '../ide/ide_hover.dart';
 import '../ide/ide_list.dart';
-import '../l10n/l10n.dart';
+import '../ide/ide_spinning.dart';
+import '../kernel/agent_kernel.dart' show KernelChoiceKind;
 import '../keybindings/chat_keybindings.dart';
-import '../keybindings/keybinding_service.dart';
 import '../keybindings/default_keybindings.dart' show openSettingsCommandId;
+import '../keybindings/keybinding_service.dart';
+import '../l10n/l10n.dart';
+import '../models/model_provider.dart' show parseModelRef;
+import '../models/model_providers.dart';
 import '../remote/remote_location.dart';
 import '../remote/remote_status.dart' show sshErrorText;
 import '../remote/ssh_host.dart' show SshHost, SshHostState, SshHosts;
-import '../theme/codicons.dart';
 import '../theme/app_theme.dart';
+import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import '../update/update_service.dart';
 import '../workspace/chat_drag.dart';
@@ -1447,9 +1451,30 @@ class _SidebarState extends State<Sidebar>
         null => _buildThreadRow(thread, group),
       };
 
+  /// The model [thread] runs on, by its upstream and name: its session's,
+  /// open, else the one it opens with again (#245).
+  String? _modelOf(AgentThread thread) {
+    if (thread.isOpen) {
+      if (thread.session.models?.selected case final model?) {
+        return [?model.group?.label, model.label].join(' · ');
+      }
+    }
+    final kept = _workspace.keptChoice(thread, KernelChoiceKind.model);
+    if (parseModelRef(kept) case (:final provider, :final model)) {
+      final upstream = ModelProviders.current.provider(provider);
+      final name = upstream?.models
+          .where((option) => option.id == model)
+          .firstOrNull
+          ?.displayName;
+      return [?upstream?.name, name ?? model].join(' · ');
+    }
+    return kept;
+  }
+
   Widget _buildThreadRow(AgentThread thread, _Group group) {
     return _ThreadRow(
       thread: thread,
+      model: () => _modelOf(thread),
       height: _rowHeight,
       stashes: switch ((widget.stashes, thread.id)) {
         (final stashes?, final session?) => stashes.of(session),
@@ -2768,6 +2793,7 @@ class _MoreRow extends StatelessWidget {
 class _ThreadRow extends StatelessWidget {
   const _ThreadRow({
     required this.thread,
+    required this.model,
     required this.height,
     this.stashes = const [],
     this.onOpenStash,
@@ -2797,6 +2823,9 @@ class _ThreadRow extends StatelessWidget {
   });
 
   final AgentThread thread;
+
+  /// The model it runs on, as its hover shows it; none when unknown.
+  final String? Function() model;
   final double height;
 
   /// The stashes it carries out: a tag on it, opened by [onOpenStash].
@@ -3030,6 +3059,13 @@ class _ThreadRow extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(thread.project.path, style: faint),
+          if (model() case final model?)
+            Text(
+              l10n.sidebarHoverModel(model),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: faint,
+            ),
           for (final stash in stashes)
             Text(
               'Stash #${stash.id} · ${stash.title}',
