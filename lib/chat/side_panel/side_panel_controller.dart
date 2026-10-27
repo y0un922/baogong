@@ -309,6 +309,20 @@ class AgentSidePanel extends ChangeNotifier {
     show();
   }
 
+  /// [section]'s tab in the pages' bar clicked, as an activity bar's icon:
+  /// the page shown, its list hidden or shown; another, with its list. The
+  /// plan's and the browser's have none.
+  void selectSection(Object conversation, SidePanelSection section) {
+    final hasList = alwaysShownSections.contains(section);
+    if (hasList && tabsOf(conversation).shown == section) return toggleList();
+    if (hasList && !_listShown) {
+      _listShown = true;
+      _changed = true;
+      onSave?.call();
+    }
+    showSection(conversation, section);
+  }
+
   /// Shows [id] in its tab: a terminal (its instance), or a background
   /// command's output (its id). Not [show]n, it is only made the tab the
   /// terminal page of [conversation] shows.

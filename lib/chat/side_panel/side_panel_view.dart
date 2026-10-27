@@ -1511,7 +1511,7 @@ class _SectionBar extends StatelessWidget {
                     SidePanelSection.changes => changes,
                     SidePanelSection.terminal => running,
                   },
-                  onTap: () => panel.showSection(session, section),
+                  onTap: () => panel.selectSection(session, section),
                 ),
               const Spacer(),
               // To the conversations' other side.

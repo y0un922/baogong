@@ -862,6 +862,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('the page\'s tab clicked again hides or shows its list, as '
+      'an activity bar\'s icon; another page\'s shows with its list', (
+    tester,
+  ) async {
+    final (:panel, :session, files: _) = await _pumpChat(tester);
+    panel.showSection(session, SidePanelSection.files);
+    await tester.pumpAndSettle();
+    final list = find.byKey(const ValueKey('side-panel-list'));
+    final files = find.byKey(const ValueKey(SidePanelSection.files));
+    expect(list, findsOneWidget);
+
+    await tester.tap(files);
+    await tester.pumpAndSettle();
+    expect(list, findsNothing);
+    expect(panel.toJson()['listShown'], isFalse);
+    await tester.tap(files);
+    await tester.pumpAndSettle();
+    expect(list, findsOneWidget);
+
+    await tester.tap(files);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey(SidePanelSection.changes)));
+    await tester.pumpAndSettle();
+    expect(panel.tabsOf(session).shown, SidePanelSection.changes);
+    expect(list, findsOneWidget);
+  });
+
   testWidgets('rapid list toggle clicks do not command the window', (
     tester,
   ) async {
