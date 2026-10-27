@@ -253,26 +253,43 @@ class OpenRemoteFileFlow {
     String directory,
   ) async {
     final paths = p.posix;
-    List<String> folders;
-    List<String> files;
+    List<String> folders = const [];
+    List<String> files = const [];
     String? failure;
-    try {
-      final entries = await client.list(directory, directory);
-      final sorted = entries.toList()
-        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      folders = [
-        for (final entry in sorted)
-          if (entry.isDirectory) entry.name,
-      ];
-      files = [
-        for (final entry in sorted)
-          if (!entry.isDirectory) entry.name,
-      ];
-    } on Object catch (error) {
-      folders = const [];
-      files = const [];
-      failure = '$error';
+
+    /// Whether the entries are being read: the refresh button is dimmed
+    /// meanwhile, and the pick reads them again once they are.
+    final reading = ValueNotifier(false);
+
+    /// Reads the entries again, e.g. one made in a terminal since.
+    Future<void> read() async {
+      if (reading.value) return;
+      reading.value = true;
+      try {
+        final entries = await client.list(directory, directory);
+        final sorted = entries.toList()
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
+        folders = [
+          for (final entry in sorted)
+            if (entry.isDirectory) entry.name,
+        ];
+        files = [
+          for (final entry in sorted)
+            if (!entry.isDirectory) entry.name,
+        ];
+        failure = null;
+      } on Object catch (error) {
+        folders = const [];
+        files = const [];
+        failure = '$error';
+      } finally {
+        reading.value = false;
+      }
     }
+
+    await read();
     final parent = paths.dirname(directory);
     // A path typed (absolute, or starting with `~`): a file opened where
     // it is, a folder browsed.
@@ -290,6 +307,14 @@ class OpenRemoteFileFlow {
       IdeQuickPick(
         placeholder: l10n.remoteFilePlaceholder(host),
         sortByLabel: false,
+        refresh: reading,
+        buttons: [
+          IdeQuickPickItemButton(
+            icon: Codicons.refresh,
+            tooltip: l10n.remoteFolderRefresh,
+            onPressed: () => unawaited(read()),
+          ),
+        ],
         itemsFor: (value) {
           final typed = value.trim();
           final isPath = typed.startsWith('/') || typed.startsWith('~');

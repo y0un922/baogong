@@ -182,17 +182,32 @@ class OpenRemoteFlow {
     String directory,
   ) async {
     final paths = p.posix;
-    List<String> folders;
+    List<String> folders = const [];
     String? failure;
-    try {
-      folders = [
-        for (final entry in await client.list(directory, directory))
-          if (entry.isDirectory) entry.name,
-      ]..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    } on Object catch (error) {
-      folders = const [];
-      failure = '$error';
+
+    /// Whether the folders are being read: the refresh button is dimmed
+    /// meanwhile, and notifies the pick once they are (its `refresh`).
+    final reading = ValueNotifier(false);
+
+    /// Reads the folders again, e.g. one made in a terminal since.
+    Future<void> read() async {
+      if (reading.value) return;
+      reading.value = true;
+      try {
+        folders = [
+          for (final entry in await client.list(directory, directory))
+            if (entry.isDirectory) entry.name,
+        ]..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+        failure = null;
+      } on Object catch (error) {
+        folders = const [];
+        failure = '$error';
+      } finally {
+        reading.value = false;
+      }
     }
+
+    await read();
     final parent = paths.dirname(directory);
     Future<void> goTo(String path) async {
       try {
@@ -219,6 +234,16 @@ class OpenRemoteFlow {
       IdeQuickPick(
         placeholder: l10n.remoteFolderPlaceholder(host),
         sortByLabel: false,
+        refresh: reading,
+        buttons: [
+          IdeQuickPickItemButton(
+            icon: Codicons.refresh,
+            tooltip: l10n.remoteFolderRefresh,
+            // A second press while the folders are read is left out (see
+            // [read]).
+            onPressed: () => unawaited(read()),
+          ),
+        ],
         itemsFor: (value) {
           final typed = value.trim();
           final isPath = typed.startsWith('/') || typed.startsWith('~');

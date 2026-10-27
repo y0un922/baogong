@@ -5498,6 +5498,10 @@
       }
     }
   },
+  "remoteFolderRefresh": "Read the folders again",
+  "@remoteFolderRefresh": {
+    "description": "The button at the right of the quick pick browsing a remote host's folders: it lists the folder again, e.g. one made in a terminal since."
+  },
   "remoteOpenThisFolder": "Open This Folder",
   "remoteParentFolder": "Parent Folder",
   "remoteGoTo": "Go to {path}",
