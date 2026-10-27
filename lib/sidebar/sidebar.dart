@@ -2066,10 +2066,19 @@ class _NewAgentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The agent sessions window's New Session button; its hover with the
-    // keys of New Agent, which does the same (a folder first, without one).
+    // The agent sessions window's New Session button, in the side panel
+    // rail's colors (its surface and line, the text; a toolbar button's
+    // hover over it): a theme's own for it can all but vanish (One Dark
+    // Pro's, see-through on a line as dark as the sidebar). Its hover
+    // with the keys of New Agent, which does the same (a folder first,
+    // without one).
     final colors = themeColors;
-    final foreground = colors['agentsNewSessionButton.foreground'];
+    final foreground = AppColors.text;
+    final surface = AppColors.surface;
+    final hover = Color.alphaBlend(colors['toolbar.hoverBackground'], surface);
+    // A see-through surface fades in as the hover's own color: a fade
+    // from another (a theme's #ff000000) would pass through it.
+    final idle = surface.a == 0 ? hover.withValues(alpha: 0) : surface;
     return IdeHover(
       message: ChatKeys.titleWithKey(
         context.l10n.sidebarNewAgent,
@@ -2086,14 +2095,9 @@ class _NewAgentButton extends StatelessWidget {
             height: 30,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color:
-                  colors[hovered
-                      ? 'agentsNewSessionButton.hoverBackground'
-                      : 'agentsNewSessionButton.background'],
+              color: hovered ? hover : idle,
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: colors['agentsNewSessionButton.border'],
-              ),
+              border: Border.all(color: AppColors.partBorder),
             ),
             child: Row(
               children: [
