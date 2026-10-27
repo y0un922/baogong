@@ -2103,6 +2103,8 @@ class IdeEditorState extends State<IdeEditor> {
     onReplace: _replaceCurrent,
     onReplaceAll: _replaceAll,
     commandIds: editorFindCommandIds,
+    // Lines found across, as upstream's editor does.
+    multiline: true,
     resolveKey: widget.keyResolver == null
         ? null
         : (event) => _resolveKey(event).command,
