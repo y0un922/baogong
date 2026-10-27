@@ -33,8 +33,9 @@ typedef IdeGitRunner = Future<IdeGitOutput> Function(
   int? limit,
 });
 
-/// Changes under the repository at [repositoryRoot].
-typedef IdeGitWatcher = Stream<void> Function(String repositoryRoot);
+/// Changes under the repository at [repositoryRoot], each the path changed
+/// ('' where not known).
+typedef IdeGitWatcher = Stream<String> Function(String repositoryRoot);
 
 /// `git --version`'s output (`git version 2.23.0.windows.1`, `git version
 /// 2.39.2 (Apple Git-143)`) as (major, minor); null when it cannot be read
@@ -80,7 +81,7 @@ class IdeGitService {
 
   /// Changes under the repository, for refreshing; empty where files cannot
   /// be watched.
-  Stream<void> watch(String repositoryRoot) => _watch(repositoryRoot);
+  Stream<String> watch(String repositoryRoot) => _watch(repositoryRoot);
 
   Future<IdeGitOutput> _git(
     List<String> arguments, {
