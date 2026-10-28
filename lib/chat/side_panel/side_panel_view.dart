@@ -643,6 +643,11 @@ class AgentSidePanelView extends StatelessWidget {
                           background: AppColors.code,
                           controller: explorer,
                           local: local,
+                          // The rows' colors and letters, as the IDE's.
+                          git: git,
+                          repositories: [
+                            for (final (_, git) in repositories) git,
+                          ],
                           onAddFolder: _isWorkspace ? onAddFolder : null,
                           onRemoveFolder: _isWorkspace ? onRemoveFolder : null,
                           trash: local && WindowControls.canMoveToTrash
