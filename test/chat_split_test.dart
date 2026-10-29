@@ -295,9 +295,26 @@ void main() {
           (widget.decoration as BoxDecoration).border ==
               Border.all(color: ChatGridView.frameColor),
     );
-    // One frame, inside the pane and off its edges.
-    bool framed(String title) =>
-        tester.getRect(frame) == tester.getRect(pane(title)).deflate(4);
+    // One frame, round the whole pane: on the line between the two (over
+    // it, one line, not two), at the view's edges elsewhere.
+    bool framed(String title) {
+      final shown = tester.getRect(frame);
+      final rect = tester.getRect(pane(title));
+      final grid = gridRect(tester);
+      const out = ChatGridView.gap / 2 + .5;
+      bool near(double a, double b) => (a - b).abs() < .5;
+      return near(
+            shown.left,
+            rect.left > grid.left ? rect.left - out : grid.left,
+          ) &&
+          near(
+            shown.right,
+            rect.right < grid.right ? rect.right + out : grid.right,
+          ) &&
+          near(shown.top, grid.top) &&
+          near(shown.bottom, grid.bottom);
+    }
+
     expect(framed(second), isTrue);
     expect(framed(first), isFalse);
 

@@ -267,6 +267,7 @@ class _ChatGridViewState extends State<ChatGridView> {
       delegate: _GridLayout(
         grid,
         onLayout: (size) => _size = size,
+        focused: widget.focused,
         relayout: _moved,
       ),
       children: [
@@ -287,10 +288,7 @@ class _ChatGridViewState extends State<ChatGridView> {
                   widget.onFocus(thread);
                 }
               },
-              child: _framed(
-                identical(thread, widget.focused) && grid.panes.length > 1,
-                widget.paneBuilder(context, thread, _place(grid, thread)),
-              ),
+              child: widget.paneBuilder(context, thread, _place(grid, thread)),
             ),
           ),
         if (grid.columnsSplit)
@@ -305,6 +303,13 @@ class _ChatGridViewState extends State<ChatGridView> {
             id: _GridPart.rowLine,
             child: _sash(Axis.vertical),
           ),
+        // The focused one outlined, over the lines about it.
+        if (widget.focused case final focused?
+            when grid.panes.length > 1 && grid.contains(focused))
+          LayoutId(
+            id: _GridPart.frame,
+            child: const _Frame(key: ValueKey('pane frame')),
+          ),
         LayoutId(
           id: _GridPart.preview,
           child: _DropPreview(drag: widget.drag),
@@ -314,28 +319,21 @@ class _ChatGridViewState extends State<ChatGridView> {
   }
 }
 
-/// [child], outlined over it while [framed]: inset from its edges as the
-/// drop preview is (see [_DropPreview]), off the window's.
-Widget _framed(bool framed, Widget child) => Stack(
-  fit: StackFit.passthrough,
-  children: [
-    child,
-    if (framed)
-      Positioned.fill(
-        child: IgnorePointer(
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border.all(color: ChatGridView.frameColor),
-                borderRadius: BorderRadius.circular(6),
-              ),
-            ),
-          ),
-        ),
+/// The focused pane's outline, as the grid places it: on the lines between
+/// it and the others (over them, one line, not two), and at the view's
+/// edges; never across what the pane shows (its side panel's tabs).
+class _Frame extends StatelessWidget {
+  const _Frame({super.key});
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: ChatGridView.frameColor),
       ),
-  ],
-);
+    ),
+  );
+}
 
 /// Where a press does not focus the pane it is in: the window's own tools
 /// in the top right pane's title bar (which act on the focused agent, not
@@ -356,18 +354,25 @@ class KeepPaneFocus extends StatelessWidget {
   );
 }
 
-enum _GridPart { columnLine, rowLine, preview, backdrop }
+enum _GridPart { columnLine, rowLine, preview, backdrop, frame }
 
 /// Behind [thread]'s pane (see [ChatGridView.paneBackground]).
 (_GridPart, AgentThread) _backdrop(AgentThread thread) =>
     (_GridPart.backdrop, thread);
 
 /// The panes on [grid]'s rectangles (see [ChatGrid.layout]); the sashes on
-/// the gaps between them; the drop preview over it all.
+/// the gaps between them; [focused]'s outline on them (see [_Frame]); the
+/// drop preview over it all.
 class _GridLayout extends MultiChildLayoutDelegate {
-  _GridLayout(this.grid, {required this.onLayout, super.relayout});
+  _GridLayout(
+    this.grid, {
+    required this.onLayout,
+    this.focused,
+    super.relayout,
+  });
 
   final ChatGrid<AgentThread> grid;
+  final AgentThread? focused;
 
   /// The size laid out at.
   final ValueChanged<Size> onLayout;
@@ -427,6 +432,25 @@ class _GridLayout extends MultiChildLayoutDelegate {
       _place(
         _GridPart.rowLine,
         Rect.fromLTRB(left, y - _gap / 2, right, y + _gap / 2),
+      );
+    }
+    // On the lines between the focused pane and the others (the line's 1px
+    // under its 1px), at the view's edges past them: around the pane and
+    // its side panel, not through the panel's tabs.
+    if (hasChild(_GridPart.frame)) {
+      final rects = grid.layout(size, gap: _gap, minPane: _min);
+      final rect = rects[focused];
+      const out = _gap / 2 + .5;
+      _place(
+        _GridPart.frame,
+        rect == null
+            ? Rect.zero
+            : Rect.fromLTRB(
+                rect.left > 0 ? rect.left - out : 0,
+                rect.top > 0 ? rect.top - out : 0,
+                rect.right < size.width ? rect.right + out : size.width,
+                rect.bottom < size.height ? rect.bottom + out : size.height,
+              ),
       );
     }
     _place(_GridPart.preview, Offset.zero & size);
