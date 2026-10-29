@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:baocode/forge/forge_accounts.dart';
@@ -36,6 +37,36 @@ class FakeForgeHttp implements ForgeHttp {
       final answer => ForgeResponse(200, jsonEncode(answer)),
     };
   }
+}
+
+/// A [SecretStore] that counts the reads: on Windows each read of the real
+/// one runs a program (PowerShell, DPAPI), so how many a burst of requests
+/// starts is what the hang was made of.
+class CountingSecretStore implements SecretStore {
+  CountingSecretStore({this.value, this.failing = false, this.gate});
+
+  String? value;
+  bool failing;
+
+  /// Held open, when given, to have the reads that arrive overlap.
+  Completer<void>? gate;
+
+  int reads = 0;
+
+  @override
+  Future<String?> read(String id) async {
+    reads++;
+    final gate = this.gate;
+    if (gate != null) await gate.future;
+    if (failing) throw const SecretStoreException('no keychain here');
+    return value;
+  }
+
+  @override
+  Future<void> write(String id, String value) async => this.value = value;
+
+  @override
+  Future<void> delete(String id) async => value = null;
 }
 
 class FakeRequest {
@@ -512,6 +543,69 @@ void main() {
       expect((await api.me()).login, 'old');
       now = now.add(const Duration(hours: 2));
       expect((await api.me()).login, 'new');
+    });
+
+    test('a token read once: the requests that arrive while the keychain is '
+        'answering it wait on that read, not on one of their own', () async {
+      final gate = Completer<void>();
+      final secrets = CountingSecretStore(value: 'gho-t', gate: gate);
+      final accounts = ForgeAccounts(
+        http: FakeForgeHttp(),
+        secrets: secrets,
+        read: () => [
+          ForgeAccount(
+            kind: ForgeKind.github,
+            host: 'github.com',
+            login: 'leo',
+          ).toJson(),
+        ],
+      );
+      final api = accounts.apiFor('github.com')!;
+
+      // Every linked issue asks for the token as its request goes out, all
+      // of them at once (see the stash's refresh).
+      final asking = [
+        api.me().catchError((Object _) => const ForgeUser(login: '')),
+        api.me().catchError((Object _) => const ForgeUser(login: '')),
+        api.me().catchError((Object _) => const ForgeUser(login: '')),
+      ];
+      expect(secrets.reads, 1, reason: 'one read for all of them');
+      gate.complete();
+      await Future.wait(asking);
+      expect(secrets.reads, 1, reason: 'kept: not read again');
+    });
+
+    test('a token read that fails is answered, and read again the next '
+        'time: one program, never one for each request', () async {
+      final gate = Completer<void>();
+      final secrets = CountingSecretStore(failing: true, gate: gate);
+      final accounts = ForgeAccounts(
+        http: FakeForgeHttp(),
+        secrets: secrets,
+        read: () => [
+          ForgeAccount(
+            kind: ForgeKind.github,
+            host: 'github.com',
+            login: 'leo',
+          ).toJson(),
+        ],
+      );
+      final api = accounts.apiFor('github.com')!;
+
+      final failing = [
+        api.me().catchError((Object _) => const ForgeUser(login: '')),
+        api.me().catchError((Object _) => const ForgeUser(login: '')),
+      ];
+      expect(secrets.reads, 1, reason: 'one read for all of them');
+      gate.complete();
+      await Future.wait(failing);
+      expect(secrets.reads, 1);
+
+      // Not poisonous: a token the keychain has meanwhile is read again.
+      secrets.failing = false;
+      secrets.value = 'gho-t2';
+      await api.me().catchError((Object _) => const ForgeUser(login: ''));
+      expect(secrets.reads, 2, reason: 'the failure was not kept');
     });
   });
 }
