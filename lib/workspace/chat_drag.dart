@@ -118,11 +118,19 @@ class ChatDrag extends ChangeNotifier {
   int? _pointer;
   AppLifecycleListener? _lifecycle;
 
+  /// Told as the drag ends without a drop on the grid (released elsewhere,
+  /// or cancelled): an agent made for it goes then.
+  VoidCallback? _onMissed;
+
+  /// [onMissed]: told where it ends without a drop on the grid, e.g. to
+  /// take back an agent made to be dragged (see [ChatNewDragSource]); such
+  /// a drag does not go over the list (it is in no order there yet).
   void start(
     AgentThread thread,
     int pointer,
     Offset position, {
     List<AgentThread>? threads,
+    VoidCallback? onMissed,
   }) {
     if (_thread != null) _stop();
     _thread = thread;
@@ -130,6 +138,7 @@ class ChatDrag extends ChangeNotifier {
     _pointer = pointer;
     _position = position;
     _room = null;
+    _onMissed = onMissed;
     _lifecycle = AppLifecycleListener(onInactive: cancel);
     // Every event of the pointer, wherever it is (not only over the row
     // that started it, which may go: the drawer closes).
@@ -150,8 +159,10 @@ class ChatDrag extends ChangeNotifier {
   /// Ends the drag; nothing is dropped.
   void cancel() {
     if (_thread == null) return;
+    final missed = _onMissed;
     _stop();
     notifyListeners();
+    missed?.call();
   }
 
   void _route(PointerEvent event) {
@@ -177,12 +188,15 @@ class ChatDrag extends ChangeNotifier {
       case PointerUpEvent():
         final drop = _drop;
         final (threads, overList, list) = (_threads, _overList, this.list);
+        final missed = _onMissed;
         _stop();
         notifyListeners();
         if (overList) {
           list?.drop(threads, event.position);
         } else if (drop != null && drop.fits) {
           onDrop(drop);
+        } else {
+          missed?.call();
         }
       case PointerCancelEvent() || PointerRemovedEvent():
         cancel();
@@ -206,7 +220,9 @@ class ChatDrag extends ChangeNotifier {
   void _update() {
     final thread = _thread;
     if (thread == null) return;
-    _overList = list?.hover(_threads, _position) ?? false;
+    // One made to be dragged is in no order of the list yet.
+    _overList =
+        _onMissed == null && (list?.hover(_threads, _position) ?? false);
     _drop = _overList || _threads.length != 1
         ? null
         : resolve?.call(thread, _position);
@@ -223,6 +239,7 @@ class ChatDrag extends ChangeNotifier {
     _pointer = null;
     _drop = null;
     _overList = false;
+    _onMissed = null;
   }
 
   @override
@@ -277,6 +294,63 @@ class _ChatDragSourceState extends State<ChatDragSource> {
                           threads: widget.threads?.call(),
                         );
                       }
+                    },
+                ),
+        },
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// Makes [child] (a New Agent button) drag a new agent once the pointer
+/// pressed on it has moved [ChatDrag.threshold]: [make] makes it as the
+/// drag begins, [onMissed] takes it back where it is not dropped on the
+/// grid. A shorter move is still the click it was.
+class ChatNewDragSource extends StatefulWidget {
+  const ChatNewDragSource({
+    super.key,
+    required this.drag,
+    required this.make,
+    required this.onMissed,
+    required this.child,
+  });
+
+  /// None: [child] as it is.
+  final ChatDrag? drag;
+  final AgentThread Function() make;
+  final ValueChanged<AgentThread> onMissed;
+  final Widget child;
+
+  @override
+  State<ChatNewDragSource> createState() => _ChatNewDragSourceState();
+}
+
+class _ChatNewDragSourceState extends State<ChatNewDragSource> {
+  int? _pointer;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (event) => _pointer = event.pointer,
+      child: RawGestureDetector(
+        gestures: {
+          if (widget.drag case final drag?)
+            _DragRecognizer:
+                GestureRecognizerFactoryWithHandlers<_DragRecognizer>(
+                  _DragRecognizer.new,
+                  (recognizer) => recognizer
+                    ..onStart = (details) {
+                      final pointer = _pointer;
+                      if (pointer == null) return;
+                      final thread = widget.make();
+                      final missed = widget.onMissed;
+                      drag.start(
+                        thread,
+                        pointer,
+                        details.globalPosition,
+                        onMissed: () => missed(thread),
+                      );
                     },
                 ),
         },

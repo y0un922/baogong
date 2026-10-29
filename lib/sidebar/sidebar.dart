@@ -1406,6 +1406,16 @@ class _SidebarState extends State<Sidebar>
       light: !collapsible,
       onToggle: collapsible ? () => _workspace.toggleCollapsed(group.id) : null,
       onCreate: project == null ? null : () => _create(project),
+      // Dragged onto the panes, beside them; not in an agent's window,
+      // which has its one conversation.
+      dragNew: switch ((project, widget.drag)) {
+        (final project?, final drag?) when widget.onNewAgent == null => (
+          drag: drag,
+          make: () => _workspace.dragAgent(project),
+          onMissed: _workspace.dropDragAgent,
+        ),
+        _ => null,
+      },
       // The archived agents' as the footer's toggle has it: unarchive or
       // delete them all.
       menu: project != null
@@ -2211,6 +2221,7 @@ class _GroupHeader extends StatelessWidget {
     required this.onToggle,
     this.light = false,
     this.onCreate,
+    this.dragNew,
     this.menu,
     this.dragged = false,
     this.pinned = false,
@@ -2227,6 +2238,26 @@ class _GroupHeader extends StatelessWidget {
   /// The only project's: its name, nothing to fold or count.
   final bool light;
   final VoidCallback? onCreate;
+
+  /// Dragged, [onCreate]'s button makes a new agent of the project to go
+  /// beside the panes where it is let go (see [ChatNewDragSource]), not in
+  /// place of the focused one. None where it does not drag.
+  final ({
+    ChatDrag drag,
+    AgentThread Function() make,
+    ValueChanged<AgentThread> onMissed,
+  })?
+  dragNew;
+
+  Widget _newDragged(Widget button) => switch (dragNew) {
+    final dragNew? => ChatNewDragSource(
+      drag: dragNew.drag,
+      make: dragNew.make,
+      onMissed: dragNew.onMissed,
+      child: button,
+    ),
+    null => button,
+  };
 
   /// The project's menu (or the archived agents'), on a right click or its
   /// "…" button.
@@ -2334,11 +2365,13 @@ class _GroupHeader extends StatelessWidget {
                     onTap: menu.open,
                   ),
                 if (onCreate case final onCreate? when active)
-                  SidebarIconButton(
-                    icon: Icons.add_rounded,
-                    tooltip: context.l10n.sidebarNewAgentIn(group.label),
-                    size: 20,
-                    onTap: onCreate,
+                  _newDragged(
+                    SidebarIconButton(
+                      icon: Icons.add_rounded,
+                      tooltip: context.l10n.sidebarNewAgentIn(group.label),
+                      size: 20,
+                      onTap: onCreate,
+                    ),
                   ),
               ],
             ),

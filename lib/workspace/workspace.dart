@@ -783,6 +783,21 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     return thread;
   }
 
+  /// A new agent in [project], to drag beside the panes (a project's New
+  /// Agent dragged): listed, not shown, the panes left as they are. An
+  /// untouched one there that does not show is reused.
+  AgentThread dragAgent(Project project) => startAgent(project);
+
+  /// [thread], made to be dragged ([dragAgent]), was not dropped anywhere:
+  /// dropped too, unless it shows or something was sent to it.
+  void dropDragAgent(AgentThread thread) {
+    if (!_threads.contains(thread) || !_isUntouched(thread)) return;
+    if (_grid.contains(thread)) return;
+    if (_windowAgents.contains(thread)) return;
+    if (_ideChats.values.any((tabs) => tabs.contains(thread))) return;
+    _discard(thread);
+  }
+
   /// [thread]'s window closed: a new agent nothing was sent to is dropped,
   /// unless it shows elsewhere too.
   void closeWindowAgent(AgentThread thread) {

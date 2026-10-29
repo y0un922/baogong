@@ -10,6 +10,7 @@ import 'package:baocode/ide/ide_workbench.dart';
 import 'package:baocode/main.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/sidebar/sidebar.dart';
+import 'package:baocode/workspace/chat_drag.dart';
 import 'package:baocode/workspace/chat_grid.dart';
 import 'package:baocode/workspace/chat_grid_view.dart';
 import 'package:baocode/workspace/editor_launcher.dart';
@@ -204,6 +205,62 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     expect(paneTitles(tester), [second]);
+  });
+
+  testWidgets('a project\'s New Agent dragged beside the chat opens a new '
+      'agent there; released elsewhere, none is left', (tester) async {
+    final workspace = await pumpApp(tester);
+    final project = workspace.current!.project;
+    final count = workspace.threads.length;
+    // The project's header shows its button with the pointer over it.
+    final header = inSidebar(find.text(project.name));
+    final hover = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await hover.addPointer(location: tester.getCenter(header.first));
+    await tester.pump();
+    final add = find.descendant(
+      of: find.byType(ChatNewDragSource),
+      matching: find.byIcon(Icons.add_rounded),
+    );
+    expect(add, findsOneWidget);
+
+    Future<TestGesture> dragNew(Offset to) async {
+      // Its button shows again with the pointer back over the header.
+      await hover.moveTo(tester.getCenter(header.first));
+      await tester.pump();
+      final gesture = await tester.startGesture(
+        tester.getCenter(add),
+        kind: PointerDeviceKind.mouse,
+        pointer: 8,
+      );
+      await gesture.moveBy(const Offset(12, 0));
+      await tester.pump();
+      await gesture.moveTo(to);
+      await tester.pump();
+      return gesture;
+    }
+
+    // Released over the sidebar: nothing, and no agent left behind.
+    var gesture = await dragNew(near(gridRect(tester), PaneSide.right));
+    expect(preview(), findsOneWidget);
+    await gesture.moveTo(tester.getCenter(find.byType(Sidebar)));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(paneTitles(tester), [first]);
+    expect(workspace.threads.length, count);
+
+    // Beside the chat: a new agent of the project there, the chat still in
+    // view, the new one focused.
+    gesture = await dragNew(near(gridRect(tester), PaneSide.right));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(workspace.grid.length, 2);
+    expect(paneTitles(tester), contains(first));
+    final added = workspace.current!;
+    expect(added.title, isNot(first));
+    expect(added.project, same(project));
+    expect(added.untouched, isTrue);
+    expect(workspace.threads.length, count + 1);
   });
 
   testWidgets('a third beside either, a fourth beside the one with a whole '
