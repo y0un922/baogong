@@ -7,7 +7,7 @@ export 'package:bao_remote/claude.dart'
     show ClaudeFolderGone, ClaudeNoModel, ClaudeUnavailable;
 
 /// Claude Code's side of the adapter (the Adaptee): the messages of
-/// `claude -p --input-format stream-json --output-format stream-json`, one
+/// `claude --input-format stream-json --output-format stream-json`, one
 /// JSON object per line.
 abstract interface class ClaudeCodeTransport {
   /// What the CLI prints: `system`, `stream_event`, `assistant`, `user`,
@@ -245,7 +245,9 @@ class ClaudeLaunch {
   List<String> get argumentsWithoutSettings => _arguments(withSettings: false);
 
   List<String> _arguments({required bool withSettings}) => [
-    '-p',
+    // No `-p`, as the Agent SDK starts it: stream-json on pipes is print
+    // mode already, and hooks that read `-p` as a one-shot run (Clawd on
+    // Desk) would leave the chat out.
     '--input-format',
     'stream-json',
     '--output-format',

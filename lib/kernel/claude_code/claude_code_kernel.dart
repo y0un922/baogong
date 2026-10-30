@@ -76,7 +76,7 @@ typedef ProviderEnvironment = Future<Map<String, String>> Function(
   String model,
 );
 
-/// Adapts Claude Code, run as `claude -p` over stream-json, to
+/// Adapts Claude Code, run over stream-json, to
 /// [AgentKernel].
 ///
 /// One process per session, started when first needed: the conversation

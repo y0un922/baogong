@@ -116,7 +116,10 @@ void main() {
       await _until(args.existsSync);
       expect(
         args.readAsLinesSync(),
-        containsAllInOrder(['-p', '--input-format', 'stream-json']),
+        allOf(
+          containsAllInOrder(['--input-format', 'stream-json']),
+          isNot(contains('-p')),
+        ),
       );
     });
   });
