@@ -648,7 +648,12 @@ class ChatDragLayer extends StatelessWidget {
       builder: (context, _) {
         final thread = drag.thread;
         if (thread == null) return const SizedBox.shrink();
-        final at = drag.position;
+        // The pointer is in the window's pixels; the layer may be zoomed
+        // (UiZoom), so it is placed in the layer's own.
+        final box = context.findRenderObject() as RenderBox?;
+        final at = box != null && box.attached && box.hasSize
+            ? box.globalToLocal(drag.position)
+            : drag.position;
         return Stack(
           children: [
             const Positioned.fill(
