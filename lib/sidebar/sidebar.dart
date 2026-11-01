@@ -20,7 +20,6 @@ import '../ide/ide_button.dart' show IdeButtonColors;
 import '../ide/ide_commands.dart' show ideUsesMacKeys;
 import '../ide/ide_hover.dart';
 import '../ide/ide_list.dart';
-import '../ide/ide_spinning.dart';
 import '../kernel/agent_kernel.dart' show KernelChoiceKind;
 import '../keybindings/chat_keybindings.dart';
 import '../keybindings/default_keybindings.dart' show openSettingsCommandId;
