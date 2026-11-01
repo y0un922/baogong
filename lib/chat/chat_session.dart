@@ -17,6 +17,7 @@ import 'composer/composer_draft.dart';
 import 'composer/paste_store.dart';
 import 'mock_conversation.dart';
 import 'open_editor.dart';
+import 'reply_translate.dart';
 import 'review/change_review.dart';
 import 'review/change_reviews.dart';
 import 'review/review_store.dart';
@@ -657,7 +658,13 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   @override
   ChatItem itemAt(int index) {
-    if (index < _transcript.length) return _transcript.itemAt(index);
+    if (index < _transcript.length) {
+      final item = _transcript.itemAt(index);
+      if (item is AssistantTextItem && translatedAt(index)) {
+        return AssistantTextItem(_translations[_keyAt(index)]!);
+      }
+      return item;
+    }
     // Waiting on its model unless its kernel says otherwise.
     final output = _transcript.output;
     return switch (_transcript.activity?.kind) {
@@ -676,6 +683,59 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         cue: MusingCue.after(_last),
       ),
     };
+  }
+
+  // --- Translation ---------------------------------------------------------
+  //
+  // An answer shown in Chinese, as the footer offers it: the translation is
+  // kept by the answer's id (its index, for the history read, which has
+  // none), so that it survives scrolling and putting the original back.
+
+  final Map<String, String> _translations = {};
+  final Set<String> _translated = {};
+
+  String _keyAt(int index) => _transcript.idAt(index) ?? 'at:$index';
+
+  /// Whether the answer at [index] shows translated (see
+  /// [toggleTranslationAt]).
+  bool translatedAt(int index) => _translated.contains(_keyAt(index));
+
+  /// The answer ending at [index] (the items the turn's footer copies)
+  /// translated into Chinese, or back as the model wrote it. Asks the
+  /// auxiliary model, in [kernelContext]'s project; throws
+  /// [ReplyTranslateException] when it does not answer.
+  Future<void> toggleTranslationAt(int index) async {
+    var first = index;
+    while (first >= 0) {
+      final item = _transcript.itemAt(first);
+      if (item is! AssistantTextItem && item is! ThinkingItem) break;
+      first--;
+    }
+    final indexes = [
+      for (var i = first + 1; i <= index; i++)
+        if (_transcript.itemAt(i) is AssistantTextItem) i,
+    ];
+    final keys = [for (final i in indexes) _keyAt(i)];
+    if (keys.any(_translated.contains)) {
+      _translated.removeAll(keys);
+      notifyListeners();
+      return;
+    }
+    final model = selected(KernelChoiceKind.model);
+    final translated = await Future.wait([
+      for (final i in indexes)
+        translateReply(
+          (_transcript.itemAt(i) as AssistantTextItem).text,
+          model: model,
+          location: kernelContext.cwd,
+        ),
+    ]);
+    if (_disposed) return;
+    for (final (n, key) in keys.indexed) {
+      _translations[key] = translated[n];
+      _translated.add(key);
+    }
+    notifyListeners();
   }
 
   /// Not while the agent waits on the user; nor after a thought under way,

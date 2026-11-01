@@ -3,15 +3,19 @@
 // its terminals start in.
 
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bao_editor/monaco/flutter/keybinding_entry.dart';
 import 'package:baocode/chat/chat_screen.dart';
+import 'package:baocode/chat/composer/composer.dart';
+import 'package:baocode/chat/side_panel/side_panel_controller.dart';
 import 'package:baocode/chat/side_panel/side_panel_view.dart';
 import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
 import 'package:baocode/ide/terminal/terminal_view.dart';
 import 'package:baocode/keybindings/keybinding_service.dart';
 import 'package:baocode/main.dart';
+import 'package:baocode/sidebar/sidebar.dart';
 import 'package:baocode/workspace/chat_terminal.dart';
 import 'package:baocode/workspace/window_header/window_header.dart';
 import 'package:baocode/workspace/workspace.dart';
@@ -230,6 +234,184 @@ void main() {
     expect(ptys, hasLength(2));
     expect(shown(), isNot(same(first)));
     expect(shown().focusNode.hasFocus, isTrue);
+  }, variant: _mac);
+
+  testWidgets('one click in the side panel\'s terminal puts the keyboard '
+      'there from the chat\'s composer', (tester) async {
+    final ptys = <FakePty>[];
+    await _pumpApp(tester, terminalBackend: fakeTerminalBackend(ptys));
+    await press(tester, LogicalKeyboardKey.keyT, meta: true, alt: true);
+    await _settle(tester);
+    await tester.pump(const Duration(milliseconds: 500));
+    final terminal = tester
+        .widget<TerminalView>(find.byType(TerminalView))
+        .instance;
+
+    tester.state<ChatComposerState>(find.byType(ChatComposer).first).focus();
+    await _settle(tester);
+    expect(terminal.focusNode.hasFocus, isFalse);
+
+    await tester.tap(find.byType(TerminalView));
+    await _settle(tester);
+    expect(terminal.focusNode.hasFocus, isTrue);
+  }, variant: _mac);
+
+  testWidgets('⌃⌘H, J, K and L move the keyboard between the agents, the '
+      'conversation, its terminal panel and the side panel; ⌘1… there show '
+      'its pages', (tester) async {
+    final ptys = <FakePty>[];
+    final workspace = await _pumpApp(
+      tester,
+      terminalBackend: fakeTerminalBackend(ptys),
+    );
+    Future<void> settle() async {
+      await _settle(tester);
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    Future<void> move(LogicalKeyboardKey key) async {
+      await press(tester, key, control: true, meta: true);
+      await settle();
+    }
+
+    bool inside<T extends Widget>() =>
+        FocusManager.instance.primaryFocus?.context
+            ?.findAncestorWidgetOfExactType<T>() !=
+        null;
+    bool inComposer() => inside<ChatComposer>();
+
+    // The side panel's terminal, the keyboard in it.
+    await press(tester, LogicalKeyboardKey.keyT, meta: true, alt: true);
+    await settle();
+    final panel = tester
+        .widget<AgentSidePanelView>(find.byType(AgentSidePanelView))
+        .panel;
+    final shell = tester
+        .widget<TerminalView>(find.byType(TerminalView))
+        .instance;
+    expect(shell.focusNode.hasFocus, isTrue);
+
+    await move(LogicalKeyboardKey.keyH);
+    expect(inComposer(), isTrue);
+    await move(LogicalKeyboardKey.keyH);
+    expect(inside<Sidebar>(), isTrue);
+    // Nothing further left.
+    await move(LogicalKeyboardKey.keyH);
+    expect(inside<Sidebar>(), isTrue);
+    await move(LogicalKeyboardKey.keyL);
+    expect(inComposer(), isTrue);
+    await move(LogicalKeyboardKey.keyL);
+    expect(shell.focusNode.hasFocus, isTrue);
+
+    // ⌘1 is the files' page, ⌘3 the terminal's again.
+    final session = workspace.current!.session;
+    await press(tester, LogicalKeyboardKey.digit1, meta: true);
+    await settle();
+    expect(panel.tabsOf(session).shown, SidePanelSection.files);
+    expect(panel.focusNode.hasFocus, isTrue);
+    await press(tester, LogicalKeyboardKey.digit3, meta: true);
+    await settle();
+    expect(panel.tabsOf(session).shown, SidePanelSection.terminal);
+    expect(shell.focusNode.hasFocus, isTrue);
+
+    // Down to the terminal panel under the conversation (shown for it),
+    // and back up.
+    await move(LogicalKeyboardKey.keyH);
+    expect(_panel, findsNothing);
+    await move(LogicalKeyboardKey.keyJ);
+    expect(_panel, findsOneWidget);
+    expect(_terminals(tester).focused, isTrue);
+    await move(LogicalKeyboardKey.keyK);
+    expect(inComposer(), isTrue);
+    await move(LogicalKeyboardKey.keyJ);
+    expect(_terminals(tester).focused, isTrue);
+    // From it, the side panel is still to the right.
+    await move(LogicalKeyboardKey.keyL);
+    expect(shell.focusNode.hasFocus, isTrue);
+
+    // Hidden, ⌃⌘L shows it again, the keyboard in its terminal.
+    await press(tester, LogicalKeyboardKey.keyT, meta: true, alt: true);
+    await settle();
+    expect(find.byType(AgentSidePanelView), findsNothing);
+    expect(inComposer(), isTrue);
+    await move(LogicalKeyboardKey.keyL);
+    expect(find.byType(AgentSidePanelView), findsOneWidget);
+    expect(shell.focusNode.hasFocus, isTrue);
+  }, variant: _mac);
+
+  testWidgets('in the side panel\'s terminal, ⌘D splits it right and ⇧⌘D '
+      'down, the keyboard in the new one; ⌃⌘H, J, K and L go between them; '
+      '⌘W closes the one with the keyboard', (tester) async {
+    final ptys = <FakePty>[];
+    await _pumpApp(tester, terminalBackend: fakeTerminalBackend(ptys));
+    Future<void> settle() async {
+      await _settle(tester);
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    Future<void> move(LogicalKeyboardKey key) async {
+      await press(tester, key, control: true, meta: true);
+      await settle();
+    }
+
+    List<TerminalInstance> shown() => [
+      for (final view in tester.widgetList<TerminalView>(
+        find.byType(TerminalView),
+      ))
+        view.instance,
+    ];
+
+    await press(tester, LogicalKeyboardKey.keyT, meta: true, alt: true);
+    await settle();
+    final a = shown().single;
+
+    await press(tester, LogicalKeyboardKey.keyD, meta: true);
+    await settle();
+    expect(shown(), hasLength(2));
+    final b = shown().last;
+    expect(b.focusNode.hasFocus, isTrue);
+    // Side by side.
+    final aBox = tester.getRect(
+      find.byWidgetPredicate((w) => w is TerminalView && w.instance == a),
+    );
+    final bBox = tester.getRect(
+      find.byWidgetPredicate((w) => w is TerminalView && w.instance == b),
+    );
+    expect(bBox.left, greaterThan(aBox.right - 1));
+    expect(bBox.top, aBox.top);
+
+    await press(tester, LogicalKeyboardKey.keyD, meta: true, shift: true);
+    await settle();
+    expect(shown(), hasLength(3));
+    final c = shown().last;
+    expect(c.focusNode.hasFocus, isTrue);
+    expect(
+      tester
+          .getRect(
+            find.byWidgetPredicate((w) => w is TerminalView && w.instance == c),
+          )
+          .top,
+      greaterThan(bBox.top),
+    );
+    expect(ptys, hasLength(3));
+
+    await move(LogicalKeyboardKey.keyK);
+    expect(b.focusNode.hasFocus, isTrue);
+    await move(LogicalKeyboardKey.keyH);
+    expect(a.focusNode.hasFocus, isTrue);
+    await move(LogicalKeyboardKey.keyL);
+    expect(b.focusNode.hasFocus, isTrue);
+    await move(LogicalKeyboardKey.keyJ);
+    expect(c.focusNode.hasFocus, isTrue);
+
+    // ⌘W: c's process hung up, the rest kept, the keyboard in the next.
+    await press(tester, LogicalKeyboardKey.keyW, meta: true);
+    await settle();
+    expect(shown(), [a, b]);
+    expect(ptys[2].kills, isNotEmpty);
+    expect(a.focusNode.hasFocus || b.focusNode.hasFocus, isTrue);
+    // The panel stays.
+    expect(find.byType(AgentSidePanelView), findsOneWidget);
   }, variant: _mac);
 
   testWidgets('each project has its own terminals: the panel follows the '

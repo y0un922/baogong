@@ -25,12 +25,30 @@ abstract final class ComposerPolishSetting {
   static Listenable? changes;
 }
 
+/// Why a message could not be rewritten: nothing came back, a reply far
+/// longer than the message (written on rather than rewritten), or one that
+/// lost, doubled or made up a marker.
+enum ComposerRewriteProblem { empty, tooLong, markers }
+
 /// Why the text could not be polished: what went wrong asking ([message]),
-/// or none for a reply that was not the text polished.
+/// or none for a reply that was not the text polished; [problem] says which
+/// check refused it, and the figures that check saw.
 class ComposerPolishException implements Exception {
-  const ComposerPolishException([this.message]);
+  const ComposerPolishException(
+    this.message, {
+    this.problem,
+    this.length = 0,
+    this.limit = 0,
+    this.askedLength = 0,
+  });
 
   final String? message;
+  final ComposerRewriteProblem? problem;
+
+  /// The reply's length, the limit it broke, and the message's own.
+  final int length;
+  final int limit;
+  final int askedLength;
 
   @override
   String toString() => message ?? 'No answer';
@@ -179,10 +197,30 @@ Future<Delta> polishComposerText(
       .replaceFirst(RegExp(r'\s*</message>$'), '');
   final words = cleaned.replaceAll(_marker, '');
   final before = asked.text.replaceAll(_marker, '');
-  if (words.trim().isEmpty || words.length > before.length * 2 + 200) {
-    throw const ComposerPolishException();
+  // Polished, not written on: the same language, about the same length.
+  final limit = before.length * 2 + 200;
+  if (words.trim().isEmpty) {
+    throw ComposerPolishException(
+      null,
+      problem: ComposerRewriteProblem.empty,
+      askedLength: before.length,
+    );
+  }
+  if (words.length > limit) {
+    throw ComposerPolishException(
+      null,
+      problem: ComposerRewriteProblem.tooLong,
+      length: words.length,
+      limit: limit,
+      askedLength: before.length,
+    );
   }
   final content = composerPolishContent(cleaned, asked);
-  if (content == null) throw const ComposerPolishException();
+  if (content == null) {
+    throw const ComposerPolishException(
+      null,
+      problem: ComposerRewriteProblem.markers,
+    );
+  }
   return content;
 }

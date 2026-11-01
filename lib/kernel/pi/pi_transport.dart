@@ -1,3 +1,6 @@
+import 'package:path/path.dart' as p;
+
+import '../agent_instructions.dart';
 import 'pi_process_stub.dart'
     if (dart.library.io) 'pi_process_io.dart'
     as platform;
@@ -40,6 +43,26 @@ class PiUnavailable implements Exception {
 
   @override
   String toString() => detail == null ? message : '$message\n$detail';
+}
+
+/// The file of BaoCode's pi extension (AgentPiExtension), beside the
+/// agents' command.
+const piExtensionFile = 'baocode-pi.ts';
+
+/// What pi starts with besides its mode and session, where BaoCode can be
+/// reached from it ([environment] has the agents' command): told of
+/// terminals and the browser, and given BaoCode's extension, beside the
+/// command.
+List<String> piBaoCodeArguments(Map<String, String> environment) {
+  final command = environment[AgentInstructions.commandVariable];
+  final instructions = AgentInstructions.of(environment);
+  if (command == null || instructions == null) return const [];
+  return [
+    '--append-system-prompt',
+    instructions,
+    '--extension',
+    p.join(p.dirname(command), piExtensionFile),
+  ];
 }
 
 /// Starts pi for one session in [cwd]: the session file [session] goes

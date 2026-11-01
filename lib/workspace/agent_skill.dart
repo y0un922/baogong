@@ -24,10 +24,11 @@ abstract final class AgentSkill {
       'Start other coding agents (Codex, Claude Code) beside you in BaoCode, '
       'send them work, wait for them and read their answers; and work in '
       'terminals the user watches in BaoCode, on this machine or on a '
-      'server over ssh with nothing installed there. Use only when the user '
-      'asks for another agent to do something, to work with other agents in '
-      'BaoCode, or to work in a terminal or on a server through BaoCode. '
-      'Requires BAOCODE_AGENT_URL (an agent BaoCode started).';
+      'server over ssh with nothing installed there. Use it whenever you '
+      'would ssh to a server (instead of ssh in your shell), when the user '
+      'asks for another agent to do something or to work with other agents '
+      'in BaoCode, and for a terminal of BaoCode\'s. Requires '
+      'BAOCODE_AGENT_URL (an agent BaoCode started).';
 
   static String get text {
     const command = '"\$${AgentHost.commandVariable}"';
@@ -40,7 +41,7 @@ $marker
 
 # Agents in BaoCode
 
-BaoCode runs you, and can run other coding agents beside you: you hand them work and read what they answer, as the user would. Each shows in a pane of its own in BaoCode, beside yours, where the user watches it and approves what it runs.
+BaoCode runs you, and can run other coding agents beside you: you hand them work and read what they answer, as the user would. Each shows in a pane of its own in BaoCode, beside yours, where the user watches it. They run in full access: what they run is not approved first.
 
 Before anything else, check that BaoCode started you:
 
@@ -75,7 +76,7 @@ $command help
 
 - Write a prompt that stands on its own: the agent sees none of your conversation. Say what to do, where, and what to answer with.
 - The agents work in the same folder as you. Give each a part of its own, and do not change the same files at the same time.
-- They ask the user before what they run. While one waits for the user's approval, `wait` says so: tell the user, and wait again.
+- They run in full access and do not ask before what they run. Should one still wait for the user's approval, `wait` says so: tell the user, and wait again.
 - Start only as many as the work needs. An agent you started cannot start agents of its own.
 - Check what an agent says it did before relying on it.
 - Close the panes of the agents you are done with (`close <id>`).

@@ -11,6 +11,7 @@ import 'dart:math' as math;
 
 import '../chat/chat_session.dart' show ComposerMessage;
 import '../kernel/agent_kernel.dart' show KernelChoiceKind;
+import '../kernel/claude_code/claude_sdk_tools.dart';
 import '../kernel/kernel_types.dart';
 import '../remote/remote_location.dart';
 import 'agent_terminals.dart';
@@ -68,9 +69,12 @@ class AgentHost {
   static const longestWait = Duration(minutes: 30);
 
   /// The approval mode an agent started by another works in, by kernel:
-  /// asking before what it runs. A kernel not here asks nothing (pi), and
-  /// is not started.
-  static const _asking = {'claude-code': 'default', 'codex': 'untrusted'};
+  /// full access, running what it runs without asking. A kernel not here
+  /// asks nothing anyway (pi).
+  static const _fullAccess = {
+    'claude-code': 'bypassPermissions',
+    'codex': 'full',
+  };
 
   static final _random = math.Random.secure();
 
@@ -127,6 +131,33 @@ class AgentHost {
     } on _Refused catch (refused) {
       return AgentReply.error(refused.message);
     }
+  }
+
+  /// The app's tools ([ClaudeSdkTools]) as an MCP server for the agent of
+  /// [key], which has no other way to them (Codex, pi): the answer to
+  /// [message] (JSON-RPC), none for a notification.
+  Future<Map<String, Object?>?> mcp(
+    String key,
+    Map<String, Object?> message,
+  ) async {
+    final caller = _callers[key];
+    if (caller == null || !workspace.threads.contains(caller)) {
+      return {
+        'jsonrpc': '2.0',
+        'id': message['id'],
+        'error': {
+          'code': -32001,
+          'message': 'This agent is no longer in BaoCode.',
+        },
+      };
+    }
+    // Its calls under way are its own (notifications/cancelled finds them
+    // by its key).
+    final answer = await ClaudeSdkTools.handle(
+      message,
+      ClaudeSdkCall(cwd: caller.project.path, sessionId: key),
+    );
+    return message.containsKey('id') ? answer : null;
   }
 
   static const usage = '''
@@ -231,16 +262,9 @@ Usage: baocode-agent <command>
         'No agent "$kernelName" here: one of ${names.join(', ')}.',
       );
     }
-    final asking = _asking[kernel.id];
-    if (asking == null) {
-      throw _Refused(
-        '${kernel.label} does not ask the user before what it runs, and '
-        'agents started by another must: start another kind.',
-      );
-    }
     final thread = workspace.startWorker(caller.project, kernel, {
       KernelChoiceKind.mode: 'agent',
-      KernelChoiceKind.permission: asking,
+      KernelChoiceKind.permission: ?_fullAccess[kernel.id],
       KernelChoiceKind.model: ?model,
       KernelChoiceKind.effort: ?effort,
     });
@@ -253,9 +277,8 @@ Usage: baocode-agent <command>
         : 'in the sidebar (no room beside you)';
     return AgentReply(
       '${worker.id}\n'
-      'Started ${kernel.label} as ${worker.id}, $where. It asks the user '
-      'before what it runs. Wait for its answer: baocode-agent wait '
-      '${worker.id}',
+      'Started ${kernel.label} as ${worker.id}, $where, in full access. '
+      'Wait for its answer: baocode-agent wait ${worker.id}',
     );
   }
 

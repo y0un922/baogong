@@ -20,6 +20,7 @@ import '../../platform/app_platform.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/code_font.dart';
 import 'terminal_colors.dart';
+import 'terminal_settings.dart';
 
 import 'package:bao_xterm/common/color.dart';
 import 'package:bao_xterm/common/data/escape_sequences.dart';
@@ -451,11 +452,12 @@ double vscodeTerminalFontSize([
 
 /// The options VS Code's terminal creates xterm.js with that the renderer
 /// reads, at their defaults: the interface font at its interface size,
-/// `terminal.integrated.lineHeight` 1, `letterSpacing` 0, a block cursor that
-/// does not blink and an outline when unfocused, bold in bright colors, a
-/// minimum contrast ratio of 4.5, overlapping glyphs rescaled, 1000 lines of
-/// scrollback, no smooth scrolling and Modern UI's 10px scrollbar with the
-/// overview ruler's top border. The colors are [theme]'s, the workbench's
+/// `terminal.integrated.lineHeight` 1, `letterSpacing` 0, an outline cursor
+/// when unfocused, bold in bright colors, a minimum contrast ratio of 4.5,
+/// overlapping glyphs rescaled, no smooth scrolling and Modern UI's 10px
+/// scrollbar with the overview ruler's top border. The cursor's style and
+/// blinking, the scrollback and the Option key are the user's
+/// ([TerminalSettings]). The colors are [theme]'s, the workbench's
 /// ([terminalColorTheme]) by default.
 ITerminalOptions vscodeTerminalOptions({
   int? cols,
@@ -465,7 +467,8 @@ ITerminalOptions vscodeTerminalOptions({
   cols: cols,
   rows: rows,
   allowProposedApi: true,
-  scrollback: 1000,
+  scrollback: TerminalSettings.scrollback.value,
+  macOptionIsMeta: TerminalSettings.macOptionIsMeta.value,
   theme: vscodeTerminalTheme(theme),
   drawBoldTextInBrightColors: true,
   fontFamily: vscodeTerminalFontFamily(),
@@ -476,9 +479,9 @@ ITerminalOptions vscodeTerminalOptions({
   lineHeight: 1,
   minimumContrastRatio: terminalMinimumContrastRatio,
   tabStopWidth: 8,
-  cursorBlink: false,
+  cursorBlink: TerminalSettings.cursorBlinking.value,
   blinkIntervalDuration: 0,
-  cursorStyle: 'block',
+  cursorStyle: TerminalSettings.cursorStyle.value.xterm,
   cursorInactiveStyle: 'outline',
   cursorWidth: 1,
   fastScrollSensitivity: 5,

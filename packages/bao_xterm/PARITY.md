@@ -11,12 +11,12 @@
 
 ## 面板和标签
 
-- 没有拆分终端：每个终端各自一组，标题仍沿用 VS Code 的 “Terminal Group” 说法。
+- 面板里没有拆分终端：每个终端各自一组，标题仍沿用 VS Code 的 “Terminal Group” 说法。对话侧栏的终端页可以照 Ghostty 拆分（⌘D 向右、⇧⌘D 向下，可嵌套，⌘W 关掉有键盘的那个并挂断其进程，⌃⌘H/J/K/L 在其间移动；`../../lib/chat/side_panel/terminal_split.dart`）。
 - 没有终端配置（profile）下拉菜单，也没有拆分、改图标、改颜色、移动到编辑区这些操作。
 - 中键点标签不会关闭终端；标签列表里不能用方向键切换。
 - 两个以上终端时右侧标签列表固定 120 像素宽，没有分隔条，也没有窄模式。
 - 只有一个终端时，关闭按钮和终端名称才显示在面板标题栏上。
-- 标题是可执行文件的名字，还不跟随前台进程或 OSC 标题。
+- 标题照 Ghostty：程序用 OSC 0/2 设的标题，或 shell 集成报告的正在运行的命令行，以后到的为准；命令结束后回到可执行文件的名字。VS Code 默认只显示进程名。
 - 重命名是在标签上原地编辑，不是 VS Code 的快速输入框。
 - 被信号结束的进程安静地关闭（node-pty 对这种情况也报 0）。
 - 已退出的终端，标签上用错误色的错误图标标记。
@@ -25,6 +25,8 @@
 ## PTY 和环境变量
 
 - `TERM_PROGRAM` 是 `baocode`，没有 `TERM_PROGRAM_VERSION`。
+- 登录方式启动的 zsh 不继承值里含 vi 的 `EDITOR`、`VISUAL`（`terminalBaseEnvironment`）：zsh 启动时据此进 vi 键位，⌘←、⌘→、⌘⌫ 发的 ⌃A、⌃E、⌃U 就不能编辑行；它的启动文件会重新设置。
+- OSC 52：程序写剪贴板时放进系统剪贴板，查询（`?`）不回答。
 - 直接启动 `$SHELL` 本身；VS Code 是按名字在 PATH 里找对应的配置。不查 `/etc/passwd`。
 - Linux 上启动 shell 不加登录参数；macOS 上 bash、zsh、fish 加 `-l`，tmux、pwsh 不加，其他名字里带 zsh 或 bash 的加 `--login`。
 - Windows 按 VS Code 的顺序找 PowerShell，找不到再用 `ComSpec`，最后是 `cmd.exe`。

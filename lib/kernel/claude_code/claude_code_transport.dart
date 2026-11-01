@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../models/launch_environment.dart';
+import '../agent_instructions.dart';
 import '../commit_attribution.dart';
 
 export 'package:bao_remote/claude.dart'
@@ -310,16 +311,13 @@ class ClaudeLaunch {
 
   /// The variable of BaoCode's command for its agents (AgentHost's
   /// `commandVariable`): there for an agent BaoCode can be reached from.
-  static const agentCommandVariable = 'BAOCODE_AGENT';
+  static const agentCommandVariable = AgentInstructions.commandVariable;
 
   bool get _agentCommand => variables.containsKey(agentCommandVariable);
 
   /// Has the agent work on servers in a terminal the user watches, not in
   /// its shell (a hook in [settings] turns ssh there away).
-  static const servers = '''
-<servers>
-To work on another machine over ssh, use a terminal in BaoCode that the user watches, not ssh in your shell tool: `"\$BAOCODE_AGENT" terminal open --ssh <host>` prints its id (t1, …); then `"\$BAOCODE_AGENT" terminal run t1 '<command>'` runs a command there and prints its output and exit code. The baocode-agents skill has the rest (type, keys, read, wait, close). scp, rsync and git over ssh are fine in your shell.
-</servers>''';
+  static const servers = AgentInstructions.servers;
 
   /// The hook that turns ssh in the agent's shell to a terminal of
   /// BaoCode's (AgentHost answers it).

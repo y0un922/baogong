@@ -35,6 +35,7 @@ import 'composer_images.dart';
 import 'composer_mock_data.dart';
 import 'composer_picker.dart';
 import 'composer_polish.dart';
+import 'composer_translate.dart';
 import 'pickers_row.dart';
 import 'session_model_picker.dart';
 import 'kernel_option_text.dart';
@@ -163,8 +164,11 @@ class ChatComposerState extends State<ChatComposer>
 
   bool _hasContent = false;
 
-  /// Polish asked, its answer awaited (see [_polish]).
+  /// Polish asked, its answer awaited (see [_aiRewrite]).
   bool _polishing = false;
+
+  /// Translation asked, its answer awaited (see [_aiRewrite]).
+  bool _translating = false;
 
   /// Every image put in, by number, kept until sent: the text's references
   /// pick which go (see [_images]), so one taken out and brought back by
@@ -1390,7 +1394,8 @@ class ChatComposerState extends State<ChatComposer>
 
   // --- Polish --------------------------------------------------------------
 
-  /// The text as the model is given it to polish (see [composerPolishText]).
+  /// The text as the model is given it to polish or translate (see
+  /// [composerPolishText]).
   ComposerPolishText _polishText() {
     final document = _controller.document;
     return composerPolishText(
@@ -1398,34 +1403,47 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
-  /// Has the auxiliary model polish the text, its tags, images, code and
-  /// links kept as they are; put in its place as one change (⌘Z takes it
-  /// back), unless the text changed meanwhile. Why not, in a notification.
-  Future<void> _polish() async {
-    if (_polishing) return;
+  /// Has the auxiliary model polish the text (see [polishComposerText]) or,
+  /// with [translate], put it in the other language (see
+  /// [translateComposerText]): its tags, images, code and links kept as they
+  /// are; put in its place as one change (⌘Z takes it back), unless the text
+  /// changed meanwhile. Why not, in a notification.
+  Future<void> _aiRewrite({required bool translate}) async {
+    if (_polishing || _translating) return;
     final asked = _polishText();
     if (!asked.hasWords) return;
     final before = _controller.document.toDelta();
     final notifications = IdeNotificationsScope.maybeOf(context);
     final l10n = context.l10n;
-    setState(() => _polishing = true);
+    final model = widget.session.selected(KernelChoiceKind.model);
+    final location = widget.session.kernelContext.cwd;
+    setState(() => translate ? _translating = true : _polishing = true);
     try {
-      final Delta polished;
+      final Delta rewritten;
       try {
-        polished = await polishComposerText(
-          asked,
-          model: widget.session.selected(KernelChoiceKind.model),
-          location: widget.session.kernelContext.cwd,
-        );
+        rewritten = await (translate
+            ? translateComposerText(asked, model: model, location: location)
+            : polishComposerText(asked, model: model, location: location));
       } on ComposerPolishException catch (error) {
+        final message = switch (error.problem) {
+          ComposerRewriteProblem.empty => l10n.aiRewriteEmpty,
+          ComposerRewriteProblem.tooLong => l10n.aiRewriteTooLong(
+            '${error.length}',
+            '${error.askedLength}',
+          ),
+          ComposerRewriteProblem.markers => l10n.aiRewriteMarkers,
+          null => error.message ?? l10n.stashAiNoAnswer,
+        };
         notifications?.notify(
           IdeSeverity.error,
-          l10n.composerPolishFailed(error.message ?? l10n.stashAiNoAnswer),
+          translate
+              ? l10n.composerTranslateFailed(message)
+              : l10n.composerPolishFailed(message),
         );
         return;
       }
       if (!mounted || _controller.document.toDelta() != before) return;
-      final length = polished.toList().fold(
+      final length = rewritten.toList().fold(
         0,
         (sum, op) => sum + (op.length ?? 0),
       );
@@ -1433,14 +1451,16 @@ class ChatComposerState extends State<ChatComposer>
       // before it, nor with what is typed next.
       final history = _controller.document.history..lastRecorded = 0;
       _controller.compose(
-        (Delta()..delete(_controller.document.length - 1)).concat(polished),
+        (Delta()..delete(_controller.document.length - 1)).concat(rewritten),
         TextSelection.collapsed(offset: length),
         ChangeSource.local,
       );
       history.lastRecorded = 0;
       _focusNode.requestFocus();
     } finally {
-      if (mounted) setState(() => _polishing = false);
+      if (mounted) {
+        setState(() => translate ? _translating = false : _polishing = false);
+      }
     }
   }
 
@@ -2060,13 +2080,29 @@ class ChatComposerState extends State<ChatComposer>
           ),
           const SizedBox(width: 8),
           if (ComposerPolishSetting.current()) ...[
-            _PolishButton(
+            _ComposerAiButton(
+              icon: Codicons.sparkle,
               busy: _polishing,
+              message: _polishing
+                  ? l10n.composerPolishing
+                  : l10n.composerPolishHint,
               enabled: _polishing || _polishText().hasWords,
-              onTap: () => unawaited(_polish()),
+              onTap: () => unawaited(_aiRewrite(translate: false)),
             ),
             const SizedBox(width: 2),
           ],
+          _ComposerAiButton(
+            icon: Codicons.globe,
+            busy: _translating,
+            message: _translating
+                ? l10n.composerTranslating
+                : composerTranslateToEnglish(_polishText())
+                ? l10n.composerTranslateToEnglishHint
+                : l10n.composerTranslateToChineseHint,
+            enabled: _translating || _polishText().hasWords,
+            onTap: () => unawaited(_aiRewrite(translate: true)),
+          ),
+          const SizedBox(width: 2),
           if ((widget.onToggleContextPanel, context) case (
             final onToggle?,
             final usage?,
@@ -2097,31 +2133,35 @@ class ChatComposerState extends State<ChatComposer>
   }
 }
 
-/// Polish (see [ChatComposerState._polish]): a sparkle, spinning while the
-/// model answers; faint with no words to polish.
-class _PolishButton extends StatelessWidget {
-  const _PolishButton({
+/// Polish (see [ChatComposerState._aiRewrite]): a sparkle; and Translate, a
+/// globe: spinning while the model answers, faint with no words to polish
+/// or translate.
+class _ComposerAiButton extends StatelessWidget {
+  const _ComposerAiButton({
+    required this.icon,
     required this.busy,
     required this.enabled,
+    required this.message,
     required this.onTap,
   });
 
+  final IconData icon;
   final bool busy;
   final bool enabled;
+  final String message;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final l10n = context.l10n;
     final colors = themeColors;
     final active = enabled && !busy;
-    final icon = Icon(
-      busy ? Codicons.loading : Codicons.sparkle,
+    final glyph = Icon(
+      busy ? Codicons.loading : icon,
       size: 14,
       color: enabled ? colors['icon.foreground'] : AppColors.textFaint,
     );
     return IdeHover(
-      message: busy ? l10n.composerPolishing : l10n.composerPolishHint,
+      message: message,
       child: HoverBuilder(
         cursor: active ? SystemMouseCursors.click : SystemMouseCursors.basic,
         builder: (context, hovered) => GestureDetector(
@@ -2139,7 +2179,7 @@ class _PolishButton extends StatelessWidget {
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(5),
             ),
-            child: busy ? IdeSpinning(icon) : icon,
+            child: busy ? IdeSpinning(glyph) : glyph,
           ),
         ),
       ),

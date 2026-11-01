@@ -142,7 +142,9 @@ class ContextUsagePanel extends StatelessWidget {
                     _Legend(
                       color: colors[i % colors.length],
                       label: filled[i].label,
-                      value: _format(filled[i].tokens),
+                      value:
+                          '${usage.estimated ? '~' : ''}'
+                          '${_format(filled[i].tokens)}',
                     ),
                   // Not in the bar: room kept free, not taken.
                   if (reserved > 0)
@@ -173,16 +175,16 @@ class ContextUsagePanel extends StatelessWidget {
   }
 }
 
-/// How the prompt cache took the last request's input, in a row as the
-/// plan's limits: a strip of it whole (read, written, neither), its hit
-/// rate, and the conversation's; the counts on hover.
+/// How the prompt cache took the conversation's input, in a row as the
+/// plan's limits: a strip of it whole (read, written, neither) and its hit
+/// rate; the counts, and the last request's, on hover.
 class _PromptCacheMeter extends StatelessWidget {
   const _PromptCacheMeter({required this.cache});
 
   final PromptCache cache;
 
   static String _percent(CacheTokens tokens) =>
-      (tokens.hitRate * 100).toStringAsFixed(0);
+      (tokens.hitRate * 100).toStringAsFixed(1);
 
   @override
   Widget build(BuildContext context) {
@@ -221,11 +223,11 @@ class _PromptCacheMeter extends StatelessWidget {
               height: 4,
               child: CustomPaint(
                 painter: _UsageBarPainter(
-                  window: last.total,
+                  window: all.total,
                   used: [
-                    (last.read, colors['charts.green']),
-                    (last.written, colors['charts.yellow']),
-                    (last.uncached, colors['charts.red']),
+                    (all.read, colors['charts.green']),
+                    (all.written, colors['charts.yellow']),
+                    (all.uncached, colors['charts.red']),
                   ],
                   track: colors['editorWidget.border'],
                 ),
@@ -235,7 +237,7 @@ class _PromptCacheMeter extends StatelessWidget {
           SizedBox(
             width: 44,
             child: Text(
-              '${_percent(last)}%',
+              '${_percent(all)}%',
               textAlign: TextAlign.right,
               style: TextStyle(
                 color: AppColors.text,
@@ -243,16 +245,6 @@ class _PromptCacheMeter extends StatelessWidget {
                 fontFamilyFallback: AppFonts.monoFallbacks,
                 fontSize: 11,
               ),
-            ),
-          ),
-          SizedBox(
-            width: 104,
-            child: Text(
-              l10n.usageCacheOverall(_percent(all)),
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: AppColors.textFaint, fontSize: 11),
             ),
           ),
         ],
@@ -269,20 +261,25 @@ class _PlanUsage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // No plan to speak of (e.g. pi, or an API key): the cost alone.
+    final plan =
+        stats.limits.isNotEmpty || stats.limitsState != LimitsState.idle;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
             Expanded(
-              child: Text(
-                context.l10n.usagePlanUsage,
-                style: TextStyle(
-                  color: AppColors.text,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              child: plan
+                  ? Text(
+                      context.l10n.usagePlanUsage,
+                      style: TextStyle(
+                        color: AppColors.text,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
             if (stats.costUsd case final cost?)
               _Stat(

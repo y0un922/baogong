@@ -6,7 +6,9 @@ import 'package:bao_remote/local.dart' show ClaudeEnvironment;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../kernel/pi/pi_transport.dart' show piExtensionFile;
 import 'agent_host.dart';
+import 'agent_pi_extension.dart';
 import 'agent_skill.dart';
 
 /// The command: its arguments posted, form-encoded and in order, to the
@@ -55,6 +57,8 @@ Future<void> serveAgents(
     await Directory(directory).create(recursive: true);
     await File(command).writeAsString(_script);
     await Process.run('chmod', ['755', command]);
+    await File(p.join(directory, piExtensionFile))
+        .writeAsString(AgentPiExtension.text);
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) => _answer(host, request));
     host
@@ -69,6 +73,9 @@ Future<void> serveAgents(
 
 Future<void> _answer(AgentHost host, HttpRequest request) async {
   final response = request.response;
+  if (request.uri.pathSegments case [final key, 'mcp']) {
+    return _answerMcp(host, key, request);
+  }
   try {
     final key = request.uri.pathSegments.firstOrNull;
     final AgentReply reply;
@@ -100,6 +107,45 @@ Future<void> _answer(AgentHost host, HttpRequest request) async {
     await response.close();
   } on Object {
     // The command was stopped (its agent's turn, say): no one to answer.
+  }
+}
+
+/// The app's tools as an MCP server over HTTP ([AgentHost.mcp]): each
+/// message posted, its answer as JSON. No stream of the server's own
+/// (GET), which the protocol lets a server go without.
+Future<void> _answerMcp(AgentHost host, String key, HttpRequest request) async {
+  final response = request.response;
+  try {
+    if (request.method != 'POST') {
+      response.statusCode = HttpStatus.methodNotAllowed;
+      await response.close();
+      return;
+    }
+    final body = await utf8.decodeStream(request);
+    final Object? message;
+    try {
+      message = jsonDecode(body);
+    } on FormatException {
+      response.statusCode = HttpStatus.badRequest;
+      await response.close();
+      return;
+    }
+    if (message is! Map<String, Object?>) {
+      response.statusCode = HttpStatus.badRequest;
+      await response.close();
+      return;
+    }
+    final answer = await host.mcp(key, message);
+    if (answer == null) {
+      response.statusCode = HttpStatus.accepted;
+    } else {
+      response
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode(answer));
+    }
+    await response.close();
+  } on Object {
+    // The agent went away: no one to answer.
   }
 }
 

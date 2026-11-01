@@ -110,10 +110,10 @@ void main() {
     final worker = workspace.threads.firstWhere(
       (thread) => thread.kernel == MockKernels.codex,
     );
-    // Beside it, the caller still focused; asking before what it runs.
+    // Beside it, the caller still focused; in full access.
     expect(workspace.grid.panes, [caller, worker]);
     expect(workspace.selected, caller);
-    expect(worker.session.selected(KernelChoiceKind.permission), 'untrusted');
+    expect(worker.session.selected(KernelChoiceKind.permission), 'full');
 
     // The mock asks before running the tests.
     final waiting = host.run(key, ['wait', 'a1', '--timeout', '20']);

@@ -25,6 +25,7 @@ import 'pages/settings_widgets.dart' show SettingsColors;
 enum SettingsSection {
   general,
   appearance,
+  terminal,
   models,
   network,
   ssh,
@@ -45,6 +46,7 @@ enum SettingsCategory {
   preferences([
     SettingsSection.general,
     SettingsSection.appearance,
+    SettingsSection.terminal,
     SettingsSection.models,
     SettingsSection.network,
     SettingsSection.ssh,
@@ -235,6 +237,7 @@ class SettingsDialogState extends State<SettingsDialog> {
   static IconData icon(SettingsSection section) => switch (section) {
     SettingsSection.general => Codicons.settingsGear,
     SettingsSection.appearance => Codicons.symbolColor,
+    SettingsSection.terminal => Codicons.terminal,
     SettingsSection.models => Codicons.sparkle,
     SettingsSection.network => Codicons.radioTower,
     SettingsSection.ssh => Codicons.remote,
@@ -263,6 +266,7 @@ class SettingsDialogState extends State<SettingsDialog> {
     return switch (section) {
       SettingsSection.general => l10n.settingsSectionGeneral,
       SettingsSection.appearance => l10n.settingsSectionAppearance,
+      SettingsSection.terminal => l10n.settingsSectionTerminal,
       SettingsSection.models => l10n.settingsSectionModels,
       SettingsSection.network => l10n.settingsSectionNetwork,
       SettingsSection.ssh => l10n.settingsSectionSsh,
@@ -283,6 +287,7 @@ class SettingsDialogState extends State<SettingsDialog> {
   static String keywords(BuildContext context, SettingsSection section) =>
       switch (section) {
         SettingsSection.appearance => context.l10n.settingsAppearanceKeywords,
+        SettingsSection.terminal => context.l10n.settingsTerminalKeywords,
         SettingsSection.network => context.l10n.settingsNetworkKeywords,
         SettingsSection.ssh => context.l10n.settingsSshKeywords,
         SettingsSection.mobile => context.l10n.settingsMobileKeywords,

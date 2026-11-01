@@ -112,5 +112,5 @@ xterm.js commit `c58ea3637f3968e0e6e79cd92cf9aace7ef89ee2`（`@xterm/xterm` 6.1.
 
 - 在 Windows 实机上跑 `../bao_pty/test/pty_windows_test.dart`（`cmd.exe` 的真实进程测试，含暂停和恢复），以及 shell 集成的 pwsh 脚本；用微软拼音和微软韩文输入法在终端里实际打一遍字。
 - sticky scroll 和终端补全（suggest）没做，见 PARITY 的“暂不做”。
-- 终端选项（光标样式、回滚行数、`macOptionIsMeta` 等）固定用 VS Code 的默认值（`vscodeTerminalOptions`），IDE 还没有设置入口。
+- 光标样式、光标闪烁、回滚行数、`macOptionIsMeta` 在 设置 → 终端（`../../lib/ide/terminal/terminal_settings.dart`，settings.json 的 `terminal.integrated.*`）；其余终端选项仍固定用 VS Code 的默认值（`vscodeTerminalOptions`）。
 - 待决事项里的几项定下来后改相应默认值。

@@ -243,7 +243,77 @@ void main() {
       expect(transcript.activeTurn, isNull);
       expect(transcript.usage?.used, 1234);
       expect(transcript.stats?.costUsd, 0.25);
+      // The prompt cache, by its requests: the last, and all four.
+      final cache = transcript.stats?.cache;
+      expect((cache?.last.read, cache?.last.uncached), (19218, 228));
+      expect(
+        (cache?.conversation.read, cache?.conversation.uncached),
+        (4036 + 19070 + 19136 + 19218, 15163 + 195 + 211 + 228),
+      );
+      // The context split by the first request: its input (15163 + 4036)
+      // less a guess at the prompt (3).
+      final split = events
+          .whereType<UsageReported>()
+          .map((e) => e.usage)
+          .firstWhere((u) => u.used == 19478);
+      expect(split.estimated, isTrue);
+      expect(
+        [for (final s in split.segments) (s.label, s.tokens)],
+        [('System prompt & tools', 19196), ('Messages', 19478 - 19196)],
+      );
+      expect(kernel.accountLimits, isEmpty);
       expect(kernel.sessionId, 's1');
+    });
+
+    group('the context of a session resumed', () {
+      Future<ContextUsage?> resumed(List<Map<String, Object?>> history) async {
+        final pi = FakePi(history: history);
+        final (:kernel, :transcript, events: _, starts: _) = piKernel(
+          [pi],
+          context: KernelContext(
+            resume: SessionRecord(
+              id: 's0',
+              title: 'Old',
+              updatedAt: DateTime(2026),
+              cwd: '/project',
+              path: '/missing/session.jsonl',
+            ),
+          ),
+        );
+        addTearDown(kernel.dispose);
+        kernel.prepare();
+        await pumpEventQueue();
+        return transcript.usage;
+      }
+
+      test('is split by its first request', () async {
+        final usage = await resumed([
+          {'role': 'user', 'content': 'Hi'},
+          {
+            'role': 'assistant',
+            'content': const [],
+            'usage': {'input': 100, 'cacheRead': 800, 'totalTokens': 920},
+          },
+        ]);
+        // 900 in, less 'Hi' (1); of what pi counts now (1234).
+        expect(usage?.used, 1234);
+        expect([for (final s in usage!.segments) s.tokens], [899, 1234 - 899]);
+      });
+
+      test('is not split when its first request was compacted away', () async {
+        final usage = await resumed([
+          {'role': 'compactionSummary', 'summary': 'Earlier work'},
+          {'role': 'user', 'content': 'Go on'},
+          {
+            'role': 'assistant',
+            'content': const [],
+            'usage': {'input': 100, 'cacheRead': 800, 'totalTokens': 920},
+          },
+        ]);
+        expect(usage?.used, 1234);
+        expect(usage?.segments, isEmpty);
+        expect(usage?.estimated, isFalse);
+      });
     });
 
     for (final (thought, reasoning) in [

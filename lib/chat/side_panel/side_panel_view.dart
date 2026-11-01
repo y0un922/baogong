@@ -60,6 +60,7 @@ import 'file_preview.dart';
 import 'git_changes.dart';
 import 'side_panel_controller.dart';
 import 'terminal_preview.dart';
+import 'terminal_split_view.dart';
 
 /// [child] (the conversations) and, at its right (its left, as [panel] is
 /// [AgentSidePanel.atLeft]) while [panel] shows, the side panel [builder]
@@ -293,13 +294,15 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
   /// What it shows, beside its sash.
   Widget _content(BuildContext context) =>
       // A click anywhere in it puts the focus there (on what takes it, else
-      // on the panel), for its keys.
+      // on the panel), for its keys. Checked once the focus has moved: what
+      // took it asked first (its listener is under this one), and a request
+      // only takes effect in a microtask.
       Listener(
-        onPointerDown: (_) {
-          if (!_panel.focusNode.hasFocus) {
+        onPointerDown: (_) => scheduleMicrotask(() {
+          if (mounted && !_panel.focusNode.hasFocus) {
             _panel.focusNode.requestFocus();
           }
-        },
+        }),
         child: Focus(
           focusNode: _panel.focusNode,
           // The editor's background, all of it: the conversation's side,
@@ -820,7 +823,10 @@ class AgentSidePanelView extends StatelessWidget {
     }
 
     void kill(TerminalInstance shell) {
-      panel.closeTerminal(session, shell);
+      // One of a split leaves its tab to the rest (see [dropTerminal]).
+      if (tabs.splits[tabs.tabOf(shell)] == null) {
+        panel.closeTerminal(session, shell);
+      }
       terminals!.kill(shell);
     }
 
@@ -909,12 +915,18 @@ class AgentSidePanelView extends StatelessWidget {
               ],
             ),
       body: switch (current?.item) {
-        final TerminalInstance shell => TerminalView(
-          shell,
+        final TerminalInstance shell => TerminalSplitView<Object>(
           key: ObjectKey(shell),
-          skipShell: terminalSkipShell,
-          onKill: () => kill(shell),
-          onOpenLink: onOpenTerminalLink,
+          split: tabs.layoutOf(shell),
+          leaf: (terminal) => switch (terminal) {
+            final TerminalInstance shell => TerminalView(
+              shell,
+              skipShell: terminalSkipShell,
+              onKill: () => kill(shell),
+              onOpenLink: onOpenTerminalLink,
+            ),
+            _ => const SizedBox.shrink(),
+          },
         ),
         final KernelTask task => TerminalPreview(
           key: ValueKey((session, task.id)),
@@ -1427,13 +1439,8 @@ class _SectionBar extends StatelessWidget {
   /// The list's toggle and the close button, at the right.
   static const _actionsWidth = 2 * 22.0 + 2 + 6;
 
-  /// The pages there: the browser's once one of the user's has connected,
-  /// the plan's once there is one.
-  List<SidePanelSection> get _sections => [
-    ...alwaysShownSections,
-    if (BrowserBridge.instance.used) SidePanelSection.browser,
-    if (tabs.plan != null) SidePanelSection.plan,
-  ];
+  /// The pages there (see [sidePanelSections]).
+  List<SidePanelSection> get _sections => sidePanelSections(tabs);
 
   /// What the tabs of [sections] take with their names (see
   /// [_SectionTab]), with [counts] by page: more than that, they show only

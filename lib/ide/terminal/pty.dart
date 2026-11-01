@@ -48,6 +48,28 @@ class TerminalEnvironmentRequest {
   }
 }
 
+/// [base], the environment the app resolved from the login shell, as
+/// [shell] inherits it: a login zsh is not handed an `EDITOR` or `VISUAL`
+/// naming vi (vim, nvim). zsh picks its vi keymap from them as it starts,
+/// before its startup files run, and there ⌃A, ⌃E and ⌃U (what ⌘←, ⌘→ and
+/// ⌘⌫ send) do not edit the line; a terminal opened from the Dock has
+/// neither. Its startup files, all read by a login shell, set them again.
+Map<String, String> terminalBaseEnvironment(
+  Map<String, String> base,
+  TerminalShell shell,
+) {
+  final name = shell.executable.split(RegExp(r'[/\\]')).last.toLowerCase();
+  final login = shell.arguments.any(
+    (argument) =>
+        argument == '--login' || RegExp(r'^-[a-z]*l[a-z]*$').hasMatch(argument),
+  );
+  if (!name.contains('zsh') || !login) return base;
+  return {...base}..removeWhere(
+    (name, value) =>
+        (name == 'EDITOR' || name == 'VISUAL') && value.contains('vi'),
+  );
+}
+
 /// What a new terminal runs in [root]: [shell] (a profile's), else the
 /// user's shell, in the environment a terminal gives (see
 /// terminal_shell.dart) changed as [environment] asks, with VS Code's

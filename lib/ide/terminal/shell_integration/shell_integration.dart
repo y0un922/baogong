@@ -23,6 +23,8 @@ import 'package:bao_xterm/common/services/services.dart';
 import 'package:bao_xterm/headless/terminal.dart';
 
 import 'capabilities/capabilities.dart';
+import 'capabilities/command_detection/terminal_command.dart'
+    show PartialTerminalCommand;
 import 'decoration_addon.dart';
 import 'shell_integration_addon.dart';
 import 'shell_integration_injection.dart' show generateShellIntegrationNonce;
@@ -77,6 +79,7 @@ class ShellIntegration extends Disposable {
     void attachCommandDetection(ICommandDetectionCapability capability) {
       commandDetection.value = DisposableStore()
         ..add(capability.onCommandStarted(_onCommandStarted.fire))
+        ..add(capability.onCommandExecuted(_onCommandExecuted.fire))
         ..add(capability.onCommandFinished(_onCommandFinished.fire));
     }
 
@@ -109,6 +112,7 @@ class ShellIntegration extends Disposable {
   late final DecorationAddon decorationAddon;
 
   late final _onCommandStarted = register(Emitter<ITerminalCommand>());
+  late final _onCommandExecuted = register(Emitter<PartialTerminalCommand>());
   late final _onCommandFinished = register(Emitter<ITerminalCommand>());
   late final _onDidChangeCwd = register(Emitter<String>());
 
@@ -136,6 +140,11 @@ class ShellIntegration extends Disposable {
   /// done): a command with only its `marker`.
   late final IEvent<ITerminalCommand> onCommandStarted =
       _onCommandStarted.event;
+
+  /// Fired when the shell runs the command line read, with its `command`
+  /// (the line, as the shell reported it or as it was read).
+  late final IEvent<PartialTerminalCommand> onCommandExecuted =
+      _onCommandExecuted.event;
 
   /// Fired when a command finishes, with it (also in [commands]).
   late final IEvent<ITerminalCommand> onCommandFinished =

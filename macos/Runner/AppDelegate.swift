@@ -95,6 +95,55 @@ class AppDelegate: FlutterAppDelegate {
   }
 }
 
+/// Key events of remote desktops (UU Remote, its on-screen keyboard too)
+/// carry ⌘, ⌃, ⌥ or ⇧ without the bit of its side (`NX_DEVICELCMDKEYMASK`
+/// and the like): ⌘S comes as 0x100000 where a keyboard sends 0x100108.
+/// Flutter reads a modifier as held by its side's bit, so it took ⌘ as let
+/// go and ⌘S as a plain S, which nothing handled (macOS beeped). Each such
+/// event is given back the bit of the side last pressed, the left one at
+/// first, before AppKit dispatches it (key equivalents included).
+final class ModifierSides {
+  private static var monitor: Any?
+
+  /// A modifier's flag, its left and right keys' codes and side bits.
+  private static let modifiers: [(flag: UInt64, left: UInt16, right: UInt16, leftBit: UInt64, rightBit: UInt64)] = [
+    (CGEventFlags.maskCommand.rawValue, 55, 54, 0x8, 0x10),
+    (CGEventFlags.maskControl.rawValue, 59, 62, 0x1, 0x2000),
+    (CGEventFlags.maskAlternate.rawValue, 58, 61, 0x20, 0x40),
+    (CGEventFlags.maskShift.rawValue, 56, 60, 0x2, 0x4),
+  ]
+
+  /// Whether each modifier's key last pressed was its right one.
+  private static var right = [Bool](repeating: false, count: modifiers.count)
+
+  static func install() {
+    guard monitor == nil else { return }
+    monitor = NSEvent.addLocalMonitorForEvents(
+      matching: [.keyDown, .keyUp, .flagsChanged]
+    ) { event in
+      sided(event)
+    }
+  }
+
+  static func sided(_ event: NSEvent) -> NSEvent {
+    guard let cgEvent = event.cgEvent else { return event }
+    let flags = cgEvent.flags.rawValue
+    var fixed = flags
+    for (i, modifier) in modifiers.enumerated() {
+      if event.type == .flagsChanged {
+        if event.keyCode == modifier.left { right[i] = false }
+        if event.keyCode == modifier.right { right[i] = true }
+      }
+      if flags & modifier.flag != 0 && flags & (modifier.leftBit | modifier.rightBit) == 0 {
+        fixed |= right[i] ? modifier.rightBit : modifier.leftBit
+      }
+    }
+    guard fixed != flags, let copy = cgEvent.copy() else { return event }
+    copy.flags = CGEventFlags(rawValue: fixed)
+    return NSEvent(cgEvent: copy) ?? event
+  }
+}
+
 /// The paths the system asks the app to open, for Flutter, over
 /// `baocode/open` (see open_requests.dart): kept until Flutter takes them
 /// (`takePending`, which also says it is ready for each as it comes), sent

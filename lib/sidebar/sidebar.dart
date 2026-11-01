@@ -154,6 +154,13 @@ class SidebarLink {
   /// The agents listed, top to bottom (not those of collapsed groups);
   /// null without a sidebar.
   List<AgentThread>? get visibleThreads => _state?._visibleThreads();
+
+  /// Whether the keyboard is in its list of agents.
+  bool get listHasFocus => _state?._listFocus.hasFocus ?? false;
+
+  /// The keyboard in its list of agents, on the one open; false where it
+  /// lists none.
+  bool focusList() => _state?._focusList() ?? false;
 }
 
 /// Agents list: new agent, search and customize, the agents grouped by
@@ -489,6 +496,15 @@ class _SidebarState extends State<Sidebar>
             if (row.thread case final t? when _listSelection.values.contains(t))
               t,
         ];
+
+  bool _focusList() {
+    if (_listFocus.context == null) return false;
+    _listFocus.requestFocus();
+    if (_current case final current? when _selectable.contains(current)) {
+      listFocusAt(_selectable.indexOf(current));
+    }
+    return true;
+  }
 
   void _rowContext(AgentThread thread) {
     _listFocus.requestFocus();

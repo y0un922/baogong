@@ -9,8 +9,11 @@ import '../../chat/chat_models.dart';
 import '../../icons/brand_logos.dart';
 import '../../models/model_brand.dart';
 import '../../models/model_provider.dart' show effortLabel;
+import '../agent_instructions.dart';
 import '../agent_kernel.dart';
 import '../claude_code/claude_elicitation.dart';
+import '../claude_code/claude_sdk_tools.dart';
+import '../context_estimate.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../output_meter.dart';
@@ -400,8 +403,61 @@ class CodexKernel
 
     _limits = [?window(snapshot['primary']), ?window(snapshot['secondary'])];
     for (final kernel in _live) {
-      kernel.emit(StatsReported(kernel.nextSeq, UsageStats(limits: _limits)));
+      kernel._reportStats();
     }
+  }
+
+  /// What the prompt cache made of the thread's requests, once it read any.
+  PromptCache? _cache;
+
+  /// What every request of the thread starts with (system prompt, tools,
+  /// instructions), once known: from its first request, seen here when the
+  /// thread was started here, else as its rollout file tells. Sought once.
+  int? _fixedContext;
+  bool _seekingFixed = true;
+  bool _threadStarted = false;
+
+  /// A guess at what was sent before the first reply, not fixed.
+  int _beforeFirstReply = 0;
+
+  /// The context last reported, to report again split once it can be.
+  int? _contextUsed;
+
+  void _sentBeforeReply(KernelTurn turn) {
+    if (!_seekingFixed) return;
+    for (final part in [turn.text, ...turn.notes]) {
+      _beforeFirstReply += estimateTokens(part);
+    }
+    _beforeFirstReply += turn.images.length * imageTokens;
+  }
+
+  void _reportContext(int used) {
+    _contextUsed = used;
+    emit(
+      UsageReported(
+        nextSeq,
+        estimatedContext(
+          window: _contextWindow,
+          used: used,
+          fixed: _fixedContext,
+        ),
+      ),
+    );
+  }
+
+  void _reportStats() =>
+      emit(StatsReported(nextSeq, UsageStats(limits: _limits, cache: _cache)));
+
+  /// The input of [usage] by the prompt cache: what was cached is counted
+  /// within the input; writes are not said.
+  static CacheTokens? _cacheTokens(Object? usage) {
+    if (usage is! Map || usage['inputTokens'] is! num) return null;
+    final input = (usage['inputTokens'] as num).toInt();
+    final read = ((usage['cachedInputTokens'] as num?)?.toInt() ?? 0).clamp(
+      0,
+      input,
+    );
+    return CacheTokens(read: read, uncached: input - read);
   }
 
   // --- The process ------------------------------------------------------------
@@ -478,6 +534,7 @@ class CodexKernel
       'threadId': threadId,
       'cwd': _cwd,
       'excludeTurns': true,
+      ..._baocode,
     });
     _subscribed = true;
     final thread = (resumed['thread'] as Map?)?.cast<String, Object?>();
@@ -493,6 +550,26 @@ class CodexKernel
     }
   }
 
+  /// What a thread starts or goes on with where BaoCode can be reached from
+  /// it: what it is told of terminals and the browser, and the app's tools
+  /// as an MCP server of the thread's own.
+  Map<String, Object?> get _baocode {
+    final environment = _context.environment;
+    return {
+      'developerInstructions': ?AgentInstructions.of(environment),
+      if (AgentInstructions.mcpUrl(environment) case final url?)
+        'config': {
+          'mcp_servers': {
+            ClaudeSdkTools.server: {
+              'url': url,
+              // A browser tool may wait on a page, or on the user, long.
+              'tool_timeout_sec': 600,
+            },
+          },
+        },
+    };
+  }
+
   /// The thread messages go to: started with the first.
   Future<String> _ensureThread() async {
     if (_threadId case final threadId?) {
@@ -504,11 +581,13 @@ class CodexKernel
       'cwd': _cwd,
       'approvalPolicy': _approvalPolicy,
       'sandbox': _sandbox,
+      ..._baocode,
     });
     final thread = (started['thread'] as Map).cast<String, Object?>();
     final threadId = _threadId = thread['id'] as String;
     _threadPath = thread['path'] as String?;
     _subscribed = true;
+    _threadStarted = true;
     _threadSandbox = _sandbox;
     emitInfoChanged();
     if (_pendingName case final name?) {
@@ -801,6 +880,7 @@ class CodexKernel
             }
             _meter.begin();
             final command = _command(turn);
+            if (command == null) _sentBeforeReply(turn);
             return switch (command) {
               ('compact', _) => _call('thread/compact/start', {
                 'threadId': threadId,
@@ -1328,14 +1408,34 @@ class CodexKernel
     }
     final last = (usage['last'] as Map?) ?? const {};
     int count(String key) => (last[key] as num?)?.toInt() ?? 0;
-    emit(
-      UsageReported(
-        nextSeq,
-        // The last request's, which is what the context holds; the total
-        // adds up every request, and never drops on compacting.
-        ContextUsage(window: _contextWindow, used: count('totalTokens')),
-      ),
-    );
+    if (_seekingFixed) {
+      _seekingFixed = false;
+      final input = count('inputTokens');
+      if (_threadStarted &&
+          input > 0 &&
+          (usage['total'] as Map?)?['inputTokens'] == input) {
+        // The thread's first request: what it held besides what was sent.
+        _fixedContext = input - _beforeFirstReply;
+      } else if (_threadPath case final path?) {
+        unawaited(
+          readCodexFixedContext(path).then((fixed) {
+            if (fixed == null || _disposed) return;
+            _fixedContext = fixed;
+            if (_contextUsed case final used?) _reportContext(used);
+          }),
+        );
+      }
+    }
+    // The last request's, which is what the context holds; the total adds
+    // up every request, and never drops on compacting.
+    _reportContext(count('totalTokens'));
+    // Not on a provider that never caches.
+    if ((_cacheTokens(last), _cacheTokens(usage['total']))
+        case (final request?, final all?)
+        when request.total > 0 && all.read > 0) {
+      _cache = PromptCache(last: request, conversation: all);
+      _reportStats();
+    }
     if (!_ofTurn(params)) return;
     final output = switch (last['outputTokens']) {
       final num tokens when tokens.isFinite && tokens >= 0 => tokens.toInt(),

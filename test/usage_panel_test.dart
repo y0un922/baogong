@@ -56,9 +56,39 @@ void main() {
     );
   });
 
-  testWidgets('the prompt cache shows its last request and the conversation', (
+  testWidgets('a breakdown the kernel guessed reads as about so much', (
     tester,
   ) async {
+    Future<void> show({required bool estimated}) => tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ContextUsagePanel(
+            usage: ContextUsage(
+              window: 258400,
+              used: 20000,
+              estimated: estimated,
+              segments: const [
+                ContextSegment('System prompt & tools', 14100),
+                ContextSegment('Messages', 5900),
+              ],
+            ),
+            onClose: () {},
+          ),
+        ),
+      ),
+    );
+    await show(estimated: true);
+    expect(find.text('System prompt & tools'), findsOneWidget);
+    expect(find.text('~14.1k'), findsOneWidget);
+    expect(find.text('~5.9k'), findsOneWidget);
+    // The agent's own count: as it is.
+    await show(estimated: false);
+    expect(find.text('14.1k'), findsOneWidget);
+    expect(find.text('~14.1k'), findsNothing);
+  });
+
+  testWidgets('the prompt cache shows the conversation, its last request on '
+      'hover', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -81,23 +111,41 @@ void main() {
       ),
     );
     expect(find.text('Prompt cache'), findsOneWidget);
-    expect(find.text('96%'), findsOneWidget);
-    expect(find.text('main chat 93%'), findsOneWidget);
+    // The conversation's, to a tenth; not the last request's 96%.
+    expect(find.text('93.4%'), findsOneWidget);
+    expect(find.text('96.2%'), findsNothing);
     // The counts on hover.
     expect(
       tester.widget<IdeHover>(find.byType(IdeHover).last).message,
       'Last request: 61.3k read · 2.4k written · 2 uncached\n'
-      'Main conversation: 1.2M read · 85.3k written · 93% hit\n'
+      'Main conversation: 1.2M read · 85.3k written · 93.4% hit\n'
       "Not counting subagents, compaction or the CLI's side requests",
     );
-    // Between the context and the plan.
+    // Between the context and the cost.
     expect(
       tester.getTopLeft(find.text('Prompt cache')).dy,
       allOf(
         greaterThan(tester.getTopLeft(find.text('Context window')).dy),
-        lessThan(tester.getTopLeft(find.text('Plan usage')).dy),
+        lessThan(tester.getTopLeft(find.text(r'$0.27')).dy),
       ),
     );
+  });
+
+  testWidgets('on no plan, the cost shows without one', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ContextUsagePanel(
+            usage: const ContextUsage(window: 200000, used: 1000),
+            stats: const UsageStats(costUsd: 0.27),
+            onClose: () {},
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Plan usage'), findsNothing);
+    expect(find.text('This session'), findsOneWidget);
+    expect(find.text(r'$0.27'), findsOneWidget);
   });
 
   testWidgets('without limits or cost, no plan section', (tester) async {

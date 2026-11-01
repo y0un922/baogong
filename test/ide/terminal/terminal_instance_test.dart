@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/terminal/pty.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
 import 'package:baocode/ide/terminal/terminal_keyboard.dart';
+import 'package:baocode/ide/terminal/terminal_settings.dart';
 import 'package:baocode/theme/code_font.dart';
 
 import 'fake_pty.dart';
@@ -303,6 +305,111 @@ void main() {
       terminal.terminal.buffer.lines.get(0)!.translateToString(true),
       r'$ ',
     );
+  });
+
+  group('OSC 52', () {
+    test('decodes the text a program copies; never answers a query', () {
+      expect(osc52Clipboard('c;aGVsbG8='), 'hello');
+      // Unpadded, no selection named, UTF-8.
+      expect(osc52Clipboard(';aGVsbG8'), 'hello');
+      expect(osc52Clipboard('c;${base64.encode(utf8.encode('终端'))}'), '终端');
+      expect(osc52Clipboard('c;?'), isNull);
+      expect(osc52Clipboard('c;not base64!'), isNull);
+      expect(osc52Clipboard('aGVsbG8='), isNull);
+    });
+
+    test('what the process copies goes to the clipboard', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final copied = <Object?>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') copied.add(call.arguments);
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      final (:terminal, :started, exits: _) = _start();
+      await pumpEventQueue();
+
+      started.single.emitText('\x1b]52;c;aGVsbG8=\x07\x1b]52;c;?\x07');
+      await pumpEventQueue();
+      expect(copied, [
+        {'text': 'hello'},
+      ]);
+      // Nothing is sent back for the query.
+      expect(started.single.written, isEmpty);
+    });
+  });
+
+  test('titled by what a program sets, or the command the shell runs, '
+      'until it finishes', () async {
+    final ptys = <FakePty>[];
+    final (:terminal, started: _, exits: _) = _start(
+      backend: TerminalBackend(
+        launch: (root, {columns = 80, rows = 24, shell, environment}) async =>
+            PtyLaunch(
+              executable: '/bin/zsh',
+              arguments: const ['-l'],
+              workingDirectory: root,
+              environment: const {'VSCODE_NONCE': 'n0nce'},
+            ),
+        start: FakePty.starter(ptys),
+        linkStat: (_) async => null,
+        supported: true,
+      ),
+    );
+    await pumpEventQueue();
+    final pty = ptys.single;
+    Future<void> emit(String text) async {
+      pty.emitText(text);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+
+    await emit('\x1b]633;A\x07\$ \x1b]633;B\x07');
+    expect(terminal.title, 'zsh');
+    await emit('\x1b]633;E;nvim notes.md;n0nce\x07\x1b]633;C\x07\r\n');
+    expect(terminal.title, 'nvim notes.md');
+    // The program's own title, over the command line.
+    await emit('\x1b]2;notes.md - NVIM\x07');
+    expect(terminal.title, 'notes.md - NVIM');
+    await emit('\x1b]633;D;0\x07');
+    expect(terminal.title, 'zsh');
+
+    // One set at the prompt stays; a rename is over it.
+    await emit('\x1b]0;~/project\x07');
+    expect(terminal.title, '~/project');
+    terminal.rename('mine');
+    expect(terminal.title, 'mine');
+  });
+
+  test('follows Settings → Terminal as it changes', () {
+    addTearDown(() {
+      TerminalSettings.cursorStyle.value = TerminalCursorStyle.block;
+      TerminalSettings.cursorBlinking.value = false;
+      TerminalSettings.scrollback.value = TerminalSettings.defaultScrollback;
+      TerminalSettings.macOptionIsMeta.value = false;
+      TerminalSettings.copyOnSelection.value = false;
+    });
+    TerminalSettings.macOptionIsMeta.value = true;
+    final (:terminal, started: _, exits: _) = _start();
+    final options = terminal.xterm.options;
+    expect(options.macOptionIsMeta, isTrue);
+    expect(options.cursorStyle, 'block');
+
+    TerminalSettings.cursorStyle.value = TerminalCursorStyle.line;
+    TerminalSettings.cursorBlinking.value = true;
+    TerminalSettings.scrollback.value = 5000;
+    TerminalSettings.macOptionIsMeta.value = false;
+    expect(options.cursorStyle, 'bar');
+    expect(options.cursorBlink, isTrue);
+    expect(options.scrollback, 5000);
+    expect(options.macOptionIsMeta, isFalse);
+
+    expect(terminal.clipboard.copyOnSelection, isFalse);
+    TerminalSettings.copyOnSelection.value = true;
+    expect(terminal.clipboard.copyOnSelection, isTrue);
   });
 
   test('the terminal keeps interface size while code font changes', () {

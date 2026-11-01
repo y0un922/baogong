@@ -50,3 +50,8 @@ Future<CodexTransport> startCodexProcess(
   String cwd, {
   Map<String, String> environment = const {},
 }) => platform.startCodexProcess(cwd, environment: environment);
+
+/// What every request of the thread in [rollout] starts with: see
+/// `codex_process_io.dart`. On the web, not known.
+Future<int?> readCodexFixedContext(String rollout) =>
+    platform.readCodexFixedContext(rollout);

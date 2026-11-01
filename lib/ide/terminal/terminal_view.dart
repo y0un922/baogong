@@ -231,7 +231,17 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient {
       ..runsKeybindings = widget.shouldSkipShell == null;
     instance.clipboard.confirmPaste = _confirmPaste;
     instance.focusNode.addListener(_focusChanged);
-    if (instance.focusNode.hasFocus) _focusChanged();
+    // Focused already (a view of it made anew, as a split moves it): once
+    // built, when the input can find its view.
+    if (instance.focusNode.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            identical(widget.instance, instance) &&
+            instance.focusNode.hasFocus) {
+          _focusChanged();
+        }
+      });
+    }
   }
 
   void _detach(TerminalInstance instance) {

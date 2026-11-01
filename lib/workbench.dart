@@ -387,17 +387,21 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// project (see [ChatTerminals]); none where they cannot run, nor in an
   /// IDE window (the IDE has its own).
   late final ChatTerminals? _terminals = switch (widget.terminalBackend) {
-    final backend? when backend.supported && !_ideWindow => ChatTerminals(
-      backend,
-      rootOf: () => (_agentThread ?? _workspace.current)?.project.path,
-      // A remote project's on its host.
-      backendFor: (location) => ProjectHost.of(location).terminals(backend),
-      // A workspace's in its first folder (its own is only its settings).
-      pathOf: (location) => switch (_workspace.workspaceAt(location)) {
-        final multi? => multi.folders.firstOrNull ?? location,
-        null => RemoteLocation.pathOf(location),
-      },
-    )..onLastClosed = _focusCurrentChat,
+    final backend? when backend.supported && !_ideWindow =>
+      ChatTerminals(
+          backend,
+          rootOf: () => (_agentThread ?? _workspace.current)?.project.path,
+          // A remote project's on its host.
+          backendFor: (location) => ProjectHost.of(location).terminals(backend),
+          // A workspace's in its first folder (its own is only its settings).
+          pathOf: (location) => switch (_workspace.workspaceAt(location)) {
+            final multi? => multi.folders.firstOrNull ?? location,
+            null => RemoteLocation.pathOf(location),
+          },
+        )
+        ..onLastClosed = _focusCurrentChat
+        ..onSidePanelTerminalClosed = (terminal) =>
+            _sidePanel.dropTerminal(terminal),
     _ => null,
   }?..addListener(_terminalsChanged);
 
@@ -824,6 +828,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         ChatCommandIds.search: () => unawaited(_openPalette()),
         ..._sidePanelCommands(),
         ..._terminalCommands(),
+        ..._navigationCommands(),
         ..._windowCommands(),
       };
     }
@@ -880,6 +885,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         ..._sidePanelCommands(),
       },
       ..._terminalCommands(),
+      ..._navigationCommands(),
       ..._windowCommands(),
     };
   }
@@ -905,6 +911,88 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             terminals.cycle(next: false),
       },
     };
+  }
+
+  /// ⌃⌘H, J, K and L: the keyboard to the part of the window at that side.
+  Map<String, VoidCallback> _navigationCommands() => {
+    ChatCommandIds.navigateLeft: () => _navigate(AxisDirection.left),
+    ChatCommandIds.navigateRight: () => _navigate(AxisDirection.right),
+    ChatCommandIds.navigateUp: () => _navigate(AxisDirection.up),
+    ChatCommandIds.navigateDown: () => _navigate(AxisDirection.down),
+  };
+
+  /// The part of the window the keyboard is in; the conversation where it
+  /// is in none of the others.
+  _WindowPart get _focusedPart {
+    if (_sidebarLink.listHasFocus) return _WindowPart.sidebar;
+    if (_sidePanel.focusNode.hasFocus) return _WindowPart.sidePanel;
+    if (_terminals?.focused ?? false) return _WindowPart.terminal;
+    return _WindowPart.chat;
+  }
+
+  /// The parts side by side, left to right, shown or not; the terminal
+  /// panel is under the conversation.
+  List<_WindowPart> get _partColumns {
+    final sidePanel =
+        !_replacingChat && (_agentThread ?? _workspace.current) != null;
+    return [
+      _WindowPart.sidebar,
+      if (sidePanel && _sidePanel.atLeft) _WindowPart.sidePanel,
+      _WindowPart.chat,
+      if (sidePanel && !_sidePanel.atLeft) _WindowPart.sidePanel,
+    ];
+  }
+
+  /// The keyboard to the part at [direction] from the one it is in, shown
+  /// if it was not (as its toggle shows it); in the side panel's terminals,
+  /// to the split there first. None there, it stays.
+  void _navigate(AxisDirection direction) {
+    if (_focusedSideTerminal case (:final tab, :final shell)) {
+      final thread = _agentThread ?? _workspace.current;
+      final layout = _sidePanel.tabsOf(thread!.session).layoutOf(tab);
+      if (layout.neighbor(shell, direction) case final TerminalInstance next) {
+        next.focus();
+        return;
+      }
+    }
+    final from = _focusedPart;
+    final _WindowPart? to;
+    switch (direction) {
+      case AxisDirection.up:
+        to = from == _WindowPart.terminal ? _WindowPart.chat : null;
+      case AxisDirection.down:
+        to = from == _WindowPart.chat && (_terminals?.root != null)
+            ? _WindowPart.terminal
+            : null;
+      case AxisDirection.left || AxisDirection.right:
+        final columns = _partColumns;
+        final at = columns.indexOf(
+          from == _WindowPart.terminal ? _WindowPart.chat : from,
+        );
+        final next = at + (direction == AxisDirection.left ? -1 : 1);
+        to = at < 0 || next < 0 || next >= columns.length
+            ? null
+            : columns[next];
+    }
+    switch (to) {
+      case _WindowPart.sidebar:
+        if (!(_narrow ? _drawerOpen : _sidebarDocked)) _toggle();
+        _afterBuild(_sidebarLink.focusList);
+      case _WindowPart.chat:
+        _focusCurrentChat();
+      case _WindowPart.sidePanel:
+        if (!_sidePanelShown || _sidePanelHidden) _sidePanel.show();
+        _afterBuild(_focusSidePanelPage);
+      case _WindowPart.terminal:
+        final terminals = _terminals!;
+        if (terminals.shown) {
+          terminals.current?.active?.focus();
+        } else {
+          terminals.show();
+        }
+      case null:
+        break;
+    }
   }
 
   /// Preferences: Color Theme (see [ideColorThemePick]), over the chat as
@@ -3319,8 +3407,17 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     ChatCommandIds.toggleSidePanel: _toggleSidePanelFocus,
     ChatCommandIds.toggleSidePanelPosition: () =>
         _sidePanel.atLeft = !_sidePanel.atLeft,
-    if (_sidePanel.focusNode.hasFocus)
+    if (_focusedSideTerminal != null) ...{
+      ChatCommandIds.sidePanelSplitTerminalRight: () =>
+          _splitSideTerminal(Axis.horizontal),
+      ChatCommandIds.sidePanelSplitTerminalDown: () =>
+          _splitSideTerminal(Axis.vertical),
+    },
+    if (_sidePanel.focusNode.hasFocus) ...{
       ChatCommandIds.sidePanelCloseTab: _closeSidePanelTab,
+      for (var i = 1; i <= ChatCommandIds.sidePanelPageIndexes; i++)
+        '${ChatCommandIds.sidePanelPage}$i': () => _showSidePanelPage(i - 1),
+    },
     for (final section in alwaysShownSections)
       if (section != SidePanelSection.terminal)
         section.command!: () {
@@ -3332,6 +3429,73 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         _showSidePanelTerminal(fresh: true),
     ChatCommandIds.sidePanelToggleList: _toggleSidePanelList,
   };
+
+  /// The side panel's terminal with the keyboard, on its terminal page,
+  /// with the tab it is in.
+  ({Object tab, TerminalInstance shell})? get _focusedSideTerminal {
+    final thread = _agentThread ?? _workspace.current;
+    if (thread == null || !_sidePanel.focusNode.hasFocus) return null;
+    final tabs = _sidePanel.tabsOf(thread.session);
+    final tab = tabs.terminal;
+    if (tabs.shown != SidePanelSection.terminal || tab == null) return null;
+    for (final leaf in tabs.layoutOf(tab).leaves) {
+      if (leaf is TerminalInstance && leaf.focusNode.hasFocus) {
+        return (tab: tab, shell: leaf);
+      }
+    }
+    return null;
+  }
+
+  /// A new terminal beside the side panel's one with the keyboard, at its
+  /// right ([Axis.horizontal], ⌘D) or under it (⇧⌘D), the keyboard in it.
+  void _splitSideTerminal(Axis axis) {
+    final thread = _agentThread ?? _workspace.current;
+    final focused = _focusedSideTerminal;
+    final service = thread == null
+        ? null
+        : _terminals?.sidePanelTerminals(thread.project.path);
+    if (thread == null || focused == null || service == null) return;
+    final added = service.create();
+    _sidePanel.splitTerminal(thread.session, focused.shell, added, axis);
+    WidgetsBinding.instance.addPostFrameCallback((_) => added.focus());
+  }
+
+  /// The side panel's page at [index] in its bar (⌘1…, from the panel),
+  /// the keyboard in it.
+  void _showSidePanelPage(int index) {
+    final thread = _agentThread ?? _workspace.current;
+    if (thread == null) return;
+    final sections = sidePanelSections(_sidePanel.tabsOf(thread.session));
+    if (index >= sections.length) return;
+    _sidePanel.showSection(thread.session, sections[index]);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusSidePanelPage();
+    });
+  }
+
+  /// The keyboard in the side panel: in the terminal in front on its
+  /// terminal page, else on the panel, for its keys.
+  void _focusSidePanelPage() {
+    final thread = _agentThread ?? _workspace.current;
+    if (thread == null || !_sidePanel.shown) return;
+    final tabs = _sidePanel.tabsOf(thread.session);
+    final live = _terminals?.sidePanelTerminals(thread.project.path).instances;
+    final shell = switch (tabs.terminal) {
+      final tab? when tabs.shown == SidePanelSection.terminal =>
+        tabs
+            .layoutOf(tab)
+            .leaves
+            .whereType<TerminalInstance>()
+            .where((shell) => live?.contains(shell) ?? false)
+            .firstOrNull,
+      _ => null,
+    };
+    if (shell != null) {
+      shell.focus();
+    } else {
+      _sidePanel.focusNode.requestFocus();
+    }
+  }
 
   /// The side panel's list (⇧⌥⌘B); the panel and its list shown where the
   /// panel is hidden.
@@ -3410,9 +3574,23 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   }
 
   /// Close Tab, from the side panel; the focus stays there, for the next.
+  /// From a split terminal, that one alone, its process hung up, and the
+  /// keyboard in the next one.
   void _closeSidePanelTab() {
     final thread = _agentThread ?? _workspace.current;
     if (thread == null) return;
+    if (_focusedSideTerminal case (:final tab, :final shell)) {
+      final tabs = _sidePanel.tabsOf(thread.session);
+      if (tabs.splits[tab] case final split?) {
+        final leaves = split.leaves.toList();
+        final next = leaves[(leaves.indexOf(shell) + 1) % leaves.length];
+        _terminals?.sidePanelTerminals(thread.project.path).kill(shell);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (next is TerminalInstance) next.focus();
+        });
+        return;
+      }
+    }
     // One with unsaved changes asks first whether to save them.
     if (_sidePanel.tabsOf(thread.session).current case final tab?
         when tab.dirty) {
@@ -4598,3 +4776,7 @@ class _SessionTerminalTasks implements TerminalTasks {
   @override
   int get hashCode => identityHashCode(session);
 }
+
+/// The parts of the chat window the keyboard moves between (⌃⌘H, J, K
+/// and L).
+enum _WindowPart { sidebar, chat, sidePanel, terminal }

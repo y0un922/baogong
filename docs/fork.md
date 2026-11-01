@@ -47,6 +47,6 @@
 3. 在独立分支中选择性 `git cherry-pick <提交>`；需要整批更新时才考虑 merge。
 4. 检查定制行为没有被覆盖，运行相关测试后再合入 main、重新构建安装。
 
-不要直接用 GitHub 的 Sync fork 覆盖尚未审查的更新。尤其保留 pi/Codex 接入、请求 TPS 计量、macOS 标题栏点击修复，以及移除 GitHub Star 请求的定制。
+不要直接用 GitHub 的 Sync fork 覆盖尚未审查的更新。尤其保留 pi/Codex 接入、请求 TPS 计量、macOS 标题栏点击修复、移除 GitHub Star 请求的定制，以及输入框与回复的中英翻译按钮（`lib/chat/composer/composer_translate.dart`、`lib/chat/reply_translate.dart`，共用辅助模型）。
 
 macOS 打包参见 `tool/build_macos.dart`。应用中必须包含 `Contents/Resources/remote/VERSION` 和 `servers.json`；单独运行 `flutter build macos --release` 不会生成这两份资源。

@@ -4472,6 +4472,30 @@ abstract class AppLocalizations {
   /// **'Copy reply'**
   String get turnCopy;
 
+  /// No description provided for @turnTranslate.
+  ///
+  /// In en, this message translates to:
+  /// **'Translate into Chinese'**
+  String get turnTranslate;
+
+  /// No description provided for @turnShowOriginal.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the original'**
+  String get turnShowOriginal;
+
+  /// No description provided for @turnTranslating.
+  ///
+  /// In en, this message translates to:
+  /// **'Translating…'**
+  String get turnTranslating;
+
+  /// No description provided for @turnTranslateFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not translate: {error}'**
+  String turnTranslateFailed(String error);
+
   /// No description provided for @turnCopied.
   ///
   /// In en, this message translates to:
@@ -5024,13 +5048,7 @@ abstract class AppLocalizations {
   /// **'Last request: {read} read · {written} written · {uncached} uncached'**
   String usageCacheLast(String read, String written, String uncached);
 
-  /// percent a whole number: what of the main conversation's input was read from the cache.
-  ///
-  /// In en, this message translates to:
-  /// **'main chat {percent}%'**
-  String usageCacheOverall(String percent);
-
-  /// read and written are formatted counts (8.2k); percent a whole number.
+  /// read and written are formatted counts (8.2k); percent to one decimal (93.4).
   ///
   /// In en, this message translates to:
   /// **'Main conversation: {read} read · {written} written · {percent}% hit'**
@@ -10443,6 +10461,36 @@ abstract class AppLocalizations {
   /// **'Add Upstream'**
   String get modelsAddProvider;
 
+  /// No description provided for @modelsImportPi.
+  ///
+  /// In en, this message translates to:
+  /// **'Import from pi'**
+  String get modelsImportPi;
+
+  /// No description provided for @modelsImportPiDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Add the upstreams pi is set up with (its own models.json), with their keys, so that Polish, Translate and the other small jobs can ask them instead of Claude Code\'s Haiku'**
+  String get modelsImportPiDescription;
+
+  /// No description provided for @modelsImportPiDone.
+  ///
+  /// In en, this message translates to:
+  /// **'From pi: {added} added, {updated} updated, {skipped} left out'**
+  String modelsImportPiDone(int added, int updated, int skipped);
+
+  /// No description provided for @modelsImportPiNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'From pi: nothing new to add'**
+  String get modelsImportPiNothing;
+
+  /// No description provided for @modelsImportPiFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not import from pi: {error}'**
+  String modelsImportPiFailed(String error);
+
   /// No description provided for @modelsNewProviderName.
   ///
   /// In en, this message translates to:
@@ -11810,6 +11858,114 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'theme color colour dark light'**
   String get settingsAppearanceKeywords;
+
+  /// No description provided for @settingsSectionTerminal.
+  ///
+  /// In en, this message translates to:
+  /// **'Terminal'**
+  String get settingsSectionTerminal;
+
+  /// No description provided for @settingsTerminalKeywords.
+  ///
+  /// In en, this message translates to:
+  /// **'cursor blink scrollback option meta alt shell'**
+  String get settingsTerminalKeywords;
+
+  /// No description provided for @terminalSettingsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The integrated terminal\'s cursor, scrollback and keyboard. Its font and size are in Appearance.'**
+  String get terminalSettingsDescription;
+
+  /// No description provided for @terminalSettingsCursorStyle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cursor Style'**
+  String get terminalSettingsCursorStyle;
+
+  /// No description provided for @terminalSettingsCursorStyleLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cursor style: {style}'**
+  String terminalSettingsCursorStyleLabel(String style);
+
+  /// No description provided for @terminalSettingsCursorBlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Block'**
+  String get terminalSettingsCursorBlock;
+
+  /// No description provided for @terminalSettingsCursorLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Line'**
+  String get terminalSettingsCursorLine;
+
+  /// No description provided for @terminalSettingsCursorUnderline.
+  ///
+  /// In en, this message translates to:
+  /// **'Underline'**
+  String get terminalSettingsCursorUnderline;
+
+  /// No description provided for @terminalSettingsCursorBlinking.
+  ///
+  /// In en, this message translates to:
+  /// **'Cursor Blinking'**
+  String get terminalSettingsCursorBlinking;
+
+  /// No description provided for @terminalSettingsCursorBlinkingDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The cursor blinks while the terminal has the keyboard.'**
+  String get terminalSettingsCursorBlinkingDescription;
+
+  /// No description provided for @terminalSettingsScrollback.
+  ///
+  /// In en, this message translates to:
+  /// **'Scrollback'**
+  String get terminalSettingsScrollback;
+
+  /// No description provided for @terminalSettingsScrollbackDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'How many lines a terminal keeps above its screen.'**
+  String get terminalSettingsScrollbackDescription;
+
+  /// No description provided for @terminalSettingsScrollbackLines.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} lines'**
+  String terminalSettingsScrollbackLines(String count);
+
+  /// No description provided for @terminalSettingsScrollbackLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Scrollback: {lines}'**
+  String terminalSettingsScrollbackLabel(String lines);
+
+  /// No description provided for @terminalSettingsCopyOnSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy on Selection'**
+  String get terminalSettingsCopyOnSelection;
+
+  /// No description provided for @terminalSettingsCopyOnSelectionDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'What you select in a terminal is copied to the clipboard as you select it.'**
+  String get terminalSettingsCopyOnSelectionDescription;
+
+  /// No description provided for @terminalSettingsOptionIsMeta.
+  ///
+  /// In en, this message translates to:
+  /// **'Option as Meta'**
+  String get terminalSettingsOptionIsMeta;
+
+  /// No description provided for @terminalSettingsOptionIsMetaDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Option with a key sends Esc and the key, as the shell\'s Alt shortcuts expect (⌥B goes back a word), instead of typing a character such as ∫.'**
+  String get terminalSettingsOptionIsMetaDescription;
 
   /// No description provided for @appearanceSettingsTitle.
   ///
@@ -14234,6 +14390,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not polish: {error}'**
   String composerPolishFailed(String error);
+
+  /// No description provided for @composerTranslating.
+  ///
+  /// In en, this message translates to:
+  /// **'Translating…'**
+  String get composerTranslating;
+
+  /// No description provided for @composerTranslateToEnglishHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Translate into English: the auxiliary model puts the message in English, which a model answers better; pictures, files, code and links stay as they are; Undo takes it back'**
+  String get composerTranslateToEnglishHint;
+
+  /// No description provided for @composerTranslateToChineseHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Translate into Chinese: the auxiliary model puts the message in Chinese; pictures, files, code and links stay as they are; Undo takes it back'**
+  String get composerTranslateToChineseHint;
+
+  /// No description provided for @composerTranslateFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not translate: {error}'**
+  String composerTranslateFailed(String error);
+
+  /// No description provided for @aiRewriteEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'the model answered nothing'**
+  String get aiRewriteEmpty;
+
+  /// No description provided for @aiRewriteTooLong.
+  ///
+  /// In en, this message translates to:
+  /// **'the reply is far longer than the message ({reply} vs {message} characters), as if it answered it instead of rewriting it'**
+  String aiRewriteTooLong(String reply, String message);
+
+  /// No description provided for @aiRewriteMarkers.
+  ///
+  /// In en, this message translates to:
+  /// **'the reply lost, doubled or made up a marker (a picture, file, code or link the message carries)'**
+  String get aiRewriteMarkers;
 
   /// No description provided for @generalSettingsComposerPolish.
   ///

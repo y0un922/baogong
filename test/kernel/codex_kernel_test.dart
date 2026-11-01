@@ -6,7 +6,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart' show Icons;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/kernel/agent_instructions.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
+import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
 import 'package:baocode/kernel/codex/codex_catalog.dart';
 import 'package:baocode/kernel/codex/codex_kernel.dart';
 import 'package:baocode/kernel/codex/codex_transport.dart';
@@ -55,10 +57,17 @@ const _luna = {
 /// Codex as the tests speak it: answers requests the way the app server
 /// does, plays [turn] after `turn/start`, and records what was written.
 class FakeCodex implements CodexTransport {
-  FakeCodex({this.turn = const [], this.history = const []});
+  FakeCodex({
+    this.turn = const [],
+    this.history = const [],
+    this.rollout = '/codex/$_thread.jsonl',
+  });
 
   final List<Map<String, Object?>> turn;
   final List<Map<String, Object?>> history;
+
+  /// The thread's file, as Codex says it is.
+  final String rollout;
   final StreamController<Map<String, Object?>> _out =
       StreamController.broadcast();
   final List<Map<String, Object?>> written = [];
@@ -87,7 +96,7 @@ class FakeCodex implements CodexTransport {
     final id = message['id'];
     if (method == null || id == null) return;
     final params = (message['params'] as Map?) ?? const {};
-    final thread = {'id': _thread, 'path': '/codex/$_thread.jsonl'};
+    final thread = {'id': _thread, 'path': rollout};
     final turnId = method == 'turn/start' ? _turnId : null;
     final result = switch (method) {
       'model/list' => {
@@ -269,6 +278,51 @@ codexKernel(
 
 void main() {
   group('Codex adapter', () {
+    test('a thread BaoCode can be reached from is told of terminals and the '
+        "browser, and has the app's tools; one it cannot, neither", () async {
+      ClaudeSdkTools.register(
+        ClaudeSdkTool(
+          name: 'browser_tabs',
+          description: 'Tabs',
+          inputSchema: const {'type': 'object'},
+          run: (input, call) async => '',
+        ),
+      );
+      addTearDown(() => ClaudeSdkTools.unregister('browser_tabs'));
+      const environment = {
+        AgentInstructions.commandVariable: '/x/baocode-agent',
+        AgentInstructions.urlVariable: 'http://127.0.0.1:1/k',
+      };
+      final reached = FakeCodex();
+      codexKernel(
+        [reached],
+        context: const KernelContext(cwd: '/project', environment: environment),
+      ).kernel.send(const KernelTurn(id: 't1', text: 'Hi'));
+      await pumpEventQueue();
+      final thread = reached.sent('thread/start').single;
+      expect(
+        thread['developerInstructions'],
+        AgentInstructions.of(environment),
+      );
+      expect(thread['developerInstructions'], contains('<servers>'));
+      expect(thread['developerInstructions'], contains('<browser>'));
+      expect(thread['config'], {
+        'mcp_servers': {
+          'baocode': {
+            'url': 'http://127.0.0.1:1/k/mcp',
+            'tool_timeout_sec': 600,
+          },
+        },
+      });
+
+      final apart = FakeCodex();
+      codexKernel([apart]).kernel.send(const KernelTurn(id: 't1', text: 'Hi'));
+      await pumpEventQueue();
+      final alone = apart.sent('thread/start').single;
+      expect(alone.containsKey('developerInstructions'), isFalse);
+      expect(alone.containsKey('config'), isFalse);
+    });
+
     test('a recorded turn: a listing, a command, the answer', () async {
       final codex = FakeCodex(turn: recorded('commands'));
       final (:kernel, :transcript, :events) = codexKernel([codex]);
@@ -312,7 +366,15 @@ void main() {
         events.whereType<UsageReported>().last.usage,
         isA<ContextUsage>()
             .having((u) => u.used, 'used', 14872)
-            .having((u) => u.window, 'window', 258400),
+            .having((u) => u.window, 'window', 258400)
+            .having((u) => u.estimated, 'estimated', isTrue)
+            // By the thread's first request: its input less a guess at
+            // what was sent (3).
+            .having(
+              (u) => [for (final s in u.segments) (s.label, s.tokens)],
+              'segments',
+              [('System prompt & tools', 14705), ('Messages', 14872 - 14705)],
+            ),
       );
       expect(kernel.contextWindow, 258400);
       // The account's weekly window.
@@ -531,6 +593,39 @@ void main() {
       await pumpEventQueue();
       expect(events.whereType<TurnEnded>().single.usage?.inputTokens, 200);
       expect(events.whereType<TurnEnded>().single.usage?.outputTokens, 200);
+    });
+
+    test('the prompt cache: the last request, and the thread', () async {
+      final codex = FakeCodex();
+      final (:kernel, :transcript, events: _) = codexKernel([codex]);
+      kernel.send(const KernelTurn(id: 't1', text: 'Hello'));
+      await pumpEventQueue();
+      void usage(Map<String, Object?> last, Map<String, Object?> total) =>
+          codex.emit({
+            'method': 'thread/tokenUsage/updated',
+            'params': {
+              'threadId': _thread,
+              'turnId': 'st1',
+              'tokenUsage': {'last': last, 'total': total},
+            },
+          });
+      // Nothing read from the cache yet: no meter.
+      usage(
+        {'inputTokens': 17931, 'cachedInputTokens': 0, 'outputTokens': 10},
+        {'inputTokens': 17931, 'cachedInputTokens': 0, 'outputTokens': 10},
+      );
+      await pumpEventQueue();
+      expect(transcript.stats?.cache, isNull);
+      usage(
+        {'inputTokens': 36501, 'cachedInputTokens': 18304, 'outputTokens': 10},
+        {'inputTokens': 54432, 'cachedInputTokens': 18304, 'outputTokens': 20},
+      );
+      await pumpEventQueue();
+      final cache = transcript.stats!.cache!;
+      // What was cached is within the input.
+      expect((cache.last.read, cache.last.uncached), (18304, 36501 - 18304));
+      expect(cache.conversation.total, 54432);
+      expect(cache.conversation.read, 18304);
     });
 
     test('a recorded patch: its diff to review', () async {
@@ -1068,6 +1163,100 @@ void main() {
       ]);
       expect(transcript.activeTurn, isNull);
       expect(kernel.health.status, KernelHealthStatus.failed);
+    });
+
+    group('the context of a thread resumed', () {
+      late Directory dir;
+      setUp(() => dir = Directory.systemTemp.createTempSync('rollout'));
+      tearDown(() => dir.deleteSync(recursive: true));
+
+      /// A rollout of [lines], as Codex writes one.
+      String rollout(List<Map<String, Object?>> lines) {
+        final file = File('${dir.path}/rollout.jsonl')
+          ..writeAsStringSync(lines.map(jsonEncode).join('\n'));
+        return file.path;
+      }
+
+      Map<String, Object?> event(Map<String, Object?> payload) => {
+        'type': 'event_msg',
+        'payload': payload,
+      };
+
+      Map<String, Object?> tokenCount(int input) => event({
+        'type': 'token_count',
+        'info': {
+          'last_token_usage': {'input_tokens': input},
+        },
+      });
+
+      test('is split by its first request, as its rollout tells', () async {
+        final codex = FakeCodex(
+          rollout: rollout([
+            {'type': 'session_meta', 'payload': const {}},
+            event({
+              'type': 'item_completed',
+              'item': {
+                'type': 'UserMessage',
+                'content': [
+                  {'type': 'text', 'text': 'Hello there'},
+                  {'type': 'image', 'url': 'data:image/png;base64,AA=='},
+                ],
+              },
+            }),
+            // Only the limits: no request yet.
+            event({'type': 'token_count', 'info': null}),
+            tokenCount(15308),
+            tokenCount(99999),
+          ]),
+        );
+        final (:kernel, :transcript, events: _) = codexKernel(
+          [codex],
+          context: KernelContext(
+            resume: SessionRecord(
+              id: _thread,
+              title: 'One',
+              updatedAt: DateTime(2026),
+              cwd: '/project',
+            ),
+          ),
+        );
+        kernel.prepare();
+        await pumpEventQueue();
+        codex.emit({
+          'method': 'thread/tokenUsage/updated',
+          'params': {
+            'threadId': _thread,
+            'turnId': 'h9',
+            'tokenUsage': {
+              'total': {'inputTokens': 90000, 'totalTokens': 91000},
+              'last': {'inputTokens': 19800, 'totalTokens': 20000},
+            },
+          },
+        });
+        await pumpEventQueue();
+        for (var i = 0; i < 100 && transcript.usage!.segments.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        // 15308 in, less the text (3) and the picture (1200).
+        expect(transcript.usage?.used, 20000);
+        expect(
+          [for (final s in transcript.usage!.segments) s.tokens],
+          [14105, 20000 - 14105],
+        );
+      });
+
+      test('older rollouts say what was sent as a user_message', () async {
+        final path = rollout([
+          event({
+            'type': 'user_message',
+            'message': '你好',
+            'images': ['data:image/png;base64,AA=='],
+          }),
+          tokenCount(9000),
+        ]);
+        expect(await readCodexFixedContext(path), 9000 - 2 - 1200);
+        expect(await readCodexFixedContext('${dir.path}/gone.jsonl'), isNull);
+      });
     });
   });
 

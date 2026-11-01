@@ -39,6 +39,7 @@ import 'pages/settings_widgets.dart' show SettingsPage;
 import 'pages/ssh_page.dart';
 import 'pages/stash_hotkey_field.dart';
 import 'pages/stash_page.dart';
+import 'pages/terminal_page.dart';
 import 'pages/updates_page.dart';
 import 'settings_dialog.dart';
 import 'user_settings.dart';
@@ -155,6 +156,8 @@ class AppSettings {
           changes: themes,
           settings: files?.settings,
         );
+      case SettingsSection.terminal:
+        return TerminalSettingsPage(settings: files?.settings);
       case SettingsSection.models:
         return ModelsSettingsPage(
           providers: ModelProviders.current,

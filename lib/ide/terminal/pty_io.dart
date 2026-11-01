@@ -67,8 +67,9 @@ abstract final class PtyProcesses {
     final os = _os;
     // As VS Code, whose terminals inherit the environment it resolved from
     // the login shell.
-    final base = await ClaudeEnvironment.of();
-    shell ??= defaultTerminalShell(os, base, exists: _exists, list: _list);
+    final resolved = await ClaudeEnvironment.of();
+    shell ??= defaultTerminalShell(os, resolved, exists: _exists, list: _list);
+    final base = terminalBaseEnvironment(resolved, shell);
     final launch = PtyLaunch(
       executable: shell.executable,
       arguments: shell.arguments,

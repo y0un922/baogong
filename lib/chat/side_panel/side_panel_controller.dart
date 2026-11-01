@@ -14,6 +14,7 @@ import '../../ide/search/text_search.dart';
 import '../../settings/user_settings.dart';
 import 'file_edit.dart';
 import 'file_open.dart';
+import 'terminal_split.dart';
 
 /// A file the side panel shows: its text or its changes, as [request]
 /// asked last.
@@ -74,6 +75,14 @@ const alwaysShownSections = [
   SidePanelSection.terminal,
 ];
 
+/// The pages [tabs]' bar shows, in order: the browser's once one of the
+/// user's has connected, the plan's once there is one.
+List<SidePanelSection> sidePanelSections(SidePanelTabs tabs) => [
+  ...alwaysShownSections,
+  if (BrowserBridge.instance.used) SidePanelSection.browser,
+  if (tabs.plan != null) SidePanelSection.plan,
+];
+
 /// Each conversation keeps its page, and the tabs open on each.
 class SidePanelTabs {
   SidePanelSection section = SidePanelSection.changes;
@@ -102,6 +111,22 @@ class SidePanelTabs {
   /// background commands' output (their ids).
   final List<Object> terminals = [];
   Object? terminal;
+
+  /// The terminal tabs split in more than one, by the tab's id in
+  /// [terminals] (one of its terminals).
+  final Map<Object, TerminalSplit<Object>> splits = {};
+
+  /// The terminals of tab [id]: its split's, else it alone.
+  TerminalSplit<Object> layoutOf(Object id) => splits[id] ?? TerminalLeaf(id);
+
+  /// The tab showing [terminal], alone or in a split; null if none does.
+  Object? tabOf(Object terminal) {
+    if (terminals.contains(terminal)) return terminal;
+    for (final MapEntry(key: id, value: split) in splits.entries) {
+      if (split.contains(terminal)) return id;
+    }
+    return null;
+  }
 
   /// The tab in front on the page shown; none on the terminal page.
   SidePanelTab? get current => switch (section) {
@@ -329,6 +354,8 @@ class AgentSidePanel extends ChangeNotifier {
   /// terminal page of [conversation] shows.
   void openTerminal(Object conversation, Object id, {bool show = true}) {
     final tabs = tabsOf(conversation);
+    // One in a split shows in its tab.
+    id = tabs.tabOf(id) ?? id;
     if (!tabs.terminals.contains(id)) {
       tabs.terminals.add(id);
       while (tabs.terminals.length > maxTabs) {
@@ -344,6 +371,43 @@ class AgentSidePanel extends ChangeNotifier {
     }
   }
 
+  /// [added] beside [at] in its tab of [conversation], at its right (or
+  /// under it, [Axis.vertical]): a new split, as Ghostty's.
+  void splitTerminal(Object conversation, Object at, Object added, Axis axis) {
+    final tabs = tabsOf(conversation);
+    final tab = tabs.tabOf(at);
+    if (tab == null) return;
+    tabs.splits[tab] = tabs.layoutOf(tab).split(at, added, axis);
+    _splitTabs.add(tabs);
+    tabs.terminal = tab;
+    notifyListeners();
+  }
+
+  /// The conversations' tabs with splits, for [dropTerminal].
+  final Set<SidePanelTabs> _splitTabs = {};
+
+  /// [terminal] out of the split it is in, once it has closed: the rest
+  /// keep its room, and a tab it named is named by the first of them.
+  void dropTerminal(Object terminal) {
+    var changed = false;
+    for (final tabs in [..._splitTabs]) {
+      final tab = tabs.tabOf(terminal);
+      final split = tab == null ? null : tabs.splits[tab];
+      if (tab == null || split == null) continue;
+      final rest = split.remove(terminal)!;
+      tabs.splits.remove(tab);
+      final id = tab == terminal ? rest.leaves.first : tab;
+      if (rest is TerminalBranch<Object>) tabs.splits[id] = rest;
+      if (id != tab) {
+        tabs.terminals[tabs.terminals.indexOf(tab)] = id;
+        if (tabs.terminal == tab) tabs.terminal = id;
+      }
+      if (tabs.splits.isEmpty) _splitTabs.remove(tabs);
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
   /// Closes the tab of [id]; selects the one after it, else before it,
   /// else none.
   void closeTerminal(Object conversation, Object id) {
@@ -351,6 +415,7 @@ class AgentSidePanel extends ChangeNotifier {
     final index = tabs.terminals.indexOf(id);
     if (index < 0) return;
     tabs.terminals.removeAt(index);
+    tabs.splits.remove(id);
     if (tabs.terminal == id) {
       tabs.terminal = tabs.terminals.isEmpty
           ? null

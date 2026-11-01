@@ -8,6 +8,7 @@ import '../../ide/ide_dialog.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_input.dart';
 import '../../ide/ide_menu.dart';
+import '../../ide/ide_notifications.dart';
 import '../../icons/project_icon.dart';
 import '../../icons/project_icon_picker.dart';
 import '../../kernel/claude_code/claude_haiku.dart';
@@ -21,6 +22,7 @@ import '../../models/model_icons.dart';
 import '../../models/model_provider.dart';
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
+import '../../models/pi_upstreams.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
@@ -184,6 +186,32 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
       context.l10n.modelsNewProviderName,
     );
     if (mounted) setState(() => _open = id);
+  }
+
+  /// Takes pi's upstreams in (see [PiUpstreams]), and says what it did.
+  Future<void> _importPi() async {
+    final l10n = context.l10n;
+    final notifications = IdeNotificationsScope.maybeOf(context);
+    final PiUpstreamsResult result;
+    try {
+      result = await PiUpstreams.takeInto(_providers);
+    } on PiUpstreamsException catch (error) {
+      notifications?.notify(
+        IdeSeverity.error,
+        l10n.modelsImportPiFailed(error.message),
+      );
+      return;
+    }
+    notifications?.notify(
+      result.nothing ? IdeSeverity.warning : IdeSeverity.info,
+      result.nothing && result.skipped.isEmpty
+          ? l10n.modelsImportPiNothing
+          : l10n.modelsImportPiDone(
+              result.added.length,
+              result.updated.length,
+              result.skipped.length,
+            ),
+    );
   }
 
   @override
@@ -433,6 +461,15 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
                 label: l10n.modelsAddProvider,
                 icon: Codicons.add,
                 onPressed: () => unawaited(_add()),
+              ),
+            ),
+            SettingsRow(
+              label: l10n.modelsImportPi,
+              description: l10n.modelsImportPiDescription,
+              trailing: IdeButton(
+                label: l10n.modelsImportPi,
+                icon: Codicons.arrowDown,
+                onPressed: () => unawaited(_importPi()),
               ),
             ),
           ],

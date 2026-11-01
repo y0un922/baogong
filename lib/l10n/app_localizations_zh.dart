@@ -2463,6 +2463,20 @@ class AppLocalizationsZh extends AppLocalizations {
   String get turnCopy => '复制回复';
 
   @override
+  String get turnTranslate => '译成中文';
+
+  @override
+  String get turnShowOriginal => '显示原文';
+
+  @override
+  String get turnTranslating => '翻译中…';
+
+  @override
+  String turnTranslateFailed(String error) {
+    return '翻译失败：$error';
+  }
+
+  @override
   String get turnCopied => '已复制';
 
   @override
@@ -2809,11 +2823,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String usageCacheLast(String read, String written, String uncached) {
     return '最近一次请求：读取 $read · 写入 $written · 未缓存 $uncached';
-  }
-
-  @override
-  String usageCacheOverall(String percent) {
-    return '主对话 $percent%';
   }
 
   @override
@@ -6039,6 +6048,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsAddProvider => '添加上游';
 
   @override
+  String get modelsImportPi => '从 pi 导入';
+
+  @override
+  String get modelsImportPiDescription =>
+      '把 pi 已经配好的上游（它自己的 models.json）连同密钥一起加进来，润色、翻译等小任务就能直接问它们，不必再用 Claude Code 的 Haiku';
+
+  @override
+  String modelsImportPiDone(int added, int updated, int skipped) {
+    return '从 pi 导入：新增 $added 个、更新 $updated 个、跳过 $skipped 个';
+  }
+
+  @override
+  String get modelsImportPiNothing => '从 pi 导入：没有新的上游';
+
+  @override
+  String modelsImportPiFailed(String error) {
+    return '从 pi 导入失败：$error';
+  }
+
+  @override
   String get modelsNewProviderName => '新上游';
 
   @override
@@ -6831,6 +6860,69 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsAppearanceKeywords => '主题 颜色 配色 深色 浅色 theme color';
+
+  @override
+  String get settingsSectionTerminal => '终端';
+
+  @override
+  String get settingsTerminalKeywords =>
+      '光标 闪烁 回滚 键盘 cursor blink scrollback option meta alt shell';
+
+  @override
+  String get terminalSettingsDescription => '集成终端的光标、回滚和键盘。字体和字号在“外观”里。';
+
+  @override
+  String get terminalSettingsCursorStyle => '光标样式';
+
+  @override
+  String terminalSettingsCursorStyleLabel(String style) {
+    return '光标样式：$style';
+  }
+
+  @override
+  String get terminalSettingsCursorBlock => '方块';
+
+  @override
+  String get terminalSettingsCursorLine => '竖线';
+
+  @override
+  String get terminalSettingsCursorUnderline => '下划线';
+
+  @override
+  String get terminalSettingsCursorBlinking => '光标闪烁';
+
+  @override
+  String get terminalSettingsCursorBlinkingDescription => '终端有键盘焦点时光标闪烁。';
+
+  @override
+  String get terminalSettingsScrollback => '回滚行数';
+
+  @override
+  String get terminalSettingsScrollbackDescription => '终端在屏幕之上保留多少行。';
+
+  @override
+  String terminalSettingsScrollbackLines(String count) {
+    return '$count 行';
+  }
+
+  @override
+  String terminalSettingsScrollbackLabel(String lines) {
+    return '回滚行数：$lines';
+  }
+
+  @override
+  String get terminalSettingsCopyOnSelection => '选中即复制';
+
+  @override
+  String get terminalSettingsCopyOnSelectionDescription =>
+      '在终端里选中的文字会立即复制到剪贴板。';
+
+  @override
+  String get terminalSettingsOptionIsMeta => 'Option 键作为 Meta';
+
+  @override
+  String get terminalSettingsOptionIsMetaDescription =>
+      '按 Option 加一个键时发送 Esc 再加该键，供 shell 的 Alt 快捷键使用（⌥B 向后跳一个单词），而不是输入 ∫ 这样的字符。';
 
   @override
   String get appearanceSettingsTitle => '外观';
@@ -8260,6 +8352,33 @@ class AppLocalizationsZh extends AppLocalizations {
   String composerPolishFailed(String error) {
     return '润色失败：$error';
   }
+
+  @override
+  String get composerTranslating => '翻译中…';
+
+  @override
+  String get composerTranslateToEnglishHint =>
+      '译成英文：用辅助模型把消息翻成英文，模型回答得更准；图片、文件、代码和链接原样不动，可撤销';
+
+  @override
+  String get composerTranslateToChineseHint =>
+      '译成中文：用辅助模型把消息翻成中文；图片、文件、代码和链接原样不动，可撤销';
+
+  @override
+  String composerTranslateFailed(String error) {
+    return '翻译失败：$error';
+  }
+
+  @override
+  String get aiRewriteEmpty => '模型没有回答（回复为空）';
+
+  @override
+  String aiRewriteTooLong(String reply, String message) {
+    return '回复比原消息长太多（$reply 与原消息 $message 字符），像是在回答它而不是改写它';
+  }
+
+  @override
+  String get aiRewriteMarkers => '回复里的占位标记丢失、重复或编造（每个标记代表一处不能改的图片、文件、代码或链接）';
 
   @override
   String get generalSettingsComposerPolish => '润色按钮';

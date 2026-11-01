@@ -109,6 +109,11 @@ abstract final class ClaudeSdkTools {
       ? _instructions.remove(feature)
       : _instructions[feature] = text;
 
+  /// What the features tell the agent of their tools, together; null for
+  /// nothing.
+  static String? get instructions =>
+      _instructions.isEmpty ? null : _instructions.values.join('\n\n');
+
   /// The tool an agent calls [name] (`mcp__baocode__<name>`), if one of
   /// this server's.
   static ClaudeSdkTool? called(String name) {
@@ -142,8 +147,7 @@ abstract final class ClaudeSdkTools {
           'protocolVersion': params['protocolVersion'] ?? '2024-11-05',
           'capabilities': {'tools': <String, Object?>{}},
           'serverInfo': {'name': server, 'version': '1.0.0'},
-          if (_instructions.isNotEmpty)
-            'instructions': _instructions.values.join('\n\n'),
+          'instructions': ?instructions,
         });
       case 'tools/list':
         return result({

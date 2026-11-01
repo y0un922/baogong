@@ -8,3 +8,5 @@ Future<CodexTransport> startCodexProcess(
       'Codex runs in the desktop app',
       detail: 'The browser cannot start local processes.',
     );
+
+Future<int?> readCodexFixedContext(String rollout) async => null;

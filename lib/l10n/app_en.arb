@@ -1480,6 +1480,17 @@
   "@turnCopy": {
     "description": "Hint of the button at the end of a finished turn that copies its answer."
   },
+  "turnTranslate": "Translate into Chinese",
+  "turnShowOriginal": "Show the original",
+  "turnTranslating": "Translating…",
+  "turnTranslateFailed": "Could not translate: {error}",
+  "@turnTranslateFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "turnCopied": "Copied",
   "turnSpeed": "{speed} tok/s",
   "@turnSpeed": {
@@ -1842,18 +1853,9 @@
       }
     }
   },
-  "usageCacheOverall": "main chat {percent}%",
-  "@usageCacheOverall": {
-    "description": "percent a whole number: what of the main conversation's input was read from the cache.",
-    "placeholders": {
-      "percent": {
-        "type": "String"
-      }
-    }
-  },
   "usageCacheConversation": "Main conversation: {read} read · {written} written · {percent}% hit",
   "@usageCacheConversation": {
-    "description": "read and written are formatted counts (8.2k); percent a whole number.",
+    "description": "read and written are formatted counts (8.2k); percent to one decimal (93.4).",
     "placeholders": {
       "read": {
         "type": "String"
@@ -4593,6 +4595,23 @@
   "modelsImportInvalid": "This import link can't be used",
   "modelsImportInvalidDetail": "It needs a base URL (http or https) and a protocol Baogong knows. Ask the site for a new link, or add the upstream by hand in Settings → Models.",
   "modelsAddProvider": "Add Upstream",
+  "modelsImportPi": "Import from pi",
+  "modelsImportPiDescription": "Add the upstreams pi is set up with (its own models.json), with their keys, so that Polish, Translate and the other small jobs can ask them instead of Claude Code's Haiku",
+  "modelsImportPiDone": "From pi: {added} added, {updated} updated, {skipped} left out",
+  "@modelsImportPiDone": {
+    "placeholders": {
+      "added": {"type": "int"},
+      "updated": {"type": "int"},
+      "skipped": {"type": "int"}
+    }
+  },
+  "modelsImportPiNothing": "From pi: nothing new to add",
+  "modelsImportPiFailed": "Could not import from pi: {error}",
+  "@modelsImportPiFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
   "modelsNewProviderName": "New Upstream",
   "modelsProviderNoUrl": "No base URL",
   "modelsModelCount": "{count, plural, =0{no models} =1{1 model} other{{count} models}}",
@@ -5167,6 +5186,45 @@
   },
   "settingsSectionAppearance": "Appearance",
   "settingsAppearanceKeywords": "theme color colour dark light",
+  "settingsSectionTerminal": "Terminal",
+  "settingsTerminalKeywords": "cursor blink scrollback option meta alt shell",
+  "terminalSettingsDescription": "The integrated terminal's cursor, scrollback and keyboard. Its font and size are in Appearance.",
+  "terminalSettingsCursorStyle": "Cursor Style",
+  "terminalSettingsCursorStyleLabel": "Cursor style: {style}",
+  "@terminalSettingsCursorStyleLabel": {
+    "placeholders": {
+      "style": {
+        "type": "String"
+      }
+    }
+  },
+  "terminalSettingsCursorBlock": "Block",
+  "terminalSettingsCursorLine": "Line",
+  "terminalSettingsCursorUnderline": "Underline",
+  "terminalSettingsCursorBlinking": "Cursor Blinking",
+  "terminalSettingsCursorBlinkingDescription": "The cursor blinks while the terminal has the keyboard.",
+  "terminalSettingsScrollback": "Scrollback",
+  "terminalSettingsScrollbackDescription": "How many lines a terminal keeps above its screen.",
+  "terminalSettingsScrollbackLines": "{count} lines",
+  "@terminalSettingsScrollbackLines": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "terminalSettingsScrollbackLabel": "Scrollback: {lines}",
+  "@terminalSettingsScrollbackLabel": {
+    "placeholders": {
+      "lines": {
+        "type": "String"
+      }
+    }
+  },
+  "terminalSettingsCopyOnSelection": "Copy on Selection",
+  "terminalSettingsCopyOnSelectionDescription": "What you select in a terminal is copied to the clipboard as you select it.",
+  "terminalSettingsOptionIsMeta": "Option as Meta",
+  "terminalSettingsOptionIsMetaDescription": "Option with a key sends Esc and the key, as the shell's Alt shortcuts expect (⌥B goes back a word), instead of typing a character such as ∫.",
   "appearanceSettingsTitle": "Appearance",
   "appearanceSettingsColorTheme": "Color Theme",
   "appearanceSettingsColorThemeDescription": "The colors of the chat, the IDE and the terminal.",
@@ -6293,6 +6351,26 @@
   "composerPolishing": "Polishing…",
   "composerPolishHint": "Polish: the auxiliary model makes the message clearer, in your words; pictures, files, code and links stay as they are; Undo takes it back",
   "composerPolishFailed": "Could not polish: {error}",
+  "composerTranslating": "Translating…",
+  "composerTranslateToEnglishHint": "Translate into English: the auxiliary model puts the message in English, which a model answers better; pictures, files, code and links stay as they are; Undo takes it back",
+  "composerTranslateToChineseHint": "Translate into Chinese: the auxiliary model puts the message in Chinese; pictures, files, code and links stay as they are; Undo takes it back",
+  "composerTranslateFailed": "Could not translate: {error}",
+  "aiRewriteEmpty": "the model answered nothing",
+  "aiRewriteTooLong": "the reply is far longer than the message ({reply} vs {message} characters), as if it answered it instead of rewriting it",
+  "@aiRewriteTooLong": {
+    "placeholders": {
+      "reply": {"type": "String"},
+      "message": {"type": "String"}
+    }
+  },
+  "aiRewriteMarkers": "the reply lost, doubled or made up a marker (a picture, file, code or link the message carries)",
+  "@composerTranslateFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "@composerPolishFailed": {
     "placeholders": {
       "error": {

@@ -96,6 +96,24 @@ abstract final class ChatCommandIds {
   /// panel where the page has none.
   static const sidePanelCloseTab = 'baocode.chat.sidePanel.closeTab';
 
+  /// Followed by 1 to 5: the side panel's page at that place in its bar.
+  static const sidePanelPage = 'baocode.chat.sidePanel.page';
+
+  /// A new terminal beside the side panel's one with the keyboard, at its
+  /// right or under it, as Ghostty's new splits.
+  static const sidePanelSplitTerminalRight =
+      'baocode.chat.sidePanel.splitTerminalRight';
+  static const sidePanelSplitTerminalDown =
+      'baocode.chat.sidePanel.splitTerminalDown';
+
+  /// The keyboard to the part of the window on that side of the one it is
+  /// in: the sidebar's agents, the conversation, the side panel, the
+  /// terminal panel under the conversation (upstream's ids).
+  static const navigateLeft = 'workbench.action.navigateLeft';
+  static const navigateRight = 'workbench.action.navigateRight';
+  static const navigateUp = 'workbench.action.navigateUp';
+  static const navigateDown = 'workbench.action.navigateDown';
+
   /// The IDE's chat's: closes the tab shown.
   static const closeTab = 'baocode.chat.closeTab';
 
@@ -142,6 +160,9 @@ abstract final class ChatCommandIds {
   /// How many agents [openAgentAtIndex] reaches, and panes [focusPane].
   static const agentIndexes = 9;
   static const paneIndexes = 4;
+
+  /// How many of the side panel's pages [sidePanelPage] reaches: all.
+  static const sidePanelPageIndexes = 5;
 
   /// The place (1…) of [id] if it is [prefix] followed by one; null
   /// otherwise.
@@ -221,6 +242,14 @@ final List<CommandInfo> chatExtraCommands = [
     (ChatCommandIds.sidePanelNewTerminal, 'New Agent Terminal'),
     (ChatCommandIds.sidePanelToggleList, 'Toggle Side Panel List'),
     (ChatCommandIds.sidePanelCloseTab, 'Close Side Panel Tab'),
+    for (var i = 1; i <= ChatCommandIds.sidePanelPageIndexes; i++)
+      ('${ChatCommandIds.sidePanelPage}$i', 'Show Side Panel Page $i'),
+    (ChatCommandIds.sidePanelSplitTerminalRight, 'Split Terminal Right'),
+    (ChatCommandIds.sidePanelSplitTerminalDown, 'Split Terminal Down'),
+    (ChatCommandIds.navigateLeft, 'Navigate Left'),
+    (ChatCommandIds.navigateRight, 'Navigate Right'),
+    (ChatCommandIds.navigateUp, 'Navigate Up'),
+    (ChatCommandIds.navigateDown, 'Navigate Down'),
     (ChatCommandIds.closeTab, 'Close Chat'),
     (ChatCommandIds.focusInput, 'Focus Chat Input'),
     (ChatCommandIds.focusList, 'Focus Chat List'),
@@ -384,6 +413,34 @@ final List<KeybindingEntry> chatExtraKeybindings = [
       command: '${ChatCommandIds.focusPane}$i',
       when: _window,
     ),
+  // From the side panel, its pages instead, in its bar's order.
+  for (var i = 1; i <= ChatCommandIds.sidePanelPageIndexes; i++)
+    KeybindingEntry(
+      key: 'ctrl+$i',
+      mac: 'cmd+$i',
+      command: '${ChatCommandIds.sidePanelPage}$i',
+      when: _sidePanel,
+    ),
+  // As Ghostty's new splits.
+  const KeybindingEntry(
+    mac: 'cmd+d',
+    command: ChatCommandIds.sidePanelSplitTerminalRight,
+    when: _sidePanel,
+  ),
+  const KeybindingEntry(
+    mac: 'shift+cmd+d',
+    command: ChatCommandIds.sidePanelSplitTerminalDown,
+    when: _sidePanel,
+  ),
+  // As vim's window moves: ⌃⌘H, J, K and L (⌘H hides the app, ⌘K clears
+  // the terminal and starts chords, ⌘L is Focus Chat Input).
+  for (final (letter, command) in const [
+    ('h', ChatCommandIds.navigateLeft),
+    ('j', ChatCommandIds.navigateDown),
+    ('k', ChatCommandIds.navigateUp),
+    ('l', ChatCommandIds.navigateRight),
+  ])
+    KeybindingEntry(mac: 'ctrl+cmd+$letter', command: command, when: _window),
   // Search: over Go to File and Show All Commands in the chat layout (the
   // IDE keeps them), ⇧⌘P the one shown.
   const KeybindingEntry(

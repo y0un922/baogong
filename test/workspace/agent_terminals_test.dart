@@ -5,14 +5,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
 import 'package:baocode/ide/terminal/terminal_service.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
+import 'package:baocode/kernel/agent_instructions.dart';
 import 'package:baocode/kernel/claude_code/claude_code_transport.dart';
+import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
+import 'package:baocode/kernel/pi/pi_transport.dart';
 import 'package:baocode/workspace/agent_host.dart';
+import 'package:baocode/workspace/agent_pi_extension.dart';
 import 'package:baocode/workspace/agent_server.dart';
 import 'package:baocode/workspace/agent_terminals.dart';
 import 'package:baocode/workspace/workspace.dart';
 
 import '../ide/terminal/fake_pty.dart';
 import '../ide/terminal/fake_terminal.dart';
+
+class _RealHttp extends HttpOverrides {}
 
 /// A prompt as VS Code's shell integration reports it.
 const _prompt = '\x1b]633;A\x07\$ \x1b]633;B\x07';
@@ -174,6 +180,101 @@ void main() {
     const apart = ClaudeLaunch(cwd: '/tmp/app');
     expect(apart.systemPrompt, ClaudeLaunch.appendedSystemPrompt);
     expect(apart.settings.containsKey('hooks'), isFalse);
+  });
+
+  test("the app's tools are an MCP server over HTTP for each agent, and "
+      'pi starts with the extension that reaches it', () async {
+    ClaudeSdkTools.register(
+      ClaudeSdkTool(
+        name: 'echo',
+        description: 'Says it back',
+        inputSchema: const {'type': 'object'},
+        run: (input, call) async => '${input['text']} in ${call.cwd}',
+      ),
+    );
+    addTearDown(() => ClaudeSdkTools.unregister('echo'));
+    final dir = await Directory.systemTemp.createTemp('baocode-agent-');
+    addTearDown(() => dir.delete(recursive: true));
+    final workspace = Workspace(
+      kernels: MockKernels.all,
+      projects: const [Project('app', '/tmp/app')],
+    );
+    final host = AgentHost(workspace);
+    await serveAgents(host, directory: dir.path, installSkill: false);
+    final environment = host.environmentOf(workspace.create());
+    // A real client: the test binding's answers every request with 400.
+    final client = HttpOverrides.runWithHttpOverrides(
+      HttpClient.new,
+      _RealHttp(),
+    );
+    addTearDown(client.close);
+    Future<(int, Object?)> post(
+      String url,
+      Map<String, Object?> message,
+    ) async {
+      final request = await client.postUrl(Uri.parse(url));
+      request.write(jsonEncode(message));
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+      return (response.statusCode, body.isEmpty ? null : jsonDecode(body));
+    }
+
+    final mcp = AgentInstructions.mcpUrl(environment)!;
+    expect(mcp, '${environment[AgentHost.urlVariable]}/mcp');
+    final (_, initialized) = await post(mcp, {
+      'jsonrpc': '2.0',
+      'id': 1,
+      'method': 'initialize',
+      'params': {'protocolVersion': '2025-06-18'},
+    });
+    expect(initialized, containsPair('id', 1));
+    expect(
+      await post(mcp, {
+        'jsonrpc': '2.0',
+        'method': 'notifications/initialized',
+      }),
+      (HttpStatus.accepted, null),
+    );
+    final (_, listed) = await post(mcp, {
+      'jsonrpc': '2.0',
+      'id': 2,
+      'method': 'tools/list',
+    });
+    expect([
+      for (final tool in (listed! as Map)['result']['tools']) tool['name'],
+    ], contains('echo'));
+    final (_, called) = await post(mcp, {
+      'jsonrpc': '2.0',
+      'id': 3,
+      'method': 'tools/call',
+      'params': {
+        'name': 'echo',
+        'arguments': {'text': 'hi'},
+      },
+    });
+    expect((called! as Map)['result']['content'], [
+      {'type': 'text', 'text': 'hi in /tmp/app'},
+    ]);
+    final (_, stranger) = await post(
+      '${environment[AgentHost.urlVariable]}x/mcp',
+      {'jsonrpc': '2.0', 'id': 4, 'method': 'tools/list'},
+    );
+    expect((stranger! as Map)['error'], isNotNull);
+
+    // pi: told of terminals, and given the extension written beside the
+    // command.
+    final arguments = piBaoCodeArguments(environment);
+    expect(arguments, [
+      '--append-system-prompt',
+      AgentInstructions.of(environment),
+      '--extension',
+      '${dir.path}/$piExtensionFile',
+    ]);
+    expect(
+      File('${dir.path}/$piExtensionFile').readAsStringSync(),
+      AgentPiExtension.text,
+    );
+    expect(piBaoCodeArguments(const {}), isEmpty);
   });
 
   test('keys as the terminal sends them', () {

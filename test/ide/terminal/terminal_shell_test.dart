@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/ide/terminal/pty.dart' show terminalBaseEnvironment;
 import 'package:baocode/ide/terminal/terminal_shell.dart';
 
 /// The shell and environment of a new terminal, as VS Code picks them.
@@ -268,5 +269,50 @@ void main() {
     expect(terminalLang('en_US.UTF-8'), 'en_US.UTF-8');
     expect(terminalLang('de_DE@euro'), 'de_DE.UTF-8');
     expect(terminalLang('tlh'), 'tlh.UTF-8');
+  });
+
+  test('a login zsh is not handed an EDITOR or VISUAL naming vi, which '
+      'would start it in its vi keymap; other shells and editors are', () {
+    const base = {
+      'EDITOR': 'nvim',
+      'VISUAL': '/usr/bin/vim',
+      'PATH': '/usr/bin',
+    };
+    expect(
+      terminalBaseEnvironment(base, (
+        executable: '/bin/zsh',
+        arguments: const ['-l'],
+      )),
+      {'PATH': '/usr/bin'},
+    );
+    expect(
+      terminalBaseEnvironment(base, (
+        executable: '/opt/homebrew/bin/zsh',
+        arguments: const ['--login'],
+      )),
+      {'PATH': '/usr/bin'},
+    );
+    // Not a login shell: its profile, which may set them, is not read.
+    expect(
+      terminalBaseEnvironment(base, (
+        executable: '/bin/zsh',
+        arguments: const [],
+      )),
+      base,
+    );
+    expect(
+      terminalBaseEnvironment(base, (
+        executable: '/bin/bash',
+        arguments: const ['-l'],
+      )),
+      base,
+    );
+    expect(
+      terminalBaseEnvironment(
+        const {'EDITOR': 'code --wait'},
+        (executable: '/bin/zsh', arguments: const ['-l']),
+      ),
+      {'EDITOR': 'code --wait'},
+    );
   });
 }

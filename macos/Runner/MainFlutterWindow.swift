@@ -563,6 +563,9 @@ class MainFlutterWindow: BaoWindow {
 
     // Paths the system asks the app to open (see AppDelegate.swift).
     OpenRequests.shared.attach(to: messenger)
+    // A remote desktop's ⌘ and the like, as a keyboard's (see
+    // AppDelegate.swift).
+    ModifierSides.install()
 
     // The IDE's windows, views of this one's engine (see AppWindows.swift).
     // Shown or not at launch as the app last said: the IDE's windows

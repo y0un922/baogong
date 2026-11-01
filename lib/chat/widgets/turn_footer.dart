@@ -6,8 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../ide/ide_hover.dart';
+import '../../ide/ide_notifications.dart';
+import '../../ide/ide_spinning.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/codicons.dart';
 import '../chat_models.dart';
 import 'agent_step.dart';
 import 'hover_builder.dart';
@@ -57,6 +60,8 @@ class TurnFooter extends StatelessWidget {
     this.endedAt,
     this.live,
     this.since,
+    this.translated = false,
+    this.onTranslate,
   });
 
   /// What the copy button copies; no button when null.
@@ -64,6 +69,13 @@ class TurnFooter extends StatelessWidget {
   final Duration? worked;
   final TurnUsage? usage;
   final DateTime? endedAt;
+
+  /// Whether the answer shows translated (see [onTranslate]).
+  final bool translated;
+
+  /// Translates the answer into Chinese, or puts back the model's own
+  /// words; no button when null.
+  final Future<void> Function()? onTranslate;
 
   /// What the turn under way has written so far, and how fast.
   final TurnOutput? live;
@@ -113,6 +125,8 @@ class TurnFooter extends StatelessWidget {
       return _padded(
         _line([
           if (answer case final answer?) _CopyButton(text: answer),
+          if (answer != null && onTranslate != null)
+            _TranslateButton(translated: translated, onTap: onTranslate!),
           ..._stats(l10n),
         ]),
       );
@@ -365,6 +379,79 @@ class _CopyButtonState extends State<_CopyButton> {
                 BlendMode.srcIn,
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Turns the answer into Chinese, or back into the model's own words (see
+/// [TurnFooter.onTranslate]): a globe, spinning while the auxiliary model
+/// answers.
+class _TranslateButton extends StatefulWidget {
+  const _TranslateButton({required this.translated, required this.onTap});
+
+  final bool translated;
+  final Future<void> Function() onTap;
+
+  @override
+  State<_TranslateButton> createState() => _TranslateButtonState();
+}
+
+class _TranslateButtonState extends State<_TranslateButton> {
+  bool _busy = false;
+
+  Future<void> _translate() async {
+    if (_busy) return;
+    final l10n = context.l10n;
+    final notifications = IdeNotificationsScope.maybeOf(context);
+    setState(() => _busy = true);
+    try {
+      await widget.onTap();
+    } on Object catch (error) {
+      notifications?.notify(
+        IdeSeverity.error,
+        l10n.turnTranslateFailed('$error'),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final active = widget.translated;
+    final icon = Icon(
+      Codicons.globe,
+      size: 13,
+      color: _busy || active ? AppColors.text : AppColors.textFaint,
+    );
+    return IdeHover(
+      message: _busy
+          ? l10n.turnTranslating
+          : active
+          ? l10n.turnShowOriginal
+          : l10n.turnTranslate,
+      child: HoverBuilder(
+        cursor: active || !_busy
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        builder: (context, hovered) => GestureDetector(
+          onTap: _busy ? null : () => unawaited(_translate()),
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: hovered ? AppColors.hover : null,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: hovered && !_busy
+                ? Icon(Codicons.globe, size: 13, color: AppColors.text)
+                : _busy
+                ? IdeSpinning(icon)
+                : icon,
           ),
         ),
       ),

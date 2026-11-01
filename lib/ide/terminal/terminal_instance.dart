@@ -26,6 +26,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
@@ -40,6 +41,7 @@ import 'terminal_mouse.dart';
 import 'terminal_render_adapter.dart';
 import 'terminal_render_theme.dart';
 import 'terminal_selection.dart';
+import 'terminal_settings.dart';
 import 'links/terminal_link_resolver.dart';
 import 'links/terminal_links.dart';
 import 'terminal_colors.dart';
@@ -210,11 +212,22 @@ class TerminalInstance extends ChangeNotifier {
     );
     _colorTheme.addListener(_updateTheme);
     CodeFont.families.addListener(_updateFont);
+    TerminalSettings.changes.addListener(_updateSettings);
+    // What a program copies (tmux, Neovim, a shell over ssh) goes to the
+    // clipboard; it is never read back to one.
+    terminal.registerOscHandler(52, (data) {
+      if (osc52Clipboard(data) case final text?) {
+        unawaited(Clipboard.setData(ClipboardData(text: text)));
+      }
+      return true;
+    });
+    terminal.onTitleChange((title) => _setDynamicTitle(title));
     source = TerminalCoreSource(terminal, decorationService: decorations);
     clipboard = TerminalClipboard(
       selection: selection,
       coreService: terminal.coreService,
       optionsService: terminal.optionsService,
+      copyOnSelection: TerminalSettings.copyOnSelection.value,
     );
     mouse = TerminalMouse(
       bufferService: terminal.bufferService,
@@ -325,6 +338,7 @@ class TerminalInstance extends ChangeNotifier {
     exitReason = null;
     _launch = null;
     _pty = null;
+    _dynamicTitle = null;
     _typedAhead.clear();
     _shellIntegration?.dispose();
     _shellIntegration = null;
@@ -460,6 +474,17 @@ class TerminalInstance extends ChangeNotifier {
     xterm.options.fontFamily = vscodeTerminalFontFamily();
   }
 
+  /// Settings → Terminal's choices as the terminal's options, as they
+  /// change.
+  void _updateSettings() {
+    xterm.options
+      ..cursorStyle = TerminalSettings.cursorStyle.value.xterm
+      ..cursorBlink = TerminalSettings.cursorBlinking.value
+      ..scrollback = TerminalSettings.scrollback.value
+      ..macOptionIsMeta = TerminalSettings.macOptionIsMeta.value;
+    clipboard.copyOnSelection = TerminalSettings.copyOnSelection.value;
+  }
+
   /// The find widget's theme listener, with `_updateFindColors`' new colors.
   void _updateFindColors() {
     find
@@ -508,13 +533,35 @@ class TerminalInstance extends ChangeNotifier {
   /// What the user named it; null leaves it to the process.
   String? get userTitle => _userTitle;
 
-  /// Its name in the tabs: the user's, else its [config]'s, else the
-  /// process's (VS Code's default `terminal.integrated.tabs.title`,
-  /// `${process}`).
+  /// Its name in the tabs: the user's, else its [config]'s, else what it
+  /// is doing ([dynamicTitle]), else the process's (VS Code's default
+  /// `terminal.integrated.tabs.title`, `${process}`).
   String get title =>
       _userTitle ??
       config?.name ??
+      _dynamicTitle ??
       (processName.isEmpty ? 'Terminal' : processName);
+
+  /// What it is doing, as Ghostty titles a terminal: the title a program
+  /// last set (OSC 0 or 2), or the command line the shell runs (its
+  /// integration reports it), whichever came last; none once the command
+  /// finishes.
+  String? get dynamicTitle => _dynamicTitle;
+  String? _dynamicTitle;
+
+  void _setDynamicTitle(String? title) {
+    final next = title?.trim();
+    final value = next == null || next.isEmpty ? null : next;
+    if (value == _dynamicTitle || _disposed) return;
+    _dynamicTitle = value;
+    notifyListeners();
+  }
+
+  void _followCommands(ShellIntegration integration) {
+    integration
+      ..onCommandExecuted((command) => _setDynamicTitle(command.command))
+      ..onCommandFinished((_) => _setDynamicTitle(null));
+  }
 
   /// Whether it is kept, after its process exited, until a key is pressed
   /// (its [config]'s `waitOnExit`).
@@ -659,6 +706,7 @@ class TerminalInstance extends ChangeNotifier {
           decorationService: decorations,
           onDidExecuteText: _onDidExecuteText.event,
         );
+        _followCommands(_shellIntegration!);
         _onShellIntegrationReady.add(null);
         pty = await customPty(this);
       } else {
@@ -694,6 +742,7 @@ class TerminalInstance extends ChangeNotifier {
           decorationService: decorations,
           onDidExecuteText: _onDidExecuteText.event,
         );
+        _followCommands(_shellIntegration!);
         _onShellIntegrationReady.add(null);
         notifyListeners();
         pty = await backend.start(launch);
@@ -830,6 +879,7 @@ class TerminalInstance extends ChangeNotifier {
     _disposed = true;
     _colorTheme.removeListener(_updateTheme);
     CodeFont.families.removeListener(_updateFont);
+    TerminalSettings.changes.removeListener(_updateSettings);
     if (!_exited) _pty?.kill();
     unawaited(_printing?.cancel());
     unawaited(_output.close());
@@ -851,6 +901,25 @@ class TerminalInstance extends ChangeNotifier {
     xterm.dispose();
     focusNode.dispose();
     super.dispose();
+  }
+}
+
+/// The text an OSC 52 sequence puts on the clipboard: its [data] is
+/// `Pc;Pd`, the selections (ignored: there is one clipboard) and the text in
+/// base64. Null for a query of the clipboard (`?`), which is never answered,
+/// or for what does not decode.
+String? osc52Clipboard(String data) {
+  final separator = data.indexOf(';');
+  if (separator < 0) return null;
+  final payload = data.substring(separator + 1);
+  if (payload == '?') return null;
+  try {
+    return utf8.decode(
+      base64.decode(base64.normalize(payload)),
+      allowMalformed: true,
+    );
+  } on FormatException {
+    return null;
   }
 }
 

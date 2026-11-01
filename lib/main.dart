@@ -35,6 +35,7 @@ import 'ide/lsp/packs/language_packs.dart';
 import 'ide/terminal/pty.dart';
 import 'ide/terminal/terminal_colors.dart';
 import 'ide/terminal/terminal_instance.dart';
+import 'ide/terminal/terminal_settings.dart';
 import 'icons/emoji_sheet.dart';
 import 'icons/icon_library.dart';
 import 'icons/icon_storage.dart';
@@ -276,6 +277,8 @@ Future<void> main(List<String> arguments) async {
     // Settings → Appearance: the code's font, size and ligatures, and the
     // window's text size.
     CodeFont.follow(files.settings, (key) => files.settings[key]);
+    // Settings → Terminal: the cursor, the scrollback and the Option key.
+    TerminalSettings.follow(files.settings, (key) => files.settings[key]);
   }
   // Emoji as pictures: fetched into the cache the first run, in the
   // background, through the proxy.

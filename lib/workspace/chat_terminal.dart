@@ -83,6 +83,10 @@ class ChatTerminals extends ChangeNotifier {
   /// the keyboard to go back to the chat if the terminal had it.
   VoidCallback? onLastClosed;
 
+  /// Told of each of the side panel's terminals once it has closed, for
+  /// the splits it was in.
+  void Function(TerminalInstance terminal)? onSidePanelTerminalClosed;
+
   TerminalService _serviceOf(String root) => _services.putIfAbsent(root, () {
     late final TerminalService service;
     service = TerminalService(
@@ -93,15 +97,19 @@ class ChatTerminals extends ChangeNotifier {
   });
 
   /// The side panel's terminals of the project in [root] (none made).
-  TerminalService sidePanelTerminals(String root) => _sideServices.putIfAbsent(
-    root,
-    () => TerminalService(
-      root: pathOf?.call(root) ?? root,
-      backend: backendFor?.call(root) ?? backend,
-      // On the editor's background, as the side panel is.
-      colorTheme: editorTerminalColorTheme,
-    ),
-  );
+  TerminalService sidePanelTerminals(String root) =>
+      _sideServices.putIfAbsent(root, () {
+        final service = TerminalService(
+          root: pathOf?.call(root) ?? root,
+          backend: backendFor?.call(root) ?? backend,
+          // On the editor's background, as the side panel is.
+          colorTheme: editorTerminalColorTheme,
+        );
+        service.onDidDispose.listen(
+          (terminal) => onSidePanelTerminalClosed?.call(terminal),
+        );
+        return service;
+      });
 
   void _changed(TerminalService service) {
     if (_shown && identical(service, current) && service.instances.isEmpty) {

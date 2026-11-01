@@ -2547,6 +2547,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get turnCopy => 'Copy reply';
 
   @override
+  String get turnTranslate => 'Translate into Chinese';
+
+  @override
+  String get turnShowOriginal => 'Show the original';
+
+  @override
+  String get turnTranslating => 'Translating…';
+
+  @override
+  String turnTranslateFailed(String error) {
+    return 'Could not translate: $error';
+  }
+
+  @override
   String get turnCopied => 'Copied';
 
   @override
@@ -2909,11 +2923,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String usageCacheLast(String read, String written, String uncached) {
     return 'Last request: $read read · $written written · $uncached uncached';
-  }
-
-  @override
-  String usageCacheOverall(String percent) {
-    return 'main chat $percent%';
   }
 
   @override
@@ -6432,6 +6441,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelsAddProvider => 'Add Upstream';
 
   @override
+  String get modelsImportPi => 'Import from pi';
+
+  @override
+  String get modelsImportPiDescription =>
+      'Add the upstreams pi is set up with (its own models.json), with their keys, so that Polish, Translate and the other small jobs can ask them instead of Claude Code\'s Haiku';
+
+  @override
+  String modelsImportPiDone(int added, int updated, int skipped) {
+    return 'From pi: $added added, $updated updated, $skipped left out';
+  }
+
+  @override
+  String get modelsImportPiNothing => 'From pi: nothing new to add';
+
+  @override
+  String modelsImportPiFailed(String error) {
+    return 'Could not import from pi: $error';
+  }
+
+  @override
   String get modelsNewProviderName => 'New Upstream';
 
   @override
@@ -7283,6 +7312,72 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAppearanceKeywords => 'theme color colour dark light';
+
+  @override
+  String get settingsSectionTerminal => 'Terminal';
+
+  @override
+  String get settingsTerminalKeywords =>
+      'cursor blink scrollback option meta alt shell';
+
+  @override
+  String get terminalSettingsDescription =>
+      'The integrated terminal\'s cursor, scrollback and keyboard. Its font and size are in Appearance.';
+
+  @override
+  String get terminalSettingsCursorStyle => 'Cursor Style';
+
+  @override
+  String terminalSettingsCursorStyleLabel(String style) {
+    return 'Cursor style: $style';
+  }
+
+  @override
+  String get terminalSettingsCursorBlock => 'Block';
+
+  @override
+  String get terminalSettingsCursorLine => 'Line';
+
+  @override
+  String get terminalSettingsCursorUnderline => 'Underline';
+
+  @override
+  String get terminalSettingsCursorBlinking => 'Cursor Blinking';
+
+  @override
+  String get terminalSettingsCursorBlinkingDescription =>
+      'The cursor blinks while the terminal has the keyboard.';
+
+  @override
+  String get terminalSettingsScrollback => 'Scrollback';
+
+  @override
+  String get terminalSettingsScrollbackDescription =>
+      'How many lines a terminal keeps above its screen.';
+
+  @override
+  String terminalSettingsScrollbackLines(String count) {
+    return '$count lines';
+  }
+
+  @override
+  String terminalSettingsScrollbackLabel(String lines) {
+    return 'Scrollback: $lines';
+  }
+
+  @override
+  String get terminalSettingsCopyOnSelection => 'Copy on Selection';
+
+  @override
+  String get terminalSettingsCopyOnSelectionDescription =>
+      'What you select in a terminal is copied to the clipboard as you select it.';
+
+  @override
+  String get terminalSettingsOptionIsMeta => 'Option as Meta';
+
+  @override
+  String get terminalSettingsOptionIsMetaDescription =>
+      'Option with a key sends Esc and the key, as the shell\'s Alt shortcuts expect (⌥B goes back a word), instead of typing a character such as ∫.';
 
   @override
   String get appearanceSettingsTitle => 'Appearance';
@@ -8755,6 +8850,34 @@ class AppLocalizationsEn extends AppLocalizations {
   String composerPolishFailed(String error) {
     return 'Could not polish: $error';
   }
+
+  @override
+  String get composerTranslating => 'Translating…';
+
+  @override
+  String get composerTranslateToEnglishHint =>
+      'Translate into English: the auxiliary model puts the message in English, which a model answers better; pictures, files, code and links stay as they are; Undo takes it back';
+
+  @override
+  String get composerTranslateToChineseHint =>
+      'Translate into Chinese: the auxiliary model puts the message in Chinese; pictures, files, code and links stay as they are; Undo takes it back';
+
+  @override
+  String composerTranslateFailed(String error) {
+    return 'Could not translate: $error';
+  }
+
+  @override
+  String get aiRewriteEmpty => 'the model answered nothing';
+
+  @override
+  String aiRewriteTooLong(String reply, String message) {
+    return 'the reply is far longer than the message ($reply vs $message characters), as if it answered it instead of rewriting it';
+  }
+
+  @override
+  String get aiRewriteMarkers =>
+      'the reply lost, doubled or made up a marker (a picture, file, code or link the message carries)';
 
   @override
   String get generalSettingsComposerPolish => 'Polish button';

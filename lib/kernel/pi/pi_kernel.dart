@@ -12,6 +12,7 @@ import '../../models/model_brand.dart';
 import '../../models/model_icons.dart' show ProviderIconView;
 import '../../models/model_provider.dart' show effortLabel, formatTokens;
 import '../agent_kernel.dart';
+import '../context_estimate.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../output_meter.dart';
@@ -30,6 +31,7 @@ class PiKernel
         SelectsEffort,
         ProvidesCommands,
         ReportsContext,
+        ReportsUsage,
         AcceptsImages,
         RenamesSession,
         QueuesMessages,
@@ -366,6 +368,8 @@ class PiKernel
               if (message is Map) message.cast<String, Object?>(),
           ]);
         }
+        // What the session resumed has cost and holds so far.
+        unawaited(_refreshStats());
       }
     } on Object catch (error) {
       if (_health.status != KernelHealthStatus.failed) {
@@ -434,21 +438,124 @@ class PiKernel
     }
   }
 
+  /// pi is on no plan of its own: no limits, only what the session cost.
+  @override
+  List<RateLimitWindow> get accountLimits => const [];
+
+  @override
+  Future<void> refreshUsage() async {
+    if (_running) await _refreshStats();
+  }
+
+  double? _cost;
+
+  /// What the prompt cache made of the conversation's requests: the last
+  /// one, and all of them.
+  CacheTokens? _lastRequest;
+  CacheTokens _requestsCache = const CacheTokens();
+
+  /// Counts a request to the model by its [usage]. Whether it had input.
+  bool _countRequest(Map<Object?, Object?> usage) {
+    int count(String key) => (usage[key] as num?)?.toInt() ?? 0;
+    final tokens = CacheTokens(
+      read: count('cacheRead'),
+      written: count('cacheWrite'),
+      uncached: count('input'),
+    );
+    if (tokens.total == 0) return false;
+    _lastRequest = tokens;
+    _requestsCache += tokens;
+    return true;
+  }
+
+  /// What every request starts with (system prompt, tools), once known: the
+  /// first request's input less a guess at what was sent before it. Sought
+  /// until found, or until the first request is out of reach.
+  int? _fixedContext;
+  bool _seekingFixed = true;
+  int _beforeFirstReply = 0;
+
+  /// The context last reported, to report again split once it can be.
+  (int, int)? _contextReported;
+
+  /// [message] goes to the model before its first reply: so much of that
+  /// request was not fixed.
+  void _sentBeforeReply(Map<Object?, Object?> message) {
+    if (!_seekingFixed) return;
+    if (message['role'] == 'compactionSummary') {
+      // What it summed up was the first request's: out of reach.
+      _seekingFixed = false;
+      return;
+    }
+    switch (message['content']) {
+      case final String text:
+        _beforeFirstReply += estimateTokens(text);
+      case final List<Object?> blocks:
+        for (final block in blocks) {
+          switch (block) {
+            case {'type': 'text', 'text': final String text}:
+              _beforeFirstReply += estimateTokens(text);
+            case {'type': 'image'}:
+              _beforeFirstReply += imageTokens;
+          }
+        }
+    }
+  }
+
+  /// A reply came with its request's [usage]: the first, it tells what was
+  /// fixed of the context.
+  void _replied(Map<Object?, Object?> usage) {
+    if (!_seekingFixed) return;
+    int count(String key) => (usage[key] as num?)?.toInt() ?? 0;
+    final input = count('input') + count('cacheRead') + count('cacheWrite');
+    if (input <= 0) return;
+    _seekingFixed = false;
+    _fixedContext = input - _beforeFirstReply;
+    if (_contextReported case (final window, final used)) {
+      _reportContext(window, used);
+    }
+  }
+
+  void _reportContext(int window, int used) {
+    _contextReported = (window, used);
+    emit(
+      UsageReported(
+        nextSeq,
+        estimatedContext(window: window, used: used, fixed: _fixedContext),
+      ),
+    );
+  }
+
+  void _reportStats() => emit(
+    StatsReported(
+      nextSeq,
+      UsageStats(
+        costUsd: _cost,
+        // Not on a provider that never caches.
+        cache: switch (_lastRequest) {
+          final last?
+              when _requestsCache.read > 0 || _requestsCache.written > 0 =>
+            PromptCache(last: last, conversation: _requestsCache),
+          _ => null,
+        },
+      ),
+    ),
+  );
+
   /// The session's cost and context, after a turn.
   Future<void> _refreshStats() async {
     try {
       final data = await _call({'type': 'get_session_stats'});
       if (data == null) return;
       if (data['cost'] case final num cost) {
-        emit(StatsReported(nextSeq, UsageStats(costUsd: cost.toDouble())));
+        _cost = cost.toDouble();
+        _reportStats();
       }
       if (data['contextUsage'] case {
         'tokens': final int tokens,
         'contextWindow': final int window,
       }) {
-        emit(
-          UsageReported(nextSeq, ContextUsage(window: window, used: tokens)),
-        );
+        _reportContext(window, tokens);
       }
     } on Object {
       // Not said, then.
@@ -606,6 +713,13 @@ class PiKernel
           .then((_) {
             if (_disposed || _turn != turn.id) return null;
             if (prompt) {
+              _sentBeforeReply({
+                'role': 'user',
+                'content': [
+                  {'type': 'text', 'text': command['message']},
+                  for (final _ in turn.images) {'type': 'image'},
+                ],
+              });
               _userItems.add(turn.id);
               // Older pi may omit turn_start; exclude process/setup time.
               _meter.resume();
@@ -1208,13 +1322,10 @@ class PiKernel
       if (usage['cost'] case {'total': final num cost}) {
         _turnCost += cost.toDouble();
       }
+      if (_countRequest(usage)) _reportStats();
+      _replied(usage);
       if (count('totalTokens') > 0) {
-        emit(
-          UsageReported(
-            nextSeq,
-            ContextUsage(window: _contextWindow, used: count('totalTokens')),
-          ),
-        );
+        _reportContext(_contextWindow, count('totalTokens'));
       }
     }
     if (message['stopReason'] == 'error') {
@@ -1565,6 +1676,19 @@ class PiKernel
       if (message['role'] == 'user') _userItems.add('pi:history:$index');
     }
     _restoreTodos(messages);
+    var counted = false;
+    for (final message in messages) {
+      if (message case {
+        'role': 'assistant',
+        'usage': final Map<Object?, Object?> usage,
+      }) {
+        counted |= _countRequest(usage);
+        _replied(usage);
+      } else {
+        _sentBeforeReply(message);
+      }
+    }
+    if (counted) _reportStats();
     _shownFrom = _turnsFrom(messages.length, _firstTurns);
     _translateHistory(_shownFrom, messages.length);
     _loadingHistory = false;

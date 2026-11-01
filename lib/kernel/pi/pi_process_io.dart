@@ -46,6 +46,7 @@ Future<PiTransport> startPiProcess(
         '--mode',
         'rpc',
         if (session != null) ...['--session', session],
+        ...piBaoCodeArguments(environment),
       ],
       workingDirectory: cwd,
       environment: variables,

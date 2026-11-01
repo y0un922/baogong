@@ -128,6 +128,7 @@ class ContextUsage {
     required this.window,
     required this.used,
     this.segments = const [],
+    this.estimated = false,
   });
 
   final int window;
@@ -135,6 +136,9 @@ class ContextUsage {
 
   /// What the tokens are spent on, when the kernel says; else empty.
   final List<ContextSegment> segments;
+
+  /// Whether [segments] are the kernel's guess, not the agent's count.
+  final bool estimated;
 
   double get fraction => window == 0 ? 0 : used / window;
 }

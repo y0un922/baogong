@@ -205,6 +205,10 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     if (prompt == null) return null;
     final message = _feed.itemAt(prompt);
     if (message is! UserMessageItem) return null;
+    final session = switch (_feed) {
+      final ChatSession session => session,
+      _ => null,
+    };
     // The answer: the words after the turn's last step.
     final words = <String>[];
     for (var i = index; i > prompt; i--) {
@@ -217,6 +221,12 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     }
     return TurnFooter(
       answer: words.isEmpty ? null : words.join('\n\n'),
+      // A session's answers can be put in Chinese, a subagent's cannot (its
+      // feed keeps none).
+      translated: session?.translatedAt(index) ?? false,
+      onTranslate: words.isEmpty || session == null
+          ? null
+          : () => session.toggleTranslationAt(index),
       worked: message.worked,
       usage: message.usage,
       endedAt: message.endedAt,
