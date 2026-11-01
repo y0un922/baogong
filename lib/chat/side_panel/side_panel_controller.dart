@@ -35,6 +35,10 @@ class SidePanelTab {
   /// [AgentSidePanel.keepEdit]); none for changes.
   SidePanelFileEdit? edit;
 
+  /// A markdown file's text shows rather than it rendered, as last picked
+  /// (Edit or Preview), for the tab shown again to show the same.
+  bool source = false;
+
   String get path => request.path;
   bool get diff => request.diff;
 
@@ -310,17 +314,14 @@ class AgentSidePanel extends ChangeNotifier {
   }
 
   /// [section]'s tab in the pages' bar clicked, as an activity bar's icon:
-  /// the page shown, its list hidden or shown; another, with its list. The
-  /// plan's and the browser's have none.
+  /// the page shown, its list hidden or shown; another, its list as it is.
+  /// The plan's and the browser's have none.
   void selectSection(Object conversation, SidePanelSection section) {
     final hasList = alwaysShownSections.contains(section);
     if (hasList && tabsOf(conversation).shown == section) return toggleList();
-    if (hasList && !_listShown) {
-      _listShown = true;
-      _changed = true;
-      onSave?.call();
-    }
-    showSection(conversation, section);
+    tabsOf(conversation).section = section;
+    _asks += 1;
+    if (!_setShown(true)) notifyListeners();
   }
 
   /// Shows [id] in its tab: a terminal (its instance), or a background

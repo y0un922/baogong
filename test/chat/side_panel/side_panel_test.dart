@@ -30,6 +30,7 @@ import 'package:baocode/ide/ide_code_editor.dart';
 import 'package:baocode/ide/ide_explorer.dart';
 import 'package:baocode/ide/ide_list.dart';
 import 'package:baocode/ide/ide_tab_bar.dart';
+import 'package:baocode/ide/markdown/markdown_preview.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
 import 'package:baocode/ide/terminal/terminal_service.dart';
 import 'package:baocode/ide/terminal/terminal_view.dart';
@@ -863,7 +864,7 @@ void main() {
   });
 
   testWidgets('the page\'s tab clicked again hides or shows its list, as '
-      'an activity bar\'s icon; another page\'s shows with its list', (
+      'an activity bar\'s icon; another page\'s keeps it as it is', (
     tester,
   ) async {
     final (:panel, :session, files: _) = await _pumpChat(tester);
@@ -881,12 +882,54 @@ void main() {
     await tester.pumpAndSettle();
     expect(list, findsOneWidget);
 
-    await tester.tap(files);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey(SidePanelSection.changes)));
+    final changes = find.byKey(const ValueKey(SidePanelSection.changes));
+    await tester.tap(changes);
     await tester.pumpAndSettle();
     expect(panel.tabsOf(session).shown, SidePanelSection.changes);
     expect(list, findsOneWidget);
+
+    await tester.tap(changes);
+    await tester.pumpAndSettle();
+    expect(list, findsNothing);
+    await tester.tap(find.byKey(const ValueKey(SidePanelSection.terminal)));
+    await tester.pumpAndSettle();
+    expect(panel.tabsOf(session).shown, SidePanelSection.terminal);
+    expect(list, findsNothing);
+    await tester.tap(files);
+    await tester.pumpAndSettle();
+    expect(panel.tabsOf(session).shown, SidePanelSection.files);
+    expect(list, findsNothing);
+    expect(panel.shown, isTrue);
+  });
+
+  testWidgets('a markdown file\'s Edit or Preview stays as picked once '
+      'another page showed', (tester) async {
+    final (:panel, :session, files: _) = await _pumpChat(
+      tester,
+      texts: {'/p/README.md': '# Title\n\nSome text.\n'},
+    );
+    panel.open(session, const FileOpenRequest('/p/README.md'));
+    await tester.pumpAndSettle();
+    expect(find.byType(IdeMarkdownPreview), findsOneWidget);
+
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    expect(find.byType(IdeMarkdownPreview), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey(SidePanelSection.changes)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey(SidePanelSection.files)));
+    await tester.pumpAndSettle();
+    expect(find.byType(IdeMarkdownPreview), findsNothing);
+    expect(find.text('Preview'), findsOneWidget);
+
+    await tester.tap(find.text('Preview'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey(SidePanelSection.changes)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey(SidePanelSection.files)));
+    await tester.pumpAndSettle();
+    expect(find.byType(IdeMarkdownPreview), findsOneWidget);
   });
 
   testWidgets('rapid list toggle clicks do not command the window', (

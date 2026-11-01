@@ -65,9 +65,17 @@ class FilePreview extends StatefulWidget {
     this.formatter,
     this.agentEdit,
     this.onOpenAgentChange,
+    this.source = false,
+    this.onSource,
   });
 
   final FileOpenRequest request;
+
+  /// A markdown file's text shows at first rather than it rendered.
+  final bool source;
+
+  /// Told as Edit or Preview is picked for a markdown file, to keep it.
+  final ValueChanged<bool>? onSource;
 
   /// The agent's change pending in the file, shown in its text where it is
   /// edited here.
@@ -159,7 +167,7 @@ class _FilePreviewState extends State<FilePreview> {
   List<List<TextSpan>?> _colors = const [];
 
   /// A markdown file's text rather than it rendered.
-  bool _source = false;
+  late bool _source = widget.source;
 
   /// A markdown file's text, rendered: its edit's, as it is edited.
   EditorDocumentModel? _markdown;
@@ -516,7 +524,10 @@ class _FilePreviewState extends State<FilePreview> {
           if (_isMarkdown && _markdown != null)
             _TextButton(
               label: _source ? l10n.sidePanelPreview : l10n.sidePanelEdit,
-              onPressed: () => setState(() => _source = !_source),
+              onPressed: () {
+                setState(() => _source = !_source);
+                widget.onSource?.call(_source);
+              },
             ),
           if ((widget.agentEdit, _agent) case (final edit?, _?)
               when !_isMarkdown || _source)
