@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import 'package:bao_editor/monaco/flutter/diff_editor_model.dart';
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
@@ -16,10 +16,14 @@ class IdeOriginalDiff {
     EditorDocumentModel modified, {
     required this.onChanged,
     bool ignoreTrimWhitespace = true,
-  }) : model = DiffEditorModel(
+    bool ignoreAllWhitespace = false,
+    Offset scroll = Offset.zero,
+  }) : scroll = ValueNotifier(scroll),
+       model = DiffEditorModel(
          original: original.text,
          modified: modified,
          ignoreTrimWhitespace: ignoreTrimWhitespace,
+         ignoreAllWhitespace: ignoreAllWhitespace,
        ) {
     original.text.addListener(_textChanged);
     _textChanged();
@@ -28,6 +32,10 @@ class IdeOriginalDiff {
   final IdeDiffOriginal original;
   final DiffEditorModel model;
   final VoidCallback onChanged;
+
+  /// How far its editors are scrolled ([DiffEditor.scrollPosition]): where
+  /// they are when the tab shows again.
+  final ValueNotifier<Offset> scroll;
 
   EditorDocumentModel? _document;
   EditorSurfaceController? controller;
@@ -72,5 +80,6 @@ class IdeOriginalDiff {
     textMate?.dispose();
     controller?.dispose();
     _document?.dispose();
+    scroll.dispose();
   }
 }

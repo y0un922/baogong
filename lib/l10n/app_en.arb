@@ -140,6 +140,14 @@
   },
   "cmdChatFocusNextPane": "Focus Next Pane",
   "cmdChatFocusPreviousPane": "Focus Previous Pane",
+  "cmdChatFocusPaneLeft": "Focus Left Pane",
+  "cmdChatFocusPaneRight": "Focus Right Pane",
+  "cmdChatFocusPaneUp": "Focus Above Pane",
+  "cmdChatFocusPaneDown": "Focus Below Pane",
+  "cmdChatNextPaneTab": "Open Next Tab in Pane",
+  "cmdChatPreviousPaneTab": "Open Previous Tab in Pane",
+  "cmdChatTogglePaneTabs": "Toggle Pane Tabs",
+  "workspacePaneTabs": "Show as Tabs",
   "cmdChatSearch": "Search",
   "cmdChatSearchAgents": "Search Agents",
   "cmdChatOpenIde": "Open in Fast Ide",
@@ -161,6 +169,7 @@
   "cmdChatNextMode": "Switch to Next Mode",
   "cmdChatOpenModelPicker": "Open Model Picker",
   "cmdChatAttachContext": "Add Context…",
+  "cmdChatAttachSelection": "Add Selection to Chat",
   "cmdChatPasteRaw": "Paste as Plain Text",
   "cmdChatSelectNextSuggestion": "Select Next Suggestion",
   "cmdChatSelectPrevSuggestion": "Select Previous Suggestion",
@@ -455,6 +464,13 @@
   "cmdToggleSidebar": "Toggle Primary Side Bar Visibility",
   "cmdToggleChat": "Toggle Chat",
   "cmdToggleFullScreen": "Toggle Full Screen",
+  "cmdZoomIn": "Zoom In",
+  "cmdZoomOut": "Zoom Out",
+  "cmdZoomReset": "Reset Zoom",
+  "cmdToggleWordWrap": "Toggle Word Wrap",
+  "menuWordWrap": "Word Wrap",
+  "cmdToggleMinimap": "Toggle Minimap",
+  "menuMinimap": "Minimap",
   "cmdTogglePanel": "Toggle Panel Visibility",
   "cmdToggleTerminal": "Toggle Terminal",
   "cmdNewTerminal": "Create New Terminal",
@@ -646,6 +662,7 @@
   },
   "cmdSidePanelChanges": "Show Agent Changes",
   "cmdSidePanelFiles": "Show Agent Files",
+  "cmdSidePanelUsage": "Show Conversation Usage",
   "cmdSidePanelTerminal": "Toggle Agent Terminal",
   "cmdSidePanelNewTerminal": "New Agent Terminal",
   "cmdSidePanelToggleList": "Toggle Side Panel List",
@@ -717,14 +734,6 @@
   "@sidePanelChanges": {
     "description": "The side panel's tab listing the files the agent changed."
   },
-  "sidePanelNoChanges": "No changes yet",
-  "@sidePanelNoChanges": {
-    "description": "The side panel's Changes tab while the agent changed nothing."
-  },
-  "sidePanelNoChangesDetail": "Changes in the project's Git working tree and index show here.",
-  "@sidePanelNoChangesDetail": {
-    "description": "Under sidePanelNoChanges."
-  },
   "sidePanelOpenFile": "Open in side panel",
   "@sidePanelOpenFile": {
     "description": "Hover of a file read in the conversation: a click opens it in the side panel."
@@ -749,9 +758,9 @@
   "@sidePanelSource": {
     "description": "Shows a markdown file's text."
   },
-  "sidePanelEdit": "Edit",
-  "@sidePanelEdit": {
-    "description": "Shows a markdown file's text in the side panel, to edit."
+  "commandOpenDetails": "Open details",
+  "@commandOpenDetails": {
+    "description": "Under a /command's description: opens its file (a skill's SKILL.md, a command's markdown) in the side panel."
   },
   "sidePanelNoOriginal": "The file before the agent's changes is not known: showing it as it is.",
   "@sidePanelNoOriginal": {
@@ -786,10 +795,6 @@
   "sidePanelSelectFile": "Select a file to preview it",
   "@sidePanelSelectFile": {
     "description": "The side panel's files page with no file open."
-  },
-  "sidePanelSelectChange": "Select a changed file to see its changes",
-  "@sidePanelSelectChange": {
-    "description": "The side panel's changes page with no file's changes open."
   },
   "sidePanelSelectTerminal": "Select a background task to see its output",
   "@sidePanelSelectTerminal": {
@@ -848,6 +853,18 @@
   "agentImageUntitled": "Image",
   "@agentImageUntitled": {
     "description": "The title of an agent first asked something with images alone, none from a file (pasted)."
+  },
+  "chatTitleSummarize": "Summarize into a new title",
+  "@chatTitleSummarize": {
+    "description": "In the list under a chat's title being renamed: has a model title the conversation from what the user asked."
+  },
+  "chatTitleSummarizing": "Summarizing…",
+  "@chatTitleSummarizing": {
+    "description": "In place of Summarize into a new title while the model writes one."
+  },
+  "chatTitleSummarizeFailed": "No title could be had. Try again",
+  "@chatTitleSummarizeFailed": {
+    "description": "In place of Summarize into a new title when the model gave none."
   },
   "sidebarNewAgent": "New Chat",
   "@sidebarNewAgent": {
@@ -930,6 +947,8 @@
   "sidebarArchived": "Archived",
   "sidebarOpenFolder": "Open folder…",
   "sidebarAgents": "Agents",
+  "sidebarCollapseAll": "Collapse All",
+  "sidebarExpandAll": "Expand All",
   "sidebarNoMatchingAgents": "No matching agents",
   "sidebarNoAgentsYet": "No agents yet",
   "sidebarHideArchived": "Hide archived",
@@ -1068,6 +1087,36 @@
   "sidebarFork": "Fork",
   "@sidebarFork": {
     "description": "An agent's menu in the sidebar: copies its conversation into a new agent, which opens."
+  },
+  "sidebarDetachAside": "Detach from Conversation",
+  "@sidebarDetachAside": {
+    "description": "The menu of a conversation asked beside another with /btw, listed under it in the sidebar: makes it a conversation of its own."
+  },
+  "sidebarDeleteAsidesToo": "{count, plural, =1{Its /btw conversation is deleted with it.} other{Its {count} /btw conversations are deleted with it.}}",
+  "@sidebarDeleteAsidesToo": {
+    "description": "After the message asking to delete an agent that has conversations asked beside it with /btw.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "btwCommandDetail": "Ask in a conversation of its own, beside this one",
+  "@btwCommandDetail": {
+    "description": "The /btw command in the composer's command list: what follows is asked in a new conversation copied from this one, listed under it."
+  },
+  "sidebarFoldAsides": "Hide /btw Conversations",
+  "@sidebarFoldAsides": {
+    "description": "The arrow on a sidebar row with conversations asked beside it (/btw) listed under it: no longer lists them."
+  },
+  "sidebarUnfoldAsides": "{count, plural, =1{Show its /btw conversation} other{Show its {count} /btw conversations}}",
+  "@sidebarUnfoldAsides": {
+    "description": "The arrow, or the tag, on a sidebar row whose conversations asked beside it (/btw) are hidden: lists them under it again.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "sidebarShowMore": "Show more ({count})",
   "@sidebarShowMore": {
@@ -1311,6 +1360,25 @@
   "toolAgent": "Agent",
   "toolUpdatingTodos": "Updating todos",
   "toolUpdatedTodos": "Updated todos",
+  "todoCount": "Todos {done}/{total}",
+  "@todoCount": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "todoAllDone": "All done",
+  "todoNone": "List empty",
+  "todoAdded": "Added todo",
+  "todoStarted": "Started todo",
+  "todoCompleted": "Completed todo",
+  "todoRemoved": "Removed todo",
+  "todoUpdated": "Updated todo",
+  "todoChecked": "Checked todos",
   "toolSending": "Saying",
   "toolSent": "Said",
   "toolAsking": "Asking",
@@ -1822,7 +1890,7 @@
   "stripChangeModified": "Modified",
   "stripChangeDeleted": "Deleted",
   "stripChangeConflict": "Changed again since the agent left it, so Undo could not take the agent's change out. Undo it by hand, then keep it.",
-  "stripChangeUntracked": "What it was before is not known (the agent did not tell, it is too large, or outside the project): it can be kept, not undone.",
+  "stripChangeUntracked": "What it was before is not known (too large to keep, or the agent did not tell): it can be kept, not undone.",
   "stripChangesDiff": "Agent Changes",
   "@stripChangesDiff": {
     "description": "Label of the diff editor comparing a file before the agent changed it with the file now."
@@ -2039,17 +2107,6 @@
   "mcpNoLog": "It wrote nothing.",
   "mcpSignInHint": "Sign in from a chat's MCP servers panel, or with /mcp.",
   "mcpProbeNote": "Started and greeted with MCP's initialize, as `claude mcp list` checks it.",
-  "todoCount": "Todos {done}/{total}",
-  "@todoCount": {
-    "placeholders": {
-      "done": {
-        "type": "int"
-      },
-      "total": {
-        "type": "int"
-      }
-    }
-  },
   "queuedMessages": "{count, plural, =1{1 queued} other{{count} queued}} · sent when the agent is done",
   "@queuedMessages": {
     "placeholders": {
@@ -2424,7 +2481,7 @@
   "@generalSettingsClaudeCore": {
     "description": "Settings → General → Claude Code row: what runs Claude Code sessions, BaoCode's built-in core (written in Dart) or the Claude Code CLI."
   },
-  "generalSettingsClaudeCoreDescription": "Claude Code CLI: Anthropic's own program, with this machine's sign-in and setup; pick it to use a Claude subscription. Built-in: comes with Baogong, and uses only the models added in Settings → Models. The CLI is the default when Claude Code is installed here, the built-in core otherwise. Changes apply to new sessions.",
+  "generalSettingsClaudeCoreDescription": "Claude Code CLI: Anthropic's own program, with this machine's sign-in and setup; pick it to use a Claude subscription. Built-in: comes with Baogong, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.",
   "generalSettingsClaudeCoreBuiltin": "Built-in",
   "@generalSettingsClaudeCoreBuiltin": {
     "description": "Claude Code core choice: BaoCode's own agent core, written in Dart and run inside the app."
@@ -2578,6 +2635,7 @@
   "placeholderNotFound": "The editor could not be opened because the file was not found.",
   "placeholderUnexpected": "The editor could not be opened due to an unexpected error.",
   "placeholderOpenAnyway": "Open Anyway",
+  "changeOpenWith": "Open With",
   "openInDefaultApp": "Open in Default App",
   "@openInDefaultApp": {
     "description": "Hands a file the IDE does not show (a PDF, a video…) to the app the system opens it with."
@@ -3535,6 +3593,11 @@
   },
   "termRename": "Rename...",
   "termKillTerminal": "Kill Terminal",
+  "termKillOtherTerminals": "Kill Other Terminals",
+  "termKillAllTerminals": "Kill All Terminals",
+  "termStopAllTasks": "Stop All Running Tasks",
+  "termRunInNewTerminal": "Run in New Terminal",
+  "termNoTerminals": "No terminals",
   "termNewTerminal": "New Terminal",
   "termNewTerminalKeys": "New Terminal ({keybinding})",
   "@termNewTerminalKeys": {
@@ -3733,6 +3796,33 @@
   "workspaceSplitPane": "Split pane: a new agent beside this one",
   "chatRailNoText": "(no text)",
   "workspaceClosePane": "Close pane",
+  "workspaceCloseBackTo": "Close pane, back to {title}",
+  "@workspaceCloseBackTo": {
+    "description": "A pane's close button, where it covers another conversation, which shows again once it closes.",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceCovers": "Over {title}, which shows again once this closes",
+  "@workspaceCovers": {
+    "description": "Shown while dropping a conversation over a pane of several.",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceCovered": "{count, plural, =1{1 conversation under this one} other{{count} conversations under this one}}",
+  "@workspaceCovered": {
+    "description": "A pane's button that lists the conversations it covers, to show one again.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "workspaceLoadingProjects": "Loading projects…",
   "workspaceDesktopOnly": "Agents run in the desktop app",
   "workspaceDesktopOnlyDetail": "Claude Code runs as a local process, which a browser cannot start.",
@@ -4296,8 +4386,6 @@
   "generalSettingsMainWindowLast": "Where you left off",
   "generalSettingsWindows": "Windows",
   "generalSettingsIde": "Fast IDE",
-  "generalSettingsAutoOpenChanges": "Show agent changes as diffs",
-  "generalSettingsAutoOpenChangesDescription": "While the IDE shows, a file the agent changes opens as a diff of it against its text before, as the agent edits it.",
   "explorerExcludeSetting": "Hidden files and folders",
   "explorerExcludeSettingDescription": "Files and folders the explorer does not show, comma separated: a name (`node_modules`, `*.log`) matches anywhere, a path (`build/**`, `src/generated`) matches within the folder.",
   "explorerExcludeSettingPlaceholder": "e.g. .git, node_modules, *.log",
@@ -4685,8 +4773,19 @@
       }
     }
   },
+  "modelsAccountDisabled": "Disabled",
   "modelsAccountLimited": "Out of quota",
   "modelsAccountQuotaUnknown": "Quota not known yet",
+  "modelsQuotaShortWindow": "Short window",
+  "modelsQuotaLongWindow": "Long window",
+  "modelsQuotaLastUpdated": "Last updated {time}",
+  "@modelsQuotaLastUpdated": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
   "modelsQuotaWeek": "Weekly",
   "modelsQuotaHours": "{count}h",
   "@modelsQuotaHours": {
@@ -4712,6 +4811,55 @@
       }
     }
   },
+  "modelsQuotaRemaining": "{percent}% left",
+  "@modelsQuotaRemaining": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "quotaBarWindowLeft": "{window} {percent}% left",
+  "@quotaBarWindowLeft": {
+    "placeholders": {
+      "window": {
+        "type": "String"
+      },
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "quotaBarAvailable": "{count}/{total} available",
+  "@quotaBarAvailable": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "quotaBarAllOut": "All accounts out of quota · back {time}",
+  "@quotaBarAllOut": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "quotaBarBackAt": "Out of quota · back {time}",
+  "@quotaBarBackAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "quotaBarNone": "No account can be used",
+  "quotaBarThisChat": "This chat",
+  "quotaBarRefresh": "Refresh Quota",
   "modelsQuotaResetsIn": "resets in {time}",
   "@modelsQuotaResetsIn": {
     "placeholders": {
@@ -4776,6 +4924,13 @@
   "modelsBaseUrl": "Base URL",
   "modelsBaseUrlAnthropicHint": "Without /v1, as ANTHROPIC_BASE_URL: Claude Code adds /v1/messages.",
   "modelsBaseUrlOpenAIHint": "As the upstream documents it; without a version in its path (…/v1), /v1 is added.",
+  "modelsCustomUrls": "Custom URLs",
+  "modelsCustomUrlsDescription": "Where models are listed and conversations go is made from the Base URL. When the upstream has them elsewhere, give them in full here.",
+  "modelsModelsUrl": "Models URL",
+  "modelsModelsUrlDescription": "Testing the connection and fetching models GET it. Empty, the one in grey (from the Base URL) is used.",
+  "modelsEndpointUrl": "Endpoint URL",
+  "modelsEndpointUrlDescription": "Every conversation is POSTed to it. Empty, the one in grey (from the Base URL) is used. A model of another endpoint type still goes by the Base URL.",
+  "modelsEndpointUrlAnthropicDescription": "Every conversation is POSTed to it, Claude Code through the local proxy. Empty, the one in grey (from the Base URL) is used. A model of another endpoint type still goes by the Base URL.",
   "modelsApiKey": "API Key",
   "modelsApiKeyDescription": "Kept in the system's keychain, not in settings.json.",
   "modelsApiKeyShow": "Show the key",
@@ -4815,6 +4970,22 @@
   "modelsNoMatch": "No model matches.",
   "modelsMissing": "Gone upstream",
   "modelsMissingTooltip": "No longer listed by the upstream; kept until you remove it.",
+  "modelsRemoveMissing": "Remove Gone ({count})",
+  "@modelsRemoveMissing": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "modelsRemoveMissingConfirm": "Remove {count} models the upstream no longer lists?",
+  "@modelsRemoveMissingConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "modelsCustom": "Manual",
   "modelsShowAll": "Show All ({count})",
   "@modelsShowAll": {
@@ -4858,7 +5029,7 @@
     }
   },
   "modelsRoles": "Roles",
-  "modelsRolesDescription": "Which model Claude Code uses for each part of its work. Unset, the model picked stands in.",
+  "modelsRolesDescription": "Which model Claude Code uses for each part of its work. Unset, the model picked stands in. All but the main model may be another upstream's: BaoCode's local proxy sends their requests there.",
   "modelsRoleUnset": "Unset",
   "modelsRoleMain": "Main Model",
   "modelsRoleMainDescription": "Used when the model a session picked of this upstream is gone.",
@@ -4871,7 +5042,7 @@
   "modelsRoleHaikuWarning": "Unset, background work runs on the model picked, which may be slower and cost more. Pick a small, fast model.",
   "modelsRoleSubagent": "Subagents",
   "modelsRoleSubagentDescription": "CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent's call names (but inherit). It may be another upstream's: Baogong's local proxy sends its requests there.",
-  "modelsRoleMissing": "This model is no longer one of its upstream's: subagents' requests to it will fail.",
+  "modelsRoleMissing": "This model is no longer one of its upstream's: requests to it will fail.",
   "@modelsRoleMissing": {
     "description": "Under a role that picks another upstream's model, once that upstream or model is gone."
   },
@@ -4981,6 +5152,18 @@
   "modelsKindImage": "Image generation (Images API)",
   "modelsKindImageChat": "Image generation (in a conversation)",
   "modelsKindDescription": "Image models are not offered in the model picker: agents make pictures with them through the generate_image tool.",
+  "modelsEndpoint": "Endpoint",
+  "modelsEndpointUpstream": "As the upstream ({protocol})",
+  "@modelsEndpointUpstream": {
+    "description": "The endpoint choice of a model that follows its upstream's protocol, that protocol's name in it.",
+    "placeholders": {
+      "protocol": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsEndpointDescription": "Which API this model's requests go to, at the upstream's base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one and its GPT at Responses, say.",
+  "modelsModelEndpointUrlDescription": "Where this model's requests go, in full. Apart from the endpoint type: that says how a request is made, this only where it goes. Empty, the one in grey is used.",
   "modelsImageBadge": "Image",
   "modelsImage": "Image model",
   "modelsImageDescription": "What agents make pictures with (the generate_image tool), unless you ask them for another; asked each time, you pick it in the conversation. Turn on image models in an upstream's list.",
@@ -5140,7 +5323,7 @@
     "description": "Update mode: never checks."
   },
   "diagnosticsTitle": "Diagnostic Logs",
-  "diagnosticsDescription": "Send BaoCode's error logs to its developers to help track down a problem. Nothing is sent until you upload.",
+  "diagnosticsDescription": "Send BaoCode's error logs and the crash and hang reports the system kept of it to its developers to help track down a problem. Nothing is sent until you upload.",
   "diagnosticsUpload": "Upload…",
   "diagnosticsDialogTitle": "Upload Diagnostic Logs",
   "diagnosticsNotePlaceholder": "Note (optional): what went wrong, and how to make it happen again",
@@ -5345,6 +5528,18 @@
       }
     }
   },
+  "appearanceSettingsEditDetail": "File Edits",
+  "appearanceSettingsEditDetailDescription": "How the agent's edits to files show in the conversation: as a card of the changes, always open; or as one line that opens to them.",
+  "appearanceSettingsEditDetailCard": "Card with changes",
+  "appearanceSettingsEditDetailCompact": "Compact",
+  "appearanceSettingsEditDetailLabel": "File edits: {detail}",
+  "@appearanceSettingsEditDetailLabel": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
   "appearanceSettingsReplyScroll": "As a Reply Comes",
   "appearanceSettingsReplyScrollDescription": "Where the conversation stays as the reply to your message is written: at its end, following it; or at its start, your message at the top, for you to read on from there. Scrolled to the end, it follows again.",
   "appearanceSettingsReplyScrollFollow": "Automatic",
@@ -5359,6 +5554,8 @@
   },
   "appearanceSettingsMinimap": "Conversation Minimap",
   "appearanceSettingsMinimapDescription": "A minimap of the whole conversation at the left of its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.",
+  "appearanceSettingsWindowBlur": "Native Window Blur",
+  "appearanceSettingsWindowBlurDescription": "The system's blur under the windows (macOS's sidebar material, Windows 11's acrylic): what is behind them shows through the sidebar and the conversation. Off: the windows are opaque.",
   "appearanceSettingsSidebarTimes": "Times in the Sidebar",
   "appearanceSettingsSidebarTimesDescription": "Each agent in the sidebar ends with when it last did something. Off: only its hover tells it.",
   "appearanceSettingsMinimapGlass": "Glass Opacity",
@@ -5398,7 +5595,7 @@
     }
   },
   "appearanceSettingsCodeSize": "Code Size",
-  "appearanceSettingsCodeSizeDescription": "The size of code in the IDE editor and the side panel's file and changes views. Code in the chat follows the interface size; the terminal has its own size.",
+  "appearanceSettingsCodeSizeDescription": "The size of code in the IDE editor and the side panel's file and changes views at 100% interface size; zooming the interface scales it in proportion. Code in the chat follows the interface size; the terminal has its own size.",
   "appearanceSettingsCodeSizeLabel": "Code size: {size}",
   "@appearanceSettingsCodeSizeLabel": {
     "placeholders": {
@@ -5409,8 +5606,12 @@
   },
   "appearanceSettingsLigatures": "Font Ligatures",
   "appearanceSettingsLigaturesDescription": "Draws sequences such as => and != as one glyph where the font has one. The terminal does not.",
+  "appearanceSettingsWordWrap": "Word Wrap",
+  "appearanceSettingsWordWrapDescription": "Wraps long lines at the editor's width, in every editor. An editor's context menu and the Command Palette (Toggle Word Wrap) switch it too. Files of more than 5,000 lines are not wrapped.",
+  "appearanceSettingsCodeMinimap": "Code Minimap",
+  "appearanceSettingsCodeMinimapDescription": "A minimap of the file at the right of the code editor, in every editor; it is not shown in an editor too narrow for it. An editor tab's context menu and the Command Palette (Toggle Minimap) switch it too.",
   "appearanceSettingsUiScale": "Interface Size",
-  "appearanceSettingsUiScaleDescription": "Zooms the whole interface (its text, icons and spacing), code in the chat, and terminal text while the terminal size follows it. Code in the IDE editor and side panel files and changes keeps its own size.",
+  "appearanceSettingsUiScaleDescription": "Zooms the whole interface (its text, icons and spacing) and the code in it, and terminal text while the terminal size follows it. Code in the editor zooms from its code size.",
   "appearanceSettingsUiScaleLabel": "Interface size: {percent}%",
   "@appearanceSettingsUiScaleLabel": {
     "placeholders": {
@@ -5529,6 +5730,14 @@
       }
     }
   },
+  "remoteReadingFolder": "Reading {path}…",
+  "@remoteReadingFolder": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
   "remoteFileHostPlaceholder": "Select a host, to browse its files",
   "remoteFilePlaceholder": "A file on {host}: pick one, or type a path",
   "@remoteFilePlaceholder": {
@@ -5571,46 +5780,79 @@
       }
     }
   },
-  "remoteStatus": "SSH: {host}",
+  "remoteStatus": "{kind}: {host}",
   "@remoteStatus": {
     "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
       "host": {
         "type": "String"
       }
     }
   },
-  "remoteStatusConnecting": "SSH: {host} (connecting...)",
+  "remoteStatusConnecting": "{kind}: {host} (connecting...)",
   "@remoteStatusConnecting": {
     "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
       "host": {
         "type": "String"
       }
     }
   },
-  "remoteStatusReconnecting": "SSH: {host} (reconnecting...)",
+  "remoteStatusReconnecting": "{kind}: {host} (reconnecting...)",
   "@remoteStatusReconnecting": {
     "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
       "host": {
         "type": "String"
       }
     }
   },
-  "remoteStatusFailed": "SSH: {host} (disconnected)",
+  "remoteStatusFailed": "{kind}: {host} (disconnected)",
   "@remoteStatusFailed": {
     "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
       "host": {
         "type": "String"
       }
     }
   },
-  "remoteStatusInstalling": "SSH: {host} (installing Claude Code {percent}%)",
+  "remoteStatusInstalling": "{kind}: {host} (installing Claude Code {percent}%)",
   "@remoteStatusInstalling": {
     "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
       "host": {
         "type": "String"
       },
       "percent": {
         "type": "int"
+      }
+    }
+  },
+  "remoteStatusInstallingUnsized": "{kind}: {host} (installing Claude Code...)",
+  "@remoteStatusInstallingUnsized": {
+    "description": "The status bar while Claude Code is installed on a host, its size not known yet (no percentage).",
+    "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
+      "host": {
+        "type": "String"
       }
     }
   },
@@ -5655,9 +5897,13 @@
       }
     }
   },
-  "remoteStatusTooltip": "Connected to {host} over SSH",
+  "remoteStatusTooltip": "Connected to {host} over {kind}",
   "@remoteStatusTooltip": {
     "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
       "host": {
         "type": "String"
       }
@@ -5680,9 +5926,13 @@
     }
   },
   "remoteReconnect": "Reconnect",
-  "remoteProjectTooltip": "On {host}, over SSH",
+  "remoteProjectTooltip": "On {host}, over {kind}",
   "@remoteProjectTooltip": {
     "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
       "host": {
         "type": "String"
       }
@@ -5875,6 +6125,29 @@
   "@sidebarDeleteWorkspace": {
     "description": "Forgets a workspace; its folders and sessions are kept."
   },
+  "sidebarEditProject": "Edit Project…",
+  "@sidebarEditProject": {
+    "description": "A project's menu item: its name and folder, in a dialog."
+  },
+  "projectEditTitle": "Edit Project",
+  "projectLocation": "Location",
+  "@projectLocation": {
+    "description": "The label of a project's folder in its dialog."
+  },
+  "projectLocationDescription": "Moved or renamed the folder? Point the project at it here, and its conversations move along. The folder itself is not moved.",
+  "projectChooseFolder": "Choose in {app}…",
+  "@projectChooseFolder": {
+    "placeholders": {
+      "app": {
+        "type": "String",
+        "example": "Finder"
+      }
+    }
+  },
+  "projectFolderNotFound": "There is no folder at this path.",
+  "projectRelocateBusy": "An agent of this project is still working, or open in a window of its own. Change its location once it is done.",
+  "projectRelocateFailed": "Couldn't move this project's conversations.",
+  "projectRelocating": "Moving Conversations…",
   "ideWorkspaceTitle": "{name} (Workspace)",
   "@ideWorkspaceTitle": {
     "description": "The title of the explorer's folders when the IDE shows a workspace, as VS Code's.",
@@ -6241,21 +6514,13 @@
   },
   "settingsSectionMobile": "Mobile",
   "settingsMobileKeywords": "phone iphone android ios pair qr code remote lan",
-  "mobileSettingsDescription": "Follow and drive this computer's agents from BaoCode on your phone, over the local network or the internet. What goes between them is end-to-end encrypted.",
+  "mobileSettingsDescription": "Follow and drive this computer's agents from BaoCode on your phone: directly on the same network, across the internet through a hole punched in the routers between them, or through BaoCode's relay when neither works. What goes between them is end-to-end encrypted; a relay cannot read it.",
   "mobileAllow": "Allow Phones to Connect",
-  "mobileAllowDescription": "Phones paired with this computer connect to it directly.",
+  "mobileAllowDescription": "Phones paired with this computer can connect to it, wherever they are.",
   "mobileStatus": "Status",
   "mobileStatusOff": "Off",
   "mobileStatusStarting": "Starting…",
-  "mobileStatusListening": "Listening on port {port}",
-  "@mobileStatusListening": {
-    "placeholders": {
-      "port": {
-        "type": "int"
-      }
-    }
-  },
-  "mobileStatusFailed": "Could not listen: {error}",
+  "mobileStatusFailed": "Could not start: {error}",
   "@mobileStatusFailed": {
     "placeholders": {
       "error": {
@@ -6263,25 +6528,8 @@
       }
     }
   },
-  "mobileAddresses": "Addresses",
-  "mobileAddressesDescription": "Where phones reach this computer, in the order they try them: the local network first, then the internet.",
-  "mobileAddressesNone": "No network found.",
-  "mobileAddressesRefresh": "Refresh",
-  "mobilePort": "Port",
-  "mobilePortDescription": "The port phones connect to. Forward it on the router to reach this computer from the internet.",
-  "mobilePortInvalid": "Not a port: {text}. Enter a number from 1 to 65535.",
-  "@mobilePortInvalid": {
-    "placeholders": {
-      "text": {
-        "type": "String"
-      }
-    }
-  },
-  "mobilePublicAddress": "Public Address",
-  "mobilePublicAddressDescription": "A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Behind a proxy that only takes HTTPS (such as a Cloudflare Tunnel), write it as wss://domain. Public IPv6 addresses are found by themselves.",
-  "mobileRelay": "Relay",
-  "mobileRelayDescription": "Reach this computer through BaoCode's relay when none of its addresses can be reached. Coming later.",
-  "mobileRelayUnavailable": "Not Available Yet",
+  "mobileRelay": "Relays",
+  "mobileRelayDescription": "Phones that cannot reach this computer directly go through one. It only passes along what is sealed between the two. Nothing to set on the phone: it learns them when paired, and again each time it connects.",
   "mobilePair": "Pair a Phone",
   "mobilePairDescription": "Scan the code with BaoCode on the phone (Me → Paired computers → Pair a computer), or pick this computer under Nearby Computers there.",
   "mobilePairShow": "Show QR Code",
@@ -6343,6 +6591,28 @@
   },
   "mobilePairRequestBody": "It found this computer nearby. Allow it only if the phone shows the same code.",
   "mobilePairAllow": "Allow",
+  "mobileStatusOnline": "On, reachable through {relay}",
+  "@mobileStatusOnline": {"placeholders": {"relay": {"type": "String"}}},
+  "mobileStatusNoRelay": "On; no relay reached yet, so only phones on the same network can connect",
+  "mobileStatusDenied": "On, but the relay turned this computer away: {reason}",
+  "@mobileStatusDenied": {"placeholders": {"reason": {"type": "String"}}},
+  "mobileRelayInvalid": "Not a relay address; one looks like https://relay.example.com",
+  "mobileRelayPinned": "Relay Used",
+  "mobileRelayCustom": "Custom",
+  "mobileRelayCustomAddress": "Custom Address",
+  "mobileRelayCustomDescription": "The address of a relay you run yourself (baocode-relay).",
+  "mobileRelayMode": "How",
+  "mobileRelayModeAuto": "Automatic",
+  "mobileRelayModeAutoDescription": "BaoCode's relays, the nearest that answers.",
+  "mobileRelayModePinned": "Pick One",
+  "mobileRelayModePinnedDescription": "Only the one picked: one of BaoCode's, or a custom address.",
+  "mobilePathLan": "Same network",
+  "mobilePathDirect": "Direct",
+  "mobilePathRelay": "Through the relay",
+  "mobilePathRtt": "{ms} ms",
+  "@mobilePathRtt": {"placeholders": {"ms": {"type": "int"}}},
+  "mobileLegacyPhone": "Needs pairing again: paired before the connection was rebuilt",
+  "mobileLegacyRepair": "Pair Again",
   "settingsSectionStash": "Stash",
   "settingsSectionCustomize": "Customize",
   "settingsCustomizeKeywords": "skills subagents rules commands agents claude memory hooks mcp plugins",
@@ -6351,6 +6621,9 @@
   "stashNew": "New stash",
   "stashLinkOpen": "Open link",
   "stashLinkEdit": "Edit link",
+  "stashLinkCopy": "Copy link address",
+  "stashLinkRemove": "Remove link",
+  "stashFormatMenu": "Format",
   "stashDraft": "Draft",
   "stashCodeChip": "Code",
   "stashTableChip": "Table",
@@ -6386,14 +6659,35 @@
   "@stashFormatCodeBlock": {
     "description": "Selection bar menu: makes the lines a code block, typed in in place."
   },
+  "markdownTableInsertRowAbove": "Insert row above",
+  "@markdownTableInsertRowAbove": {
+    "description": "Menu of a markdown table's row (from its handle) and column: what it does to them."
+  },
+  "markdownTableInsertRowBelow": "Insert row below",
+  "markdownTableDeleteRow": "Delete row",
+  "markdownTableInsertColumnLeft": "Insert column left",
+  "markdownTableInsertColumnRight": "Insert column right",
+  "markdownTableDeleteColumn": "Delete column",
+  "markdownTableAlignLeft": "Align left",
+  "markdownTableAlignCenter": "Align center",
+  "markdownTableAlignRight": "Align right",
+  "markdownTableDuplicateRow": "Duplicate row",
+  "markdownTableMoveRowUp": "Move row up",
+  "markdownTableMoveRowDown": "Move row down",
+  "markdownTableClearRow": "Clear row",
+  "markdownTableDuplicateColumn": "Duplicate column",
+  "markdownTableMoveColumnLeft": "Move column left",
+  "markdownTableMoveColumnRight": "Move column right",
+  "markdownTableClearColumn": "Clear column",
+  "markdownTableDeleteTable": "Delete table",
   "stashFormatClear": "Clear formatting",
   "stashPolish": "Polish",
   "stashPolishing": "Polishing…",
   "stashPolishHint": "Has AI make the selection clearer, in your words, without adding structure",
-  "composerPolish": "Polish",
-  "composerPolishing": "Polishing…",
-  "composerPolishHint": "Polish: the auxiliary model makes the message clearer, in your words; pictures, files, code and links stay as they are; Undo takes it back",
-  "composerPolishFailed": "Could not polish: {error}",
+  "composerPolish": "Enhance prompt",
+  "composerPolishing": "Enhancing…",
+  "composerPolishHint": "Enhance prompt: the auxiliary model makes the message a clearer, more specific prompt for the agent, filling in what you left vague; pictures, files, code and links stay as they are; Undo takes it back",
+  "composerPolishFailed": "Could not enhance the prompt: {error}",
   "composerTranslating": "Translating…",
   "composerTranslateToEnglishHint": "Translate into English: the auxiliary model puts the message in English, which a model answers better; pictures, files, code and links stay as they are; Undo takes it back",
   "composerTranslateToChineseHint": "Translate into Chinese: the auxiliary model puts the message in Chinese; pictures, files, code and links stay as they are; Undo takes it back",
@@ -6421,8 +6715,8 @@
       }
     }
   },
-  "generalSettingsComposerPolish": "Polish button",
-  "generalSettingsComposerPolishDescription": "A button in the message box that has the auxiliary model make what you wrote clearer before you send it",
+  "generalSettingsComposerPolish": "Enhance Prompt button",
+  "generalSettingsComposerPolishDescription": "A button in the message box that has the auxiliary model make what you wrote a clearer, more specific prompt before you send it",
   "generalSettingsLiveTurnStats": "Live Speed and Time",
   "generalSettingsLiveTurnStatsDescription": "While the agent works, a line under the reply with how long the turn has taken, how fast the model writes and the tokens so far, changing as it goes. The figures under a finished turn always show.",
   "usageLimitScheduled": "Usage limit reached · continues automatically after it resets at {time}",
@@ -6752,10 +7046,6 @@
   "@branchBarDetached": {
     "description": "What the branch picker under the chat input shows when no branch is checked out."
   },
-  "branchBarRunning": "Branches can't be switched while the agent works",
-  "@branchBarRunning": {
-    "description": "Tooltip of the branch under the chat input while the agent is working."
-  },
   "branchBarFailed": "Couldn't switch to “{branch}”",
   "@branchBarFailed": {
     "description": "Message of the dialog shown when Git refused to check out or create the branch {branch}; Git's own message is the detail.",
@@ -6773,7 +7063,7 @@
   "@branchBarWorkspace": {
     "description": "Tooltip and menu title of the branch picker under the chat input of a multi-folder workspace."
   },
-  "settingsSectionAccounts": "Accounts",
+  "settingsSectionAccounts": "Git Accounts",
   "settingsAccountsKeywords": "GitHub GitLab sign in login token issue pull request merge request",
   "accountsDescription": "Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.",
   "accountsSignedIn": "Signed in",
@@ -7026,7 +7316,7 @@
   "settingsSectionBrowser": "Browser",
   "settingsBrowserKeywords": "chrome extension edge brave arc web page tab agent",
   "browserSettingsDescription": "Let agents use your own browser, signed in as you: open pages, read them, click and type in the tabs you share with them. You can watch every step in the side panel.",
-  "browserSettingsUnsupported": "The browser is available on macOS and Windows only for now.",
+  "browserSettingsUnsupported": "The browser is available on macOS, Windows and Linux only.",
   "browserSettingsEnabled": "Let Agents Use the Browser",
   "browserSettingsEnabledDescription": "When off, agents have no browser tools and the extension disconnects.",
   "browserSettingsStatus": "Status",
@@ -7034,6 +7324,8 @@
   "browserSettingsNotInstalledDescription": "Install the extension either way below, then open the browser: it connects automatically.",
   "browserSettingsNotRunning": "No browser connected",
   "browserSettingsNotRunningDescription": "Open a browser with BaoCode's extension: it connects automatically.",
+  "browserSettingsSandboxed": "Snap and Flatpak browsers can't connect",
+  "browserSettingsSandboxedDescription": "Their sandbox keeps Baogong's helper from running. Install the browser from its own .deb or .rpm package instead, such as Google Chrome from google.com/chrome.",
   "browserSettingsConnected": "{browser} connected",
   "@browserSettingsConnected": {"description": "A browser connected, by its name (Google Chrome, Microsoft Edge…).", "placeholders": {"browser": {"type": "String"}}},
   "browserSettingsIncompatible": "{browser}: extension version doesn't match",
@@ -7106,6 +7398,9 @@
   "modelWelcomeStart": "Start Chatting",
   "healthNoModel": "Pick a model to start: add an upstream and its models are ready to use.",
   "modelSetUp": "Set Up a Model",
+  "claudeCoreHint": "This chat runs on Baogong's built-in core. We recommend the Claude Code core for the fullest experience; it's downloaded for you if needed.",
+  "claudeCoreHintSwitch": "Switch to Claude Code",
+  "claudeCoreHintLater": "Not Now",
   "remoteAddServer": "Add SSH Server...",
   "remoteEditServer": "Edit",
   "settingsSectionSsh": "SSH Servers",
@@ -7186,5 +7481,1181 @@
   "remoteFailCancelled": "Signing in was cancelled.",
   "remoteFailHostKey": "The server's key is not known, and your ssh config says not to accept new ones (StrictHostKeyChecking).",
   "remoteFailHostKeyChanged": "The server's key changed since the last connection: it was reinstalled, or someone is in between.",
-  "remoteFailUnreachable": "The server could not be reached: check the address, port and network."
+  "remoteFailUnreachable": "The server could not be reached: check the address, port and network.",
+  "remoteFailWsl": "WSL could not start this distribution: check that WSL is installed and that the distribution is listed by wsl --list.",
+  "channelSetupTitle": "Welcome to BaoCode",
+  "channelSetupLead": "Finish your first-time setup on baocode.dev. It takes about 10 seconds.",
+  "channelSetupStepTitle": "Finish setup in your browser",
+  "channelSetupStep": "BaoCode opens baocode.dev in your browser. Once the page says it's done, BaoCode continues on its own.",
+  "channelSetupWaitingTitle": "Waiting for your browser…",
+  "channelSetupWaiting": "Once the page says it's done, BaoCode continues on its own. Closed the page by mistake? Open it again.",
+  "channelSetupOpenFailedTitle": "Your browser didn't open",
+  "channelSetupOpenFailed": "Copy this address and open it in your browser. Once the page says it's done, BaoCode continues on its own.",
+  "channelSetupAddressCopied": "Copied",
+  "channelSetupOffline": "Can't reach baocode.dev. You need to be online to finish setup.",
+  "channelSetupRetry": "Retry",
+  "channelSetupDoneTitle": "Setup complete",
+  "channelSetupOpen": "Finish Setup in Browser",
+  "channelSetupOpenAgain": "Open the Page Again",
+  "channelSetupNoResponse": "Browser not responding?",
+  "channelSetupPasteLead": "If the page shows a link, copy it and paste it here:",
+  "channelSetupPasteConfirm": "OK",
+  "channelSetupLinkInvalid": "That isn't the link from the page. Copy the whole link shown there.",
+  "channelSetupLinkOther": "That link is for another BaoCode install. Use the page this BaoCode opened.",
+  "channelSetupTrouble": "Having trouble?",
+  "channelSetupOnceTitle": "Only once",
+  "channelSetupOnce": "Once it's done, this won't show again, not even after an update.",
+  "channelSetupPrivateTitle": "Nothing personal",
+  "channelSetupPrivate": "The page only tells BaoCode where you heard of it, like a video or a website.",
+  "channelSetupFindingTitle": "Getting your channel ready…",
+  "channelSetupFinding": "Just a moment.",
+  "channelSetupSiteOfflineTitle": "Can't reach baocode.dev",
+  "channelSetupSiteOffline": "BaoCode needs to be online to read your channel. Check your connection and retry.",
+  "channelSetupUnavailableTitle": "This channel isn't available",
+  "channelSetupUnavailable": "The channel this installer came from doesn't have accounts set up yet. If you downloaded it through another channel, confirm where you came from in your browser; otherwise contact whoever gave you the installer, or download the standard edition from baocode.dev.",
+  "channelSetupConfirmAgain": "Confirm in Browser",
+  "channelWelcomeTitle": "Welcome to {channel}",
+  "@channelWelcomeTitle": {"description": "A channel's welcome's title when its channels.json entry has none, by its name.", "placeholders": {"channel": {"type": "String"}}},
+  "channelWelcomeText": "Sign in to your {channel} account to get started.",
+  "@channelWelcomeText": {"description": "A channel's welcome's text when its entry has none.", "placeholders": {"channel": {"type": "String"}}},
+  "channelWelcomeSignIn": "Sign In",
+  "channelWelcomeSigningIn": "Sign in in the window that opened…",
+  "channelWelcomePreparing": "Getting ready…",
+  "channelWelcomeFailed": "Couldn't finish signing in: {error}",
+  "@channelWelcomeFailed": {"description": "Signing in to the channel's account site failed; the site's or the network's error.", "placeholders": {"error": {"type": "String"}}},
+  "channelAccountTitle": "Account",
+  "channelAccountBalance": "Balance",
+  "channelAccountRefresh": "Refresh",
+  "channelAccountSignOut": "Sign Out",
+  "channelAccountSignOutTitle": "Sign out?",
+  "channelAccountSignOutDetail": "You'll need to sign in to {channel} again to keep using BaoCode.",
+  "@channelAccountSignOutDetail": {"placeholders": {"channel": {"type": "String"}}},
+  "channelAccountOpenSite": "Open Website",
+  "channelAccountDefaultModel": "Default model for new chats",
+  "channelAccountNoModels": "The key in use doesn't reach any models.",
+  "channelAccountKeys": "My API Keys",
+  "channelAccountCreateKey": "Create Key",
+  "channelAccountKeyName": "Name",
+  "channelAccountKeyGroup": "Group",
+  "channelAccountUseKey": "Use This Key",
+  "channelAccountInUse": "In Use",
+  "channelAccountNoKeys": "No API keys yet.",
+  "channelAccountSignedOut": "You're not signed in.",
+  "channelAccountUnavailable": "This channel isn't available. Contact whoever gave you the installer.",
+  "channelAccountFailed": "Something went wrong: {error}",
+  "@channelAccountFailed": {"placeholders": {"error": {"type": "String"}}},
+  "channelAccountBlocked": "{site} refused this computer's connection ({request}); its firewall may be blocking the IP of your network or proxy. Try another network, or reach {site} without the proxy.",
+  "@channelAccountBlocked": {"description": "The channel's account site's firewall (e.g. Cloudflare) refused the app's requests; not a sign-out.", "placeholders": {"site": {"type": "String"}, "request": {"type": "String", "example": "POST /api/v1/auth/refresh"}}},
+  "settingsSectionAbout": "About",
+  "aboutTagline": "An awesome, easy-to-use desktop UI for Claude Code, with a millisecond-fast IDE built in.",
+  "aboutVersion": "Version {version} ({build})",
+  "@aboutVersion": {"placeholders": {"version": {"type": "String"}, "build": {"type": "int"}}},
+  "aboutRepository": "{repository} · free and open source, under the GPL-3.0",
+  "@aboutRepository": {"placeholders": {"repository": {"type": "String"}}},
+  "aboutWebsite": "Website",
+  "aboutChangelog": "Changelog",
+  "aboutChangelogDetail": "What each version changed",
+  "aboutFeedback": "Report an Issue",
+  "aboutFeedbackDetail": "Open an issue on GitHub, or see those others opened",
+  "aboutOpen": "Open",
+  "stashSettingsIssueSync": "Issues as stashes",
+  "stashSettingsIssueSyncDescription": "A project that is a Git repository on GitHub or GitLab (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.",
+    "stashIssueSyncMine": "Only those assigned to or opened by me",
+  "stashIssueSyncOff": "Off: imported or published ones only",
+  "stashIssueLocal": "Local only",
+  "stashIssueAllow": "Allow publishing as an issue",
+  "stashIssueNotPublished": "Not an issue yet",
+  "stashIssuePublishTo": "Publish as an issue of {repo}…",
+  "@stashIssuePublishTo": {
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueKeepLocal": "Keep it local",
+  "stashIssuePush": "Push changes to the issue…",
+  "stashIssuePushShort": "Push",
+  "stashIssueTakeRemote": "Discard local changes, use the issue's",
+  "stashIssueUnlinkOwn": "Unlink, keep it local",
+  "stashIssueConflict": "{tag} was changed on the forge too. Which version to keep?",
+  "@stashIssueConflict": {
+    "placeholders": {
+      "tag": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueKeepMine": "Keep mine (push)",
+  "stashIssueKeepTheirs": "Use the issue's",
+  "stashIssueChangedHere": "Changes here are not on {tag} yet.",
+  "@stashIssueChangedHere": {
+    "placeholders": {
+      "tag": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueDiscard": "Discard",
+  "stashIssuePublishTitle": "Publish as an issue of {repo}",
+  "@stashIssuePublishTitle": {
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssuePushTitle": "Push changes to {tag}",
+  "@stashIssuePushTitle": {
+    "placeholders": {
+      "tag": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssuePublish": "Publish",
+  "stashIssueNoText": "(no description)",
+  "stashIssuePicturesGitHub": "{count, plural, =1{1 picture is uploaded to the repository's {branch} branch, for the issue to show it.} other{{count} pictures are uploaded to the repository's {branch} branch, for the issue to show them.}}",
+  "@stashIssuePicturesGitHub": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssuePicturesGitLab": "{count, plural, =1{1 picture is uploaded to the project, for the issue to show it.} other{{count} pictures are uploaded to the project, for the issue to show them.}}",
+  "@stashIssuePicturesGitLab": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashImplementShort": "Implement",
+  "stashImplementIssue": "It is issue {issue}: the pull request should say it fixes it.",
+  "@stashImplementIssue": {
+    "placeholders": {
+      "issue": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueSyncAll": "All open issues",
+  "stashIssueChecking": "Looking for its repository…",
+  "stashIssueRefresh": "Refresh now",
+  "stashIssuePublishButton": "Publish as Issue",
+  "stashIssuePushButton": "Push to Issue",
+  "stashIssueLoading": "Loading…",
+  "stashSyncing": "Syncing issues…",
+  "stashSyncingRepo": "Syncing the issues of {repo} ({index}/{total})…",
+  "@stashSyncingRepo": {
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      },
+      "index": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "stashSyncTooltip": "Sync issues now",
+  "stashSyncTooltipLast": "Sync issues now · last at {time}",
+  "@stashSyncTooltipLast": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "stashSyncFailed": "Could not sync the issues of {repo}: {error}",
+  "@stashSyncFailed": {
+    "placeholders": {
+      "repo": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "stashSyncSignIn": "{count, plural, =1{Sign in to {forge} for the issues of {repo} to be stashes.} other{Sign in to {forge} for the issues of {repo} and {count} more repositories to be stashes.}}",
+  "@stashSyncSignIn": {
+    "placeholders": {
+      "forge": {
+        "type": "String"
+      },
+      "repo": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashSyncingEmpty": "Syncing the projects' issues…",
+  "stashFilterAnyIssue": "Any source",
+  "stashFilterIssue": "Issues",
+  "stashFilterNotIssue": "Local only",
+  "stashImplementEmpty": "Write something first, then implement it in Baogong",
+  "stashIssueDuplicateBanner": "{issue}, of stash {stash} merged into this one, is still open. Close it as a duplicate?",
+  "@stashIssueDuplicateBanner": {
+    "placeholders": {
+      "issue": {
+        "type": "String"
+      },
+      "stash": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueCloseDuplicate": "Close as duplicate…",
+  "stashIssueDuplicateNoIssue": "Merged into another note; closing as a duplicate.",
+  "stashNewsOpened": "New issue",
+  "stashNewsChanged": "Changed on the forge",
+  "stashNewsCommented": "New comments",
+  "stashNewsClosed": "Closed on the forge",
+  "stashNewsReopened": "Reopened on the forge",
+  "stashNewsCount": "{count, plural, =1{1 update} other{{count} updates}}",
+  "@stashNewsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashNewsCountTooltip": "Show only the updates about you: your issues and pull requests, those assigned to you or naming you",
+  "stashNewsCountTooltipOn": "Showing only the updates about you; click for all",
+  "stashFilterNews": "About you",
+  "stashMarkAllSeen": "Mark all as seen",
+  "stashIssueComments": "{count, plural, =1{1 comment} other{{count} comments}}",
+  "@stashIssueComments": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashIssueDiscussion": "Discussion",
+  "stashIssueDiscussionAll": "See all {count} on {forge}",
+  "@stashIssueDiscussionAll": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "forge": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueDiscussionFailed": "Couldn't load the comments.",
+  "stashIssueDiscussionLoading": "Loading the comments…",
+  "stashDeleteAndClose": "Delete and close {issue}…",
+  "@stashDeleteAndClose": {
+    "placeholders": {
+      "issue": {
+        "type": "String"
+      }
+    }
+  },
+  "stashDeleteOpenIssue": "Its issue {issue} stays open on the forge unless closed too.",
+  "@stashDeleteOpenIssue": {
+    "placeholders": {
+      "issue": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueInSync": "Same as {issue}",
+  "@stashIssueInSync": {
+    "placeholders": {
+      "issue": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueSyncedAt": "synced {time}",
+  "@stashIssueSyncedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "stashIssueNotPushed": "Changed here, not pushed yet",
+  "stashIssueRemoteNewer": "Changed on the forge",
+  "stashIssueBothChanged": "Changed both here and on the forge",
+  "stashIssueDiscussionEmpty": "No comments yet",
+  "stashNewsMerged": "Pull request merged",
+  "stashNewsChangesRequested": "Changes requested",
+  "stashNewsChecksFailed": "Checks failed",
+  "stashNewsMarked": "Marked as unread",
+  "stashNewsOther": "{news} (not about you)",
+  "@stashNewsOther": {
+    "placeholders": {
+      "news": {
+        "type": "String"
+      }
+    }
+  },
+  "stashNewsSidebar": "{count, plural, =1{1 update about you} other{{count} updates about you}}",
+  "@stashNewsSidebar": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashFilterAllNews": "Any updates",
+  "stashMarkSeen": "Mark as Read",
+  "stashMarkUnseen": "Mark as Unread",
+  "stashPullChecksFailedBanner": "The checks of {pull} failed.",
+  "@stashPullChecksFailedBanner": {
+    "placeholders": {
+      "pull": {
+        "type": "String"
+      }
+    }
+  },
+  "stashPullChangesBanner": "Changes were requested on {pull}.",
+  "@stashPullChangesBanner": {
+    "placeholders": {
+      "pull": {
+        "type": "String"
+      }
+    }
+  },
+  "stashPullMergedBanner": "{pull} was merged. Is this done too?",
+  "@stashPullMergedBanner": {
+    "placeholders": {
+      "pull": {
+        "type": "String"
+      }
+    }
+  },
+  "stashPullFix": "Fix in Its Conversation",
+  "stashPullView": "View",
+  "stashPullFixChecks": "The checks of {pull} failed. Find out what failed and fix it.",
+  "@stashPullFixChecks": {
+    "placeholders": {
+      "pull": {
+        "type": "String"
+      }
+    }
+  },
+  "stashPullFixChanges": "Changes were requested on {pull}. Read the review and make them.",
+  "@stashPullFixChanges": {
+    "placeholders": {
+      "pull": {
+        "type": "String"
+      }
+    }
+  },
+  "stashWriteManyTitle": "Comment on {count} issues",
+  "@stashWriteManyTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashWriteCloseManyTitle": "Close {count} issues",
+  "@stashWriteCloseManyTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashDeleteOpenIssues": "Their issues {issues} stay open on the forge unless closed too.",
+  "@stashDeleteOpenIssues": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "issues": {
+        "type": "String"
+      }
+    }
+  },
+  "stashDeleteAndCloseMany": "Delete and close {count} issues…",
+  "@stashDeleteAndCloseMany": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "gitLogRepository": "Repository",
+  "gitLogSearch": "Search messages; separate several with |",
+  "gitLogClearSearch": "Clear Search",
+  "gitLogUser": "User",
+  "gitLogAllUsers": "All Users",
+  "gitLogMe": "Me",
+  "gitLogDate": "Date",
+  "gitLogAnyDate": "Any Time",
+  "gitLogLastDay": "Last 24 Hours",
+  "gitLogLastWeek": "Last 7 Days",
+  "gitLogLastMonth": "Last 30 Days",
+  "gitLogLastYear": "Last Year",
+  "gitLogHighlight": "Highlight",
+  "gitLogHighlightNone": "Nothing",
+  "gitLogHighlightMine": "My Commits",
+  "gitLogClearFilters": "Clear Filters",
+  "gitLogCheckout": "Checkout to...",
+  "gitLogSortTopo": "Topological Order",
+  "gitLogSortDate": "Date Order",
+  "gitLogLocalBranches": "Local Branches",
+  "gitLogRemoteBranches": "Remote Branches",
+  "gitLogTags": "Tags",
+  "gitLogBackToLog": "Back to Log",
+  "gitLogNoCommits": "No commits match.",
+  "gitLogLocalChanges": "Local Changes",
+  "gitLogLocalChangesCount": "Local Changes ({count})",
+  "@gitLogLocalChangesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "gitLogSelectCommit": "Select a commit to see its details.",
+  "gitLogParents": "Parent: ",
+  "gitLogFileCount": "{count, plural, =1{1 file} other{{count} files}}",
+  "@gitLogFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "gitLogInNoBranch": "No branch has this commit.",
+  "gitLogInBranches": "In {count, plural, =1{1 branch} other{{count} branches}}",
+  "@gitLogInBranches": {"placeholders": {"count": {"type": "int"}}},
+  "gitLogList": "List",
+  "gitLogTree": "Tree",
+  "gitLogFilterFiles": "Filter files (* and ? match any)",
+  "gitLogCopyPath": "Copy Path",
+  "gitLogCopyRelativePath": "Copy Relative Path",
+  "gitLogBinary": "binary",
+  "gitLogPreviousFile": "Previous File",
+  "gitLogNextFile": "Next File",
+  "gitLogOpenInEditor": "Open in Editor",
+  "checkpointsTitle": "Checkpoints",
+  "checkpointsDescription": "Snapshots of the projects agents work in, kept to undo their changes. A conversation's are tidied away 30 days after it last changed anything.",
+  "checkpointsSize": "Using {size}",
+  "@checkpointsSize": {"placeholders": {"size": {"type": "String"}}},
+  "checkpointsMeasuring": "Measuring…",
+  "checkpointsClear": "Clear",
+  "checkpointsClearing": "Clearing…",
+  "checkpointsClearConfirm": "Clear the checkpoints?",
+  "checkpointsClearDetail": "The changes agents made in conversations that are not open can no longer be undone. The files themselves stay as they are.",
+  "gitLogToday": "Today {time}",
+  "@gitLogToday": {"placeholders": {"time": {"type": "String"}}},
+  "gitLogYesterday": "Yesterday {time}",
+  "@gitLogYesterday": {"placeholders": {"time": {"type": "String"}}},
+  "gitLogCheckoutRevision": "Checkout Revision",
+  "gitLogNewBranch": "New Branch…",
+  "gitLogNewBranchAt": "New branch at {commit}",
+  "@gitLogNewBranchAt": {"placeholders": {"commit": {"type": "String"}}},
+  "gitLogCheckoutBranch": "Checkout '{branch}'",
+  "@gitLogCheckoutBranch": {"placeholders": {"branch": {"type": "String"}}},
+  "gitLogCopyHash": "Copy the full hash",
+  "gitLogCopyRefNames": "Copy Branch or Tag Name",
+  "gitLogCopyName": "Copy '{name}'",
+  "@gitLogCopyName": {"placeholders": {"name": {"type": "String"}}},
+  "gitLogLoading": "Loading history…",
+  "gitLogWorktree": "Worktree",
+  "gitLogWorktreeOf": "Worktree: {path}",
+  "@gitLogWorktreeOf": {"placeholders": {"path": {"type": "String"}}},
+  "gitLogFollowAgent": "Follow the Agent",
+  "gitLogAgentHere": "The agent works here",
+  "gitLogWorktreeAt": "Checked out in worktree {name}\n{path}",
+  "@gitLogWorktreeAt": {"placeholders": {"name": {"type": "String"}, "path": {"type": "String"}}},
+  "gitLogMainWorktree": "main worktree",
+  "gitLogWorktreeMissing": "missing",
+  "branchBarWorktree": "In worktree {name}\n{path}",
+  "@branchBarWorktree": {"placeholders": {"name": {"type": "String"}, "path": {"type": "String"}}},
+  "gitCommitChanges": "Changes",
+  "gitCommitUnversioned": "Unversioned Files",
+  "gitCommitConflicts": "Merge Conflicts",
+  "gitCommitAmend": "Amend",
+  "gitCommitMessage": "Commit Message",
+  "gitCommitButton": "Commit",
+  "gitCommitAndPush": "Commit and Push",
+  "gitCommitRollback": "Rollback…",
+  "gitCommitRollbackConfirm": "Roll back the changes of {count, plural, =1{1 file} other{{count} files}}?",
+  "@gitCommitRollbackConfirm": {"placeholders": {"count": {"type": "int"}}},
+  "gitCommitRollbackDetail": "They go back to how they were last committed; files not committed yet are deleted.",
+  "gitCommitRollbackButton": "Rollback",
+  "gitCommitShowDiff": "Show Diff",
+  "gitCommitJumpToSource": "Jump to Source",
+  "gitCommitAddToVcs": "Add to VCS",
+  "gitCommitMarkResolved": "Mark Resolved",
+  "gitCommitExpandAll": "Expand All",
+  "gitCommitCollapseAll": "Collapse All",
+  "gitCommitEmptyMessage": "Enter a commit message.",
+  "gitCommitNothingSelected": "Check the files to commit.",
+  "gitCommitNoChanges": "No local changes",
+  "gitCommitSelected": "{checked} of {total} files checked",
+  "@gitCommitSelected": {"placeholders": {"checked": {"type": "int"}, "total": {"type": "int"}}},
+  "gitLogUndoCommit": "Undo Commit",
+  "branchBarNewWorktree": "New Worktree…",
+  "branchBarNewWorktreeFrom": "A new branch from “{branch}”, in a worktree of its own beside “{folder}”: the agent works there, your checkout stays as it is",
+  "@branchBarNewWorktreeFrom": {"placeholders": {"branch": {"type": "String"}, "folder": {"type": "String"}}},
+  "branchBarInWorktree": "In worktree {name}",
+  "@branchBarInWorktree": {"placeholders": {"name": {"type": "String"}}},
+  "branchBarWorkIn": "From now on, work in {path} (branch {branch}): read and edit the files and run the commands there.",
+  "@branchBarWorkIn": {"placeholders": {"path": {"type": "String"}, "branch": {"type": "String"}}},
+  "diffRevertChange": "Undo this change (back to the left side)",
+  "diffRemoveChange": "Undo this change (remove the added lines)",
+  "diffPreviousDifference": "Previous Difference",
+  "diffNextDifference": "Next Difference",
+  "diffDifferenceOf": "{current} of {count}",
+  "@diffDifferenceOf": {"placeholders": {"current": {"type": "int"}, "count": {"type": "int"}}},
+  "diffDifferences": "{count, plural, =0{No differences} =1{1 difference} other{{count} differences}}",
+  "@diffDifferences": {"placeholders": {"count": {"type": "int"}}},
+  "diffSettings": "Viewer Settings",
+  "diffLayoutAuto": "Side by Side When Wide Enough",
+  "diffSideBySide": "Side-by-Side Viewer",
+  "diffUnified": "Unified Viewer",
+  "diffIgnoreWhitespace": "Ignore Whitespace at Line Ends",
+  "diffWhitespaceNone": "Do Not Ignore Whitespace",
+  "diffIgnoreAllWhitespace": "Ignore All Whitespace",
+  "diffCollapseUnchanged": "Collapse Unchanged Fragments",
+  "diffUnchangedLines": "{count, plural, =1{1 unchanged line} other{{count} unchanged lines}}",
+  "@diffUnchangedLines": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "diffGoToFile": "Go to Changed File",
+  "lineChangePrevious": "Previous Change",
+  "lineChangeNext": "Next Change",
+  "lineChangeRollback": "Rollback",
+  "lineChangeShowDiff": "Show Diff",
+  "lineChangeCopy": "Copy Original Lines",
+  "cmdNextChange": "Go to Next Change",
+  "cmdPreviousChange": "Go to Previous Change",
+  "cmdShowNextChange": "Show Next Change",
+  "cmdShowPreviousChange": "Show Previous Change",
+  "gitAnnotate": "Annotate with Git Blame",
+  "gitCloseAnnotations": "Close Annotations",
+  "gitLogCopyPatch": "Copy as Patch",
+  "gitLogCherryPick": "Cherry-Pick",
+  "gitLogCompareWithLocal": "Compare with Local",
+  "gitLogResetToHere": "Reset Current Branch to Here",
+  "gitLogResetSoft": "Soft: keep the changes staged",
+  "gitLogResetMixed": "Mixed: keep the changes, not staged",
+  "gitLogResetHard": "Hard: discard the changes",
+  "gitLogResetKeep": "Keep: keep the local changes",
+  "gitLogResetHardConfirm": "Reset “{branch}” to {commit} and discard every change since, committed or not?",
+  "@gitLogResetHardConfirm": {"placeholders": {"branch": {"type": "String"}, "commit": {"type": "String"}}},
+  "gitLogResetButton": "Reset",
+  "gitLogRevertCommit": "Revert Commit",
+  "gitLogEditMessage": "Edit Commit Message…",
+  "gitLogDropCommit": "Drop Commit",
+  "gitLogDropConfirm": "Take {commit} “{subject}” out of the branch?",
+  "@gitLogDropConfirm": {"placeholders": {"commit": {"type": "String"}, "subject": {"type": "String"}}},
+  "gitLogDropButton": "Drop",
+  "gitLogPushUpToHere": "Push All up to Here",
+  "gitLogNewTag": "New Tag…",
+  "gitLogNewTagAt": "New tag at {commit}",
+  "@gitLogNewTagAt": {"placeholders": {"commit": {"type": "String"}}},
+  "gitTagName": "Tag name",
+  "gitTagMessage": "Message (optional: an annotated tag)",
+  "gitLogCreateTag": "Create Tag",
+  "gitLogGoToParent": "Go to Parent Commit",
+  "gitLogGoToChild": "Go to Child Commit",
+  "gitLogComparedWithLocal": "{commit} ↔ Local",
+  "@gitLogComparedWithLocal": {"placeholders": {"commit": {"type": "String"}}},
+  "gitLogNoDifferences": "No differences from the working tree",
+  "gitLogCopyHashes": "Copy Commit Hashes",
+  "gitLogCherryPickCount": "Cherry-Pick {count} Commits",
+  "@gitLogCherryPickCount": {"placeholders": {"count": {"type": "int"}}},
+  "gitLogCompareCommits": "Compare Commits",
+  "gitLogRevertCommits": "Revert {count} Commits",
+  "@gitLogRevertCommits": {"placeholders": {"count": {"type": "int"}}},
+  "gitLogSquashCommits": "Squash {count} Commits into One",
+  "@gitLogSquashCommits": {"placeholders": {"count": {"type": "int"}}},
+  "gitLogCommitsSelected": "{count} commits selected",
+  "@gitLogCommitsSelected": {"placeholders": {"count": {"type": "int"}}},
+  "gitLogPaths": "Paths",
+  "gitLogAllPaths": "All Paths",
+  "gitLogCurrentFile": "Current File: {path}",
+  "@gitLogCurrentFile": {"placeholders": {"path": {"type": "String"}}},
+  "gitLogCurrentFolder": "Its Folder: {path}",
+  "@gitLogCurrentFolder": {"placeholders": {"path": {"type": "String"}}},
+  "gitLogPathCount": "{count} paths",
+  "@gitLogPathCount": {"placeholders": {"count": {"type": "int"}}},
+  "gitLogLinesOf": "{file}: lines {start}–{end}",
+  "@gitLogLinesOf": {"placeholders": {"file": {"type": "String"}, "start": {"type": "int"}, "end": {"type": "int"}}},
+  "gitShowHistory": "Show History",
+  "gitShowHistoryForSelection": "Show History for Selection",
+  "gitShowBranches": "Show Branches",
+  "gitHideBranches": "Hide Branches",
+  "gitBranchesFilter": "Filter branches",
+  "gitBranchesHead": "HEAD (Current Branch)",
+  "gitBranchCheckout": "Checkout",
+  "gitBranchNewFrom": "New Branch from “{name}”…",
+  "@gitBranchNewFrom": {"placeholders": {"name": {"type": "String"}}},
+  "gitBranchCheckoutRebase": "Checkout and Rebase onto “{current}”",
+  "@gitBranchCheckoutRebase": {"placeholders": {"current": {"type": "String"}}},
+  "gitBranchCompare": "Compare with “{current}”",
+  "@gitBranchCompare": {"placeholders": {"current": {"type": "String"}}},
+  "gitBranchDiffWorkingTree": "Show Diff with Working Tree",
+  "gitBranchRebaseOnto": "Rebase “{current}” onto “{name}”",
+  "@gitBranchRebaseOnto": {"placeholders": {"current": {"type": "String"}, "name": {"type": "String"}}},
+  "gitBranchMerge": "Merge “{name}” into “{current}”",
+  "@gitBranchMerge": {"placeholders": {"name": {"type": "String"}, "current": {"type": "String"}}},
+  "gitBranchPullRebase": "Pull into “{current}” Using Rebase",
+  "@gitBranchPullRebase": {"placeholders": {"current": {"type": "String"}}},
+  "gitBranchPullMerge": "Pull into “{current}” Using Merge",
+  "@gitBranchPullMerge": {"placeholders": {"current": {"type": "String"}}},
+  "gitBranchUpdate": "Update",
+  "gitBranchPush": "Push",
+  "gitBranchPushTo": "Push to {upstream}",
+  "@gitBranchPushTo": {"placeholders": {"upstream": {"type": "String"}}},
+  "gitBranchUpstream": "Upstream",
+  "gitBranchUnsetUpstream": "Unset Upstream",
+  "gitBranchRename": "Rename…",
+  "gitBranchRenameTitle": "Rename the branch “{name}”",
+  "@gitBranchRenameTitle": {"placeholders": {"name": {"type": "String"}}},
+  "gitBranchRenameButton": "Rename",
+  "gitBranchFavorite": "Add to Favorites",
+  "gitBranchUnfavorite": "Remove from Favorites",
+  "gitBranchShowOnly": "Show Only This in the Log",
+  "gitBranchDelete": "Delete",
+  "gitTagDelete": "Delete Tag",
+  "gitBranchDeleteButton": "Delete",
+  "gitBranchDeleteRemoteConfirm": "Delete the branch “{name}” on its remote?",
+  "@gitBranchDeleteRemoteConfirm": {"placeholders": {"name": {"type": "String"}}},
+  "gitBranchNotMergedConfirm": "“{name}” has commits merged into no other branch. Delete it anyway?",
+  "@gitBranchNotMergedConfirm": {"placeholders": {"name": {"type": "String"}}},
+  "gitBranchDeleted": "Deleted the branch “{name}”.",
+  "@gitBranchDeleted": {"placeholders": {"name": {"type": "String"}}},
+  "gitTagDeleted": "Deleted the tag “{name}”.",
+  "@gitTagDeleted": {"placeholders": {"name": {"type": "String"}}},
+  "gitBranchRestore": "Restore",
+  "gitBranchCompared": "“{name}” has {ahead} commits “{current}” has not; “{current}” has {behind} it has not.",
+  "@gitBranchCompared": {"placeholders": {"name": {"type": "String"}, "current": {"type": "String"}, "ahead": {"type": "int"}, "behind": {"type": "int"}}},
+  "gitBranchCompareFiles": "Show Changed Files",
+  "scmGraphRangeIn": "Commits in “{to}” Not in “{from}”",
+  "@scmGraphRangeIn": {"placeholders": {"to": {"type": "String"}, "from": {"type": "String"}}},
+  "gitBranchesRecent": "Recent",
+  "gitBranchesSearch": "Search for branches and actions",
+  "gitUpdateProject": "Update Project",
+  "gitCommitEllipsis": "Commit…",
+  "gitPushEllipsis": "Push…",
+  "gitNewBranchEllipsis": "New Branch…",
+  "gitCheckoutRevision": "Checkout Tag or Revision…",
+  "gitBranchesTitle": "Git Branches",
+  "gitRevisionPlaceholder": "A tag, a branch or a commit hash",
+  "gitUpdateProjectDetail": "Bring each repository's current branch up to its upstream: merge its new commits in, or rebase the branch's own onto them. Local changes are stashed meanwhile.",
+  "gitUpdateMerge": "Merge",
+  "gitUpdateRebase": "Rebase",
+  "gitDontAskAgain": "Don't ask again",
+  "gitPushTitle": "Push Commits",
+  "gitPushTags": "Push tags",
+  "gitPushForce": "Force Push",
+  "gitPushForceConfirm": "Force push to {targets}?",
+  "@gitPushForceConfirm": {"placeholders": {"targets": {"type": "String"}}},
+  "gitPushForceDetail": "What is there is replaced by what you push (with lease: only as last fetched, so nobody's newer commits are lost).",
+  "gitPushNothing": "Nothing to push",
+  "gitPushRemote": "Remote",
+  "gitPushNew": "new",
+  "gitPushSelectCommit": "Select a commit to see its files",
+  "gitPushEllipsisCommand": "Push…",
+  "gitOperationRebasing": "Rebasing",
+  "gitOperationMerging": "Merging",
+  "gitOperationCherryPicking": "Cherry-picking",
+  "gitOperationReverting": "Reverting",
+  "gitOperationConflicts": "{count, plural, =1{1 conflict left} other{{count} conflicts left}}",
+  "@gitOperationConflicts": {"placeholders": {"count": {"type": "int"}}},
+  "gitOperationResolved": "conflicts resolved",
+  "gitOperationContinue": "Continue",
+  "gitOperationSkip": "Skip",
+  "gitOperationAbort": "Abort",
+  "gitOperationAbortConfirm": "Abort? {what} stops and what it did so far is undone.",
+  "@gitOperationAbortConfirm": {"placeholders": {"what": {"type": "String"}}},
+  "gitConflictAcceptCurrent": "Accept Current (Ours)",
+  "gitConflictAcceptIncoming": "Accept Incoming (Theirs)",
+  "gitConflictMerge": "Merge…",
+  "gitMergeTitle": "Merge Revisions for {path}",
+  "@gitMergeTitle": {"placeholders": {"path": {"type": "String"}}},
+  "gitMergeOurs": "Current (Ours)",
+  "gitMergeResult": "Result",
+  "gitMergeTheirs": "Incoming (Theirs)",
+  "gitMergeConflictsLeft": "{count, plural, =0{All conflicts resolved} =1{1 conflict left} other{{count} conflicts left}}",
+  "@gitMergeConflictsLeft": {"placeholders": {"count": {"type": "int"}}},
+  "gitMergeChangesApplied": "{count, plural, =0{} =1{1 change applied without conflict} other{{count} changes applied without conflict}}",
+  "@gitMergeChangesApplied": {"placeholders": {"count": {"type": "int"}}},
+  "gitMergePrevious": "Previous Conflict",
+  "gitMergeNext": "Next Conflict",
+  "gitMergeApply": "Apply",
+  "gitMergeAppend": "Append",
+  "gitMergeIgnore": "Ignore",
+  "gitMergeAi": "Merge with AI",
+  "gitMergeAiAll": "Merge Conflicts with AI",
+  "gitMergeAiFailed": "AI could not merge the conflict: {error}",
+  "@gitMergeAiFailed": {"placeholders": {"error": {"type": "String"}}},
+  "gitMergeAiNoAnswer": "the reply had no merged lines",
+  "gitMergeAcceptOurs": "Accept Current",
+  "gitMergeAcceptTheirs": "Accept Incoming",
+  "gitMergeUnresolved": "{count, plural, =1{1 conflict is not resolved.} other{{count} conflicts are not resolved.}}",
+  "@gitMergeUnresolved": {"placeholders": {"count": {"type": "int"}}},
+  "gitMergeUnresolvedDetail": "Save the result as it is and mark the file resolved?",
+  "gitMergeSaveAnyway": "Save and Mark Resolved",
+  "gitMergeDiscard": "Discard the merge result?",
+  "gitMergeDiscardButton": "Discard",
+  "gitDiffExcludeChange": "Leave This Change Out of the Commit",
+  "gitDiffIncludeChange": "Include This Change in the Commit",
+  "gitDiffExcludeLine": "Leave This Line Out of the Commit",
+  "gitDiffIncludeLine": "Include This Line in the Commit",
+  "gitChangelistActive": "active",
+  "gitChangelistMoveTo": "Move to Another Changelist",
+  "gitChangelistNew": "New Changelist…",
+  "gitChangelistCreate": "Create",
+  "gitChangelistName": "Changelist name",
+  "gitChangelistCommitOnly": "Commit Only This Changelist",
+  "gitChangelistSetActive": "Set Active Changelist",
+  "gitChangelistRename": "Rename Changelist…",
+  "gitChangelistRenameButton": "Rename",
+  "gitChangelistDelete": "Delete Changelist",
+  "gitStashChangesTitle": "Stash Changes",
+  "gitStashFilesTitle": "{count, plural, =1{Stash 1 File} other{Stash {count} Files}}",
+  "@gitStashFilesTitle": {"placeholders": {"count": {"type": "int"}}},
+  "gitStashButton": "Stash",
+  "gitStashMessage": "Message (optional)",
+  "gitStashUntracked": "Include untracked files",
+  "gitStashBase": "Base",
+  "gitStashApply": "Apply",
+  "gitStashPop": "Pop",
+  "gitStashAsBranch": "Unstash as Branch…",
+  "gitStashCopyMessage": "Copy Message",
+  "gitStashDrop": "Drop…",
+  "gitStashDropConfirm": "Drop {ref}?",
+  "@gitStashDropConfirm": {"placeholders": {"ref": {"type": "String"}}},
+  "gitStashDropButton": "Drop",
+  "gitStashClear": "Clear Stashes…",
+  "gitStashClearConfirm": "Drop every stash?",
+  "gitStashClearButton": "Clear",
+  "gitStashNone": "No stashes",
+  "gitStashTab": "Stash",
+  "gitCommitTab": "Commit",
+  "gitStashSelected": "Stash Selected Files…",
+  "gitCommitIgnored": "Ignored Files",
+  "gitCommitShowIgnored": "Show Ignored Files",
+  "gitCommitLongSubject": "The subject is longer than {limit} characters",
+  "@gitCommitLongSubject": {"placeholders": {"limit": {"type": "int"}}},
+  "gitCommitNoBlankLine": "Separate the subject from the body with a blank line",
+  "gitCommitMessageHistory": "Commit Message History (Ctrl+M)",
+  "gitCommitNoMessageHistory": "No messages yet",
+  "gitCommitOptions": "Commit Options",
+  "gitCommitAuthor": "Author…",
+  "gitCommitAuthorIs": "Author: {author}",
+  "@gitCommitAuthorIs": {"placeholders": {"author": {"type": "String"}}},
+  "gitCommitAuthorReset": "Use the Configured Author",
+  "gitCommitAuthorPlaceholder": "Name <email>",
+  "gitCommitSignOff": "Sign-off Commit",
+  "gitCommitRunHooks": "Run Git Hooks",
+  "gitCommitSignedOff": "Signed off",
+  "gitCommitNoHooks": "Hooks skipped",
+  "gitLogInteractiveRebase": "Interactively Rebase from Here…",
+  "gitRebaseTitle": "Rebasing {count, plural, =1{1 Commit} other{{count} Commits}} from {base}",
+  "@gitRebaseTitle": {"placeholders": {"count": {"type": "int"}, "base": {"type": "String"}}},
+  "gitRebasePick": "Pick",
+  "gitRebaseReword": "Reword",
+  "gitRebaseEdit": "Edit",
+  "gitRebaseSquash": "Squash",
+  "gitRebaseFixup": "Fixup",
+  "gitRebaseDrop": "Drop",
+  "gitRebaseMoveUp": "Move Up (Alt+Up)",
+  "gitRebaseMoveDown": "Move Down (Alt+Down)",
+  "gitRebaseMessage": "Commit message",
+  "gitRebaseStart": "Start Rebasing",
+  "gitRebaseNothingBelow": "The oldest commit kept cannot be squashed or fixed up: there is nothing below it.",
+  "gitRebaseStopped": "The rebase stopped: amend the commit or resolve the conflicts, then Continue.",
+  "gitRebaseCleanUpWithAi": "Clean Up with AI",
+  "gitRebaseCleanUpWithAiDetail": "Let the model suggest what to fix up, squash and reword; you look it over before the rebase starts",
+  "gitRebaseAiPlanning": "Planning… (click to stop)",
+  "gitRebaseAiNoPlan": "The model's answer was not a rebase list of these commits.",
+  "gitRebaseAiFailed": "Could not clean up with AI: {error}",
+  "@gitRebaseAiFailed": {"placeholders": {"error": {"type": "String"}}},
+  "gitTagPushTo": "Push Tag to {remote}",
+  "@gitTagPushTo": {"placeholders": {"remote": {"type": "String"}}},
+  "gitTagDeleteOn": "Delete Tag on {remote}",
+  "@gitTagDeleteOn": {"placeholders": {"remote": {"type": "String"}}},
+  "gitTagDeleteOnConfirm": "Delete the tag {name} on {remote}?",
+  "@gitTagDeleteOnConfirm": {"placeholders": {"name": {"type": "String"}, "remote": {"type": "String"}}},
+  "gitRemotesManage": "Manage Remotes…",
+  "gitRemotesTitle": "Git Remotes",
+  "gitRemotesNone": "No remotes",
+  "gitRemoteAdd": "Add Remote",
+  "gitRemoteEdit": "Edit Remote",
+  "gitRemoteRemove": "Remove",
+  "gitRemoteName": "Name",
+  "gitRemoteUrl": "URL",
+  "gitRemoteRemoveConfirm": "Remove the remote {name}?",
+  "@gitRemoteRemoveConfirm": {"placeholders": {"name": {"type": "String"}}},
+  "gitRemoteRemoveDetail": "Its remote branches go with it; nothing on the server changes.",
+  "gitCloneTitle": "Get from Version Control",
+  "gitCloneUrl": "URL",
+  "gitCloneDirectory": "Directory",
+  "gitCloneBrowse": "Browse…",
+  "gitCloneButton": "Clone",
+  "gitCloning": "Cloning…",
+  "gitCloneCommand": "Clone Repository…",
+  "gitReviewWithAi": "Review Changes with AI",
+  "gitReviewStop": "Stop the Review",
+  "gitReviewBeforeCommit": "Review with AI Before Committing",
+  "gitReviewRunning": "Reviewing the changes…",
+  "gitReviewClean": "No problems found",
+  "gitReviewFound": "{count, plural, =1{1 problem found} other{{count} problems found}}",
+  "@gitReviewFound": {"placeholders": {"count": {"type": "int"}}},
+  "gitReviewCommitAnyway": "Commit Anyway",
+  "gitReviewCommitAndPushAnyway": "Commit and Push Anyway",
+  "gitReviewFailed": "Could not review the changes: {error}",
+  "@gitReviewFailed": {"placeholders": {"error": {"type": "String"}}},
+  "gitAskAiCommit": "Ask AI About This Commit",
+  "gitAskAiCommitPrompt": "Explain commit {id} (\u201c{subject}\u201d): what it changes and why, and anything in it that looks risky. Read it with `git show {id}`.",
+  "@gitAskAiCommitPrompt": {"placeholders": {"id": {"type": "String"}, "subject": {"type": "String"}}},
+  "gitAskAiCommits": "{count, plural, =1{Ask AI About This Commit} other{Ask AI About These {count} Commits}}",
+  "@gitAskAiCommits": {"placeholders": {"count": {"type": "int"}}},
+  "gitAskAiCommitsPrompt": "Explain commits {ids}: what they change together, and anything in them that looks risky. Read them with `git show`.",
+  "@gitAskAiCommitsPrompt": {"placeholders": {"ids": {"type": "String"}}},
+  "gitAskAiHunk": "Ask AI About This Change",
+  "gitAskAiHunkPrompt": "About this change in {path} at line {line}: explain what it does and whether anything in it is wrong.\n\n```diff\n{change}\n```",
+  "@gitAskAiHunkPrompt": {"placeholders": {"path": {"type": "String"}, "line": {"type": "int"}, "change": {"type": "String"}}},
+  "gitAskAiChanges": "Ask AI About These Changes",
+  "gitAskAiChangesPrompt": "Review my uncommitted changes in {paths} (`git diff HEAD -- {paths}`): explain what they do and point out anything wrong.",
+  "@gitAskAiChangesPrompt": {"placeholders": {"paths": {"type": "String"}}},
+  "gitAskAiConflicts": "Ask AI to Resolve the Conflicts",
+  "gitAskAiConflictsPrompt": "Resolve the merge conflicts in {paths}: keep what both sides meant, then tell me what you chose. Don't stage or commit.",
+  "@gitAskAiConflictsPrompt": {"placeholders": {"paths": {"type": "String"}}},
+  "gitLogFixup": "Fixup with Checked Changes",
+  "compareWith": "Compare With",
+  "compareWithClipboard": "Clipboard",
+  "compareWithClipboardLabel": "{name} (Clipboard \u2194 File)",
+  "@compareWithClipboardLabel": {"placeholders": {"name": {"type": "String"}}},
+  "gitCompareWithBranch": "Branch or Tag…",
+  "gitCompareWithRevision": "Revision…",
+  "gitCompareWithBranchPlaceholder": "Select a branch or tag to compare the file with",
+  "gitCompareWithRevisionPlaceholder": "Select a revision of the file to compare it with",
+  "gitCompareLabel": "{name} ({other} \u2194 Working Tree)",
+  "@gitCompareLabel": {"placeholders": {"name": {"type": "String"}, "other": {"type": "String"}}},
+  "explorerSelectForCompare": "Select for Compare",
+  "explorerCompareWithSelected": "Compare with '{name}'",
+  "@explorerCompareWithSelected": {"placeholders": {"name": {"type": "String"}}},
+  "compareFoldersSame": "“{original}” and “{modified}” have the same files.",
+  "@compareFoldersSame": {"placeholders": {"original": {"type": "String"}, "modified": {"type": "String"}}},
+  "compareFoldersPick": "Files “{original}” and “{modified}” differ in",
+  "@compareFoldersPick": {"placeholders": {"original": {"type": "String"}, "modified": {"type": "String"}}},
+  "compareFoldersOnlyIn": "Only in “{name}”",
+  "@compareFoldersOnlyIn": {"placeholders": {"name": {"type": "String"}}},
+  "compareFoldersModified": "Changed",
+  "compareWithLocalHistory": "Local History…",
+  "localHistoryShow": "Show Local History",
+  "localHistoryNone": "No local history of “{name}” yet: it is kept as the file is saved.",
+  "@localHistoryNone": {"placeholders": {"name": {"type": "String"}}},
+  "localHistoryPick": "A version of “{name}” to compare with",
+  "@localHistoryPick": {"placeholders": {"name": {"type": "String"}}},
+  "localHistoryLabel": "{name} (Local History, {time})",
+  "@localHistoryLabel": {"placeholders": {"name": {"type": "String"}, "time": {"type": "String"}}},
+  "explorerCompareSelected": "Compare Selected",
+  "compareFilesLabel": "{original} \u2194 {modified}",
+  "@compareFilesLabel": {"placeholders": {"original": {"type": "String"}, "modified": {"type": "String"}}},
+  "settingsSectionUsage": "Usage",
+  "sidePanelUsage": "Usage",
+  "ustatKeywords": "usage statistics tokens cache calls cost dashboard upstream model",
+  "ustatAll": "All",
+  "ustatAgent": "Agent",
+  "ustatKind": "Kind",
+  "ustatModel": "Model",
+  "ustatUpstream": "Upstream",
+  "ustatConversation": "Conversation",
+  "ustatFailedOnly": "Failed only",
+  "ustatResetFilters": "Reset filters",
+  "ustatRefresh": "Refresh",
+  "ustatUnpin": "Back to the whole range",
+  "ustatRangeHour": "Last hour",
+  "ustatRangeToday": "Today",
+  "ustatRangeDay": "Last 24 hours",
+  "ustatRangeWeek": "Last 7 days",
+  "ustatRangeMonth": "Last 30 days",
+  "ustatRangeQuarter": "Last 90 days",
+  "ustatRangeAll": "All time",
+  "ustatClassMain": "Main agent",
+  "ustatClassSubagent": "Subagent",
+  "ustatClassWorkflow": "Workflow",
+  "ustatClassCompaction": "Compaction",
+  "ustatClassAuxiliary": "Auxiliary",
+  "ustatClassSideReply": "Side reply",
+  "ustatMainAgent": "Main agent",
+  "ustatPartSystem": "System prompt",
+  "ustatPartTools": "Tool definitions",
+  "ustatPartUser": "User messages",
+  "ustatPartAssistant": "Replies",
+  "ustatPartThinking": "Thinking",
+  "ustatPartToolUse": "Tool calls",
+  "ustatPartToolResult": "Tool results",
+  "ustatPartMedia": "Images & files",
+  "ustatTokenInput": "Input",
+  "ustatTokenOutput": "Output",
+  "ustatTokenCacheRead": "Cache read",
+  "ustatTokenCacheWrite": "Cache write",
+  "ustatTokenReasoning": "Reasoning",
+  "ustatTotalTokens": "Tokens",
+  "ustatTokensDetail": "{input} in · {output} out",
+  "@ustatTokensDetail": {"placeholders": {"input": {"type": "String"}, "output": {"type": "String"}}},
+  "ustatCalls": "Calls",
+  "ustatCallsDetail": "{count} tool calls asked",
+  "@ustatCallsDetail": {"placeholders": {"count": {"type": "String"}}},
+  "ustatCallsOk": "Succeeded",
+  "ustatCallsShort": "{count} calls",
+  "@ustatCallsShort": {"placeholders": {"count": {"type": "int"}}},
+  "ustatCacheHit": "Cache hit rate",
+  "ustatCacheDetail": "{read} read · {written} written",
+  "@ustatCacheDetail": {"placeholders": {"read": {"type": "String"}, "written": {"type": "String"}}},
+  "ustatFirstToken": "Time to first token",
+  "ustatDurationDetail": "{duration} per call on average",
+  "@ustatDurationDetail": {"placeholders": {"duration": {"type": "String"}}},
+  "ustatSpeed": "Output speed",
+  "ustatOutputDetail": "{tokens} output in all",
+  "@ustatOutputDetail": {"placeholders": {"tokens": {"type": "String"}}},
+  "ustatReasoningDetail": "{tokens} of it reasoning",
+  "@ustatReasoningDetail": {"placeholders": {"tokens": {"type": "String"}}},
+  "ustatErrors": "Failed",
+  "ustatErrorRate": "{rate} of calls",
+  "@ustatErrorRate": {"placeholders": {"rate": {"type": "String"}}},
+  "ustatOverTime": "Over time",
+  "ustatMetricTokens": "Tokens",
+  "ustatMetricCalls": "Calls",
+  "ustatMetricLatency": "Latency",
+  "ustatMetricSpeed": "Speed",
+  "ustatByUpstream": "By upstream",
+  "ustatByModel": "By model",
+  "ustatByConversation": "By conversation",
+  "ustatByTurn": "By turn",
+  "ustatByTurnDetail": "Each of your messages and all the requests that answered it",
+  "ustatTurnDetail": "{duration} · context up to {peak}",
+  "@ustatTurnDetail": {"placeholders": {"duration": {"type": "String"}, "peak": {"type": "String"}}},
+  "ustatNoConversations": "No conversation named its session",
+  "ustatTools": "Tools",
+  "ustatToolsDetail": "What their results brought into the context (estimated), how often they were called, how long they ran",
+  "ustatToolSortTokens": "Context",
+  "ustatToolSortCalls": "Calls",
+  "ustatToolSortTime": "Time",
+  "ustatNoTools": "No tools were used",
+  "ustatToolCalled": "Called",
+  "ustatToolResult": "result",
+  "ustatShowAll": "Show all {count}",
+  "@ustatShowAll": {"placeholders": {"count": {"type": "int"}}},
+  "ustatShowLess": "Show less",
+  "ustatContextGrowth": "Context growth",
+  "ustatContextNow": "{tokens} now",
+  "@ustatContextNow": {"placeholders": {"tokens": {"type": "String"}}},
+  "ustatContextPeak": "peak {tokens}",
+  "@ustatContextPeak": {"placeholders": {"tokens": {"type": "String"}}},
+  "ustatCompactions": "{count, plural, =1{1 compaction} other{{count} compactions}}",
+  "@ustatCompactions": {"placeholders": {"count": {"type": "int"}}},
+  "ustatCompactedFrom": "Compacted at {tokens}",
+  "@ustatCompactedFrom": {"placeholders": {"tokens": {"type": "String"}}},
+  "ustatContextMakeup": "What fills the context",
+  "ustatRecentCalls": "Recent calls",
+  "ustatCallsTitle": "Calls",
+  "ustatRecentCallsDetail": "{count} in all, newest first",
+  "@ustatRecentCallsDetail": {"placeholders": {"count": {"type": "int"}}},
+  "ustatShowMoreCalls": "Show more ({count} left)",
+  "@ustatShowMoreCalls": {"placeholders": {"count": {"type": "int"}}},
+  "ustatNoCalls": "No calls",
+  "ustatCopyJson": "Copy the call as JSON",
+  "ustatFieldTime": "Time",
+  "ustatFieldStatus": "Status",
+  "ustatFieldUpstream": "Upstream",
+  "ustatFieldModel": "Model",
+  "ustatFieldEffort": "Effort",
+  "ustatFieldClass": "Kind",
+  "ustatFieldSession": "Session",
+  "ustatFieldAgent": "Agent",
+  "ustatFieldTask": "Task",
+  "ustatFieldAccount": "Account",
+  "ustatFieldUpstreamLatency": "Upstream answered",
+  "ustatFieldFirstToken": "First token",
+  "ustatFieldDuration": "Duration",
+  "ustatFieldSpeed": "Speed",
+  "ustatFieldMessages": "Messages",
+  "ustatFieldTools": "tools",
+  "ustatFieldBytes": "Size",
+  "ustatFieldCompacted": "After compaction",
+  "ustatFieldError": "Error",
+  "ustatEmptyTitle": "No calls yet",
+  "ustatEmptyDetail": "Calls show here once a conversation runs.",
+  "ustatEmptyFiltered": "Nothing matches these filters",
+  "ustatConversationNew": "Usage shows once the conversation starts",
+  "ustatConversationEmpty": "No calls kept for this conversation",
+  "ustatConversationEmptyDetail": "Only conversations on a custom upstream are counted: Claude's official service does not go through Baogong's proxy.",
+  "ustatRecordOff": "Usage is not being recorded",
+  "ustatTurnOn": "Turn on",
+  "ustatDataTitle": "Data",
+  "ustatDataDescription": "Detailed records take room: keep them as long as you like, and clear what you no longer need.",
+  "ustatRecord": "Record usage",
+  "ustatRecordDescription": "Claude Code's own calls are read from what it prints; sessions on a custom upstream go through Baogong's local proxy, which keeps each call. Applies to agents started from now on.",
+  "ustatRecordOffDescription": "Turn it on to keep each call to a model: tokens, the cache, time, by conversation, subagent and tool.",
+  "ustatDetailed": "Detailed records",
+  "ustatDetailedDescription": "Also keeps what filled each request's context and the tools' share. Takes more room.",
+  "ustatRetention": "Keep records for",
+  "ustatRetentionDescription": "Older days are deleted as they pass.",
+  "ustatKeepDays": "{days} days",
+  "@ustatKeepDays": {"placeholders": {"days": {"type": "int"}}},
+  "ustatKeepForever": "Forever",
+  "ustatSpace": "Using {size}",
+  "@ustatSpace": {"placeholders": {"size": {"type": "String"}}},
+  "ustatSpaceDetail": "{days} days kept, since {oldest}",
+  "@ustatSpaceDetail": {"placeholders": {"days": {"type": "int"}, "oldest": {"type": "String"}}},
+  "ustatSpaceEmpty": "Nothing kept yet",
+  "ustatClearEllipsis": "Clear…",
+  "ustatClear": "Clear",
+  "ustatClearOlderThan": "Clear all but the last {days} days",
+  "@ustatClearOlderThan": {"placeholders": {"days": {"type": "int"}}},
+  "ustatClearShown": "Clear the time shown",
+  "ustatClearShownFiltered": "Clear what the filters show",
+  "ustatClearAll": "Clear everything",
+  "ustatClearConfirm": "{what}?",
+  "@ustatClearConfirm": {"placeholders": {"what": {"type": "String"}}},
+  "ustatClearDetail": "The calls are deleted from this computer. This cannot be undone.",
+  "autoResetCreditsToggle": "Auto-Use Reset Credits",
+  "modelsResetCredits": "{count, plural, =1{1 reset left} other{{count} resets left}}",
+  "@modelsResetCredits": {"placeholders": {"count": {"type": "int"}}},
+  "modelsResetCreditsTitle": "{count, plural, =1{1 reset credit} other{{count} reset credits}}",
+  "@modelsResetCreditsTitle": {"placeholders": {"count": {"type": "int"}}},
+  "modelsResetCreditsDetail": "Using one starts this account's quota windows over at once.",
+  "modelsResetCreditExpires": "Expires {time}",
+  "@modelsResetCreditExpires": {"placeholders": {"time": {"type": "String"}}},
+  "modelsResetCreditUse": "Reset Now",
+  "modelsResetCreditConfirm": "Use a reset credit of {account}?",
+  "@modelsResetCreditConfirm": {"placeholders": {"account": {"type": "String"}}},
+  "modelsResetCreditConfirmDetail": "Its quota starts over at once. The credit can't be given back, and whatever quota is left now is lost.",
+  "resetCreditsHint": "{count, plural, =1{A reset credit expires} other{{count} reset credits expire}} within a week. To get their worth, use Codex models on this plan, resetting once the quota runs out:",
+  "@resetCreditsHint": {"placeholders": {"count": {"type": "int"}}},
+  "resetCreditsHintDay": "{day}: reset {count, plural, =1{once} other{{count} times}}",
+  "@resetCreditsHintDay": {"placeholders": {"day": {"type": "String"}, "count": {"type": "int"}}},
+  "resetCreditsHintBy": "by {time}",
+  "@resetCreditsHintBy": {"placeholders": {"time": {"type": "String"}}},
+  "resetCreditsHintToday": "Today",
+  "resetCreditsHintTomorrow": "Tomorrow",
+  "resetCreditsHintAuto": "Reset Automatically",
+  "resetCreditsHintLater": "Got It",
+  "ustatPartMemory": "CLAUDE.md & rules",
+  "ustatPartSkills": "Skills",
+  "ustatPartMcp": "MCP",
+  "ustatPartMessages": "Conversation",
+  "ustatCacheHitShort": "{rate} cached",
+  "@ustatCacheHitShort": {"placeholders": {"rate": {"type": "String"}}},
+  "ustatCompactedAfter": "First after compacting",
+  "ustatContextPickHint": "Click to see what filled it",
+  "ustatRequests": "{count, plural, =1{1 request} other{{count} requests}}",
+  "@ustatRequests": {"placeholders": {"count": {"type": "int"}}},
+  "ustatRequestOf": "#{index} of {count}",
+  "@ustatRequestOf": {"placeholders": {"index": {"type": "int"}, "count": {"type": "int"}}},
+  "ustatPreviousRequest": "Previous request",
+  "ustatNextRequest": "Next request",
+  "ustatNoMakeup": "What filled this request's context was not recorded (turn on Detailed recording).",
+  "ustatMakeupNoDetail": "Recorded before the breakdown by tool, MCP server and skill: requests from now on have it.",
+  "ustatMakeupShapeMissing": "The breakdown of this request's tools and skills was not found.",
+  "ustatMcpTools": "{count, plural, =0{instructions only} =1{1 tool} other{{count} tools}}",
+  "@ustatMcpTools": {"placeholders": {"count": {"type": "int"}}},
+  "ustatMcpInstructions": "Instructions",
+  "ustatSkillPlugin": "plugin",
+  "ustatToolInputs": "inputs {tokens}",
+  "@ustatToolInputs": {"placeholders": {"tokens": {"type": "String"}}},
+  "ustatSwitchedHint": "Saved to Settings → Customize. The agent's next requests go without what was turned off.",
+  "ustatShowAuxiliary": "Show auxiliary requests",
+  "ustatShowAuxiliaryDescription": "Count Claude Code's requests beside the conversation (suggesting the next prompt, naming the conversation, summing up a web page) in the charts and totals. They are kept either way.",
+  "ustatTrace": "Debug capture",
+  "ustatTraceDescription": "Also keep every request to a custom upstream whole: as Claude Code sent it, as it went to the upstream, the upstream's raw answer and what went back; of Claude Code's own models, only their answers. Keys are masked. Takes a lot of space: turn it off when done.",
+  "ustatTraceTitle": "Raw exchange",
+  "ustatTraceLoading": "Reading…",
+  "ustatTraceGone": "The raw exchange was cleared.",
+  "ustatTraceNone": "Nothing went this way (it was answered before).",
+  "ustatTraceRequestBody": "Request body",
+  "ustatTraceRawResponse": "Raw response",
+  "ustatTraceToUpstream": "Sent upstream",
+  "ustatTraceResponseHeaders": "Response headers · {count}",
+  "@ustatTraceResponseHeaders": {"placeholders": {"count": {"type": "int"}}},
+  "ustatTraceAnswerOnly": "As Claude Code printed it; the request to Anthropic is not seen",
+  "ustatTraceTry": "Try {n}",
+  "@ustatTraceTry": {"placeholders": {"n": {"type": "int"}}},
+  "ustatTraceCopyAll": "Copy all",
+  "ustatTraceCopyBody": "Copy",
+  "ustatTraceHeaders": "Request headers · {count}",
+  "@ustatTraceHeaders": {"placeholders": {"count": {"type": "int"}}},
+  "ustatTraceRaw": "As sent",
+  "ustatTraceFormatted": "Formatted",
+  "ustatTraceEmpty": "Empty",
+  "ustatTraceMore": "Show more ({size} left)",
+  "@ustatTraceMore": {"placeholders": {"size": {"type": "String"}}},
+  "ustatTraceTruncated": "cut at 24M characters",
+  "ustatSpaceTraces": "; raw exchanges {size} ({count})",
+  "@ustatSpaceTraces": {"placeholders": {"size": {"type": "String"}, "count": {"type": "int"}}},
+  "ustatClearTraces": "Clear the raw exchanges only",
+  "ustatClearTracesDetail": "The calls stay; their raw requests and answers are deleted from this computer.",
+  "ustatColumnTotal": "Total",
+  "ustatColumnMix": "Breakdown",
+  "ustatDeferred": "deferred, {size}",
+  "@ustatDeferred": {"placeholders": {"size": {"type": "String"}}},
+  "ustatSwitchedOff": "turned off",
+  "usageUntilCompaction": "{tokens} to auto-compact",
+  "@usageUntilCompaction": {"placeholders": {"tokens": {"type": "String"}}},
+  "usageAgentDefinition": "agent",
+  "usageAttachments": "Reminders & attachments",
+  "ustatCost": "Cost",
+  "ustatCostEstimated": "At the prices as they are now",
+  "ustatCostUnpriced": "{count, plural, =1{1 call unpriced} other{{count} calls unpriced}}",
+  "@ustatCostUnpriced": {"placeholders": {"count": {"type": "int"}}},
+  "ustatCostNoPrices": "No prices set",
+  "ustatPrices": "Model prices",
+  "ustatPricesDetail": "A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included.",
+  "ustatPricesAgentHint": "Baogong can keep these for you: ask it in a chat to look up the current prices of these models and update them. It checks the upstream's own pricing page and writes them here.",
+  "ustatPriceCurrency": "Currency",
+  "ustatPriceAnyUpstream": "any upstream",
+  "ustatPriceSource": "Where the price was read",
+  "ustatPriceUpdated": "updated {when}",
+  "@ustatPriceUpdated": {"placeholders": {"when": {"type": "String"}}},
+  "ustatPriceClear": "Clear the price",
+  "ustatPriceIncomplete": "Fill in both the input and the output price",
+  "ustatPriceSpent": "In this time",
+  "modelsAutoResetCreditsOff": "Off",
+  "modelsAutoResetCreditsLong": "When the Week or Month Runs Out",
+  "modelsAutoResetCreditsAny": "When Any Window Runs Out",
+  "modelsAutoResetCreditsOffDescription": "An account out of quota waits for it to start over.",
+  "modelsAutoResetCreditsLongDescription": "An account out of its week (or month) uses a reset credit and goes on. Five hours running out is waited for: they start over soon.",
+  "modelsAutoResetCreditsAnyDescription": "An account out of any window, five hours too, uses a reset credit at once and goes on. Credits go faster.",
+  "ustatQuota": "Claude Plan",
+  "ustatQuotaDetail": "How much of the plan's limits Claude Code's own models took in this time, from the limits as they stood after each call.",
+  "ustatQuotaFiveHour": "5-hour limit",
+  "ustatQuotaWeek": "Weekly limit",
+  "ustatQuotaWeekOf": "Weekly {model} limit",
+  "@ustatQuotaWeekOf": {"placeholders": {"model": {"type": "String"}}},
+  "ustatQuotaUsed": "{percent} used in this time",
+  "@ustatQuotaUsed": {"placeholders": {"percent": {"type": "String"}}},
+  "ustatQuotaPeak": "Peak {percent} in this time · reset {count, plural, =1{once} other{{count} times}}",
+  "@ustatQuotaPeak": {"placeholders": {"percent": {"type": "String"}, "count": {"type": "int"}}},
+  "ustatQuotaPerPercent": "1% of the weekly limit ≈ {tokens} tokens",
+  "@ustatQuotaPerPercent": {"placeholders": {"tokens": {"type": "String"}}},
+  "ustatQuotaPerPercentCost": "≈ {cost} at API prices",
+  "@ustatQuotaPerPercentCost": {"placeholders": {"cost": {"type": "String"}}},
+  "ustatCacheSaved": "{amount} saved",
+  "@ustatCacheSaved": {"placeholders": {"amount": {"type": "String"}}},
+  "ustatCostIn": "In {currency} only; the other currencies are in the totals",
+  "@ustatCostIn": {"placeholders": {"currency": {"type": "String"}}},
+  "ustatPriceClaudeDefault": "Claude Code's own models without a price of yours are priced at Anthropic's API prices: the grey figures.",
+  "ustatContextUnpickHint": "Click again to unpick: back to the context as it is now"
 }

@@ -8,11 +8,16 @@ import 'package:path/path.dart' as p;
 import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
 
 import '../base/smooth_scroll.dart';
+import '../ide/ide_switch.dart';
+import '../kernel/extension_switches.dart';
 import '../chat/floating/floating_placement.dart';
 import '../chat/widgets/hover_builder.dart';
 import '../ide/ide_code_editor.dart';
+import '../ide/file_service.dart' show readFileBytes;
 import '../ide/ide_dialog.dart';
 import '../ide/ide_hover.dart';
+import '../ide/ide_tab_bar.dart' show MarkdownSwitch;
+import '../ide/markdown/markdown_preview.dart';
 import '../l10n/l10n.dart';
 import '../platform/app_platform.dart';
 import '../remote/remote_location.dart';
@@ -144,6 +149,7 @@ class CustomizeViewState extends State<CustomizeView> {
   void initState() {
     super.initState();
     _query.addListener(() => setState(() {}));
+    ExtensionSwitches.changes?.addListener(_switchesChanged);
     unawaited(_load());
   }
 
@@ -174,6 +180,7 @@ class CustomizeViewState extends State<CustomizeView> {
 
   @override
   void dispose() {
+    ExtensionSwitches.changes?.removeListener(_switchesChanged);
     _query.dispose();
     _scroll.dispose();
     super.dispose();
@@ -276,6 +283,69 @@ class CustomizeViewState extends State<CustomizeView> {
     }
   }
 
+  // --- Switches -----------------------------------------------------------
+
+  /// What was switched, shown until it is written (or, with nowhere to
+  /// write it, kept here).
+  ExtensionSwitches? _switched;
+
+  ExtensionSwitches get _switches => _switched ?? ExtensionSwitches.current();
+
+  /// Whether [_kind]'s rows have switches: skills and MCP servers, which
+  /// Claude Code is given as flag settings.
+  bool get _switchable =>
+      _kind == CustomizationKind.skills || _kind == CustomizationKind.mcps;
+
+  void _switchesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _switch(ExtensionSwitches switches) async {
+    setState(() => _switched = switches);
+    final save = ExtensionSwitches.save;
+    if (save == null) return;
+    try {
+      await save(switches);
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = error);
+    }
+    if (mounted && identical(_switched, switches)) {
+      setState(() => _switched = null);
+    }
+  }
+
+  /// The MCP servers whose tools are shown, by [_groupKey].
+  final Set<String> _expanded = {};
+
+  String _groupKey(Customization item) =>
+      '${item.scope.name}\u0000${item.name}';
+
+  void _toggleExpanded(String key) => setState(
+    () => _expanded.contains(key) ? _expanded.remove(key) : _expanded.add(key),
+  );
+
+  /// [item]'s switch, an MCP server's or a skill's; null for none.
+  Widget? _switchOf(Customization item) {
+    if (!_switchable) return null;
+    final switches = _switches;
+    final l10n = context.l10n;
+    final on = item.kind == CustomizationKind.mcps
+        ? switches.serverEnabled(item.name)
+        : switches.skillEnabled(item.name);
+    return _RowSwitch(
+      value: on,
+      label: item.name,
+      tooltip: on ? l10n.mcpDisable : l10n.mcpEnable,
+      onChanged: (enabled) => unawaited(
+        _switch(
+          item.kind == CustomizationKind.mcps
+              ? switches.withServer(item.name, enabled)
+              : switches.withSkills([item.name], enabled),
+        ),
+      ),
+    );
+  }
+
   Future<void> _create(CustomizationScope scope) async {
     final l10n = context.l10n;
     final name = await showDialog<String>(
@@ -349,6 +419,7 @@ class CustomizeViewState extends State<CustomizeView> {
                     unawaited(_load());
                   },
                   onOpenFile: widget.store.isLocal ? widget.onOpenFile : null,
+                  menu: () => _menu(open, opened: true),
                   status: switch (_statusOf(open)) {
                     final status? => _McpStatusPanel(
                       status: status,
@@ -450,36 +521,30 @@ class CustomizeViewState extends State<CustomizeView> {
         ],
       ],
     ];
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760),
-        child: ListView(
-          controller: _scroll,
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-          children: [
-            _SearchBox(controller: _query),
-            const SizedBox(height: 12),
-            _buildChips(l10n),
-            if (_error case final error?) ...[
-              const SizedBox(height: 12),
-              Text(
-                l10n.customizeLoadFailed('$error'),
-                style: TextStyle(
-                  color: themeColors['errorForeground'],
-                  fontSize: 12,
-                ),
-              ),
-            ],
-            if (_items != null)
-              for (final scope in scopes)
-                ..._buildGroup(l10n, scope, [
-                  for (final item in items)
-                    if (item.scope == scope) item,
-                ]),
-          ],
-        ),
-      ),
+    return ListView(
+      controller: _scroll,
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      children: [
+        _SearchBox(controller: _query),
+        const SizedBox(height: 12),
+        _buildChips(l10n),
+        if (_error case final error?) ...[
+          const SizedBox(height: 12),
+          Text(
+            l10n.customizeLoadFailed('$error'),
+            style: TextStyle(
+              color: themeColors['errorForeground'],
+              fontSize: 12,
+            ),
+          ),
+        ],
+        if (_items != null)
+          for (final scope in scopes)
+            ..._buildGroup(l10n, scope, [
+              for (final item in items)
+                if (item.scope == scope) item,
+            ]),
+      ],
     );
   }
 
@@ -672,16 +737,75 @@ class CustomizeViewState extends State<CustomizeView> {
           clipBehavior: Clip.antiAlias,
           child: Column(
             children: [
-              for (final (i, item) in items.indexed) ...[
+              for (final (i, row) in _rows(items).indexed) ...[
                 if (i > 0) Divider(height: 1, color: AppColors.partBorder),
-                _ItemRow(
-                  item: item,
-                  status: _statusOf(item),
-                  onOpen: () => setState(() => _open = item),
-                  menu: () => _menu(item),
-                ),
+                row,
               ],
             ],
+          ),
+        ),
+    ];
+  }
+
+  /// A group's rows: each item's, an MCP server's tools under its, when
+  /// shown.
+  List<Widget> _rows(List<Customization> items) => [
+    for (final item in items) ...[
+      _itemRow(item),
+      if (item.kind == CustomizationKind.mcps &&
+          _expanded.contains(_groupKey(item)))
+        ..._toolRows(item),
+    ],
+  ];
+
+  Widget _itemRow(Customization item) {
+    final tools = item.kind == CustomizationKind.mcps
+        ? _probes[_probeKey(item)]?.tools
+        : null;
+    final on = switch (item.kind) {
+      CustomizationKind.mcps => _switches.serverEnabled(item.name),
+      CustomizationKind.skills => _switches.skillEnabled(item.name),
+      _ => true,
+    };
+    return _ItemRow(
+      item: item,
+      status: _statusOf(item),
+      onOpen: () => setState(() => _open = item),
+      menu: () => _menu(item),
+      toggle: _switchOf(item),
+      dimmed: !on,
+      expanded: tools == null || tools.isEmpty
+          ? null
+          : _expanded.contains(_groupKey(item)),
+      onExpand: () => _toggleExpanded(_groupKey(item)),
+      detail: tools == null || tools.isEmpty
+          ? null
+          : context.l10n.chatToolCount(tools.length),
+    );
+  }
+
+  /// [server]'s tools, as asking it found them, each with its switch;
+  /// shown off while the server is.
+  List<Widget> _toolRows(Customization server) {
+    final l10n = context.l10n;
+    final switches = _switches;
+    final serverOn = switches.serverEnabled(server.name);
+    return [
+      for (final tool in _probes[_probeKey(server)]?.tools ?? const [])
+        _ToolRow(
+          name: tool.name,
+          description: tool.description,
+          dimmed: !serverOn || !switches.toolEnabled(server.name, tool.name),
+          toggle: _RowSwitch(
+            value: serverOn && switches.toolEnabled(server.name, tool.name),
+            enabled: serverOn,
+            label: tool.name,
+            tooltip: switches.toolEnabled(server.name, tool.name)
+                ? l10n.mcpDisable
+                : l10n.mcpEnable,
+            onChanged: (enabled) => unawaited(
+              _switch(switches.withTool(server.name, tool.name, enabled)),
+            ),
           ),
         ),
     ];
@@ -729,17 +853,20 @@ class CustomizeViewState extends State<CustomizeView> {
     );
   }
 
-  List<SidebarMenuItem> _menu(Customization item) {
+  /// [item]'s actions: its row's, or, [opened], its editor's (less what
+  /// opens it).
+  List<SidebarMenuItem> _menu(Customization item, {bool opened = false}) {
     final l10n = context.l10n;
     // A remote host's files are neither opened nor shown here.
     final local = widget.store.isLocal;
     return [
-      SidebarMenuItem(
-        l10n.customizeEdit,
-        icon: Icons.edit_outlined,
-        onSelected: () => setState(() => _open = item),
-      ),
-      if (_probeable(item)) ...[
+      if (!opened)
+        SidebarMenuItem(
+          l10n.customizeEdit,
+          icon: Icons.edit_outlined,
+          onSelected: () => setState(() => _open = item),
+        ),
+      if (_probeable(item) && !opened) ...[
         SidebarMenuItem(
           l10n.mcpTest,
           icon: Icons.refresh_rounded,
@@ -882,6 +1009,11 @@ class _ItemRow extends StatelessWidget {
     required this.onOpen,
     required this.menu,
     this.status,
+    this.toggle,
+    this.dimmed = false,
+    this.expanded,
+    this.onExpand,
+    this.detail,
   });
 
   final Customization item;
@@ -890,6 +1022,23 @@ class _ItemRow extends StatelessWidget {
 
   /// An MCP server's: whether it answers.
   final McpProbeResult? status;
+
+  /// Its switch, before its actions; none when null.
+  final Widget? toggle;
+
+  /// Switched off: its name and description fainter.
+  final bool dimmed;
+
+  /// Whether what is under it (an MCP server's tools) is shown; null for
+  /// nothing under it.
+  final bool? expanded;
+  final VoidCallback? onExpand;
+
+  /// Beside its name, with [expanded]'s chevron: how many are under it.
+  final String? detail;
+
+  /// A tool's indent, under its server: its name under the server's.
+  static const childIndent = 40.0;
 
   @override
   Widget build(BuildContext context) {
@@ -936,11 +1085,21 @@ class _ItemRow extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: AppColors.textPrimary,
+                                color: dimmed
+                                    ? AppColors.textMuted
+                                    : AppColors.textPrimary,
                                 fontSize: 13,
                               ),
                             ),
                           ),
+                          if (expanded case final expanded?) ...[
+                            const SizedBox(width: 6),
+                            _Disclosure(
+                              expanded: expanded,
+                              label: detail,
+                              onTap: onExpand,
+                            ),
+                          ],
                           if (status case final status?) ...[
                             const SizedBox(width: 8),
                             _McpStatusBadge(status),
@@ -967,7 +1126,9 @@ class _ItemRow extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: AppColors.textMuted,
+                            color: dimmed
+                                ? AppColors.textFaint
+                                : AppColors.textMuted,
                             fontSize: 12,
                           ),
                         ),
@@ -989,6 +1150,10 @@ class _ItemRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
+                if (toggle case final toggle?) ...[
+                  toggle,
+                  const SizedBox(width: 10),
+                ],
                 SidebarIconButton(
                   icon: Icons.more_horiz_rounded,
                   tooltip: l10n.sidebarMoreActions,
@@ -1004,6 +1169,127 @@ class _ItemRow extends StatelessWidget {
   }
 }
 
+/// A row's switch, with what turning it says on hover.
+class _RowSwitch extends StatelessWidget {
+  const _RowSwitch({
+    required this.value,
+    required this.label,
+    required this.tooltip,
+    required this.onChanged,
+    this.enabled = true,
+  });
+
+  final bool value;
+  final String label;
+  final String tooltip;
+  final ValueChanged<bool> onChanged;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) => IdeHover(
+    message: tooltip,
+    child: IdeSwitch(
+      value: value,
+      enabled: enabled,
+      semanticLabel: label,
+      onChanged: onChanged,
+    ),
+  );
+}
+
+/// A chevron, and how many it shows or hides: a row's own button.
+class _Disclosure extends StatelessWidget {
+  const _Disclosure({required this.expanded, this.label, this.onTap});
+
+  final bool expanded;
+  final String? label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => HoverBuilder(
+    cursor: SystemMouseCursors.click,
+    builder: (context, hovered) => GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: hovered ? AppColors.hover : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (label case final label?) ...[
+              Text(
+                label,
+                style: TextStyle(color: AppColors.textFaint, fontSize: 11.5),
+              ),
+              const SizedBox(width: 2),
+            ],
+            Icon(
+              expanded ? Codicons.chevronDown : Codicons.chevronRight,
+              size: 12,
+              color: hovered ? AppColors.text : AppColors.textFaint,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// One of an MCP server's tools, under it, with its switch.
+class _ToolRow extends StatelessWidget {
+  const _ToolRow({
+    required this.name,
+    required this.description,
+    required this.toggle,
+    this.dimmed = false,
+  });
+
+  final String name;
+  final String description;
+  final Widget toggle;
+  final bool dimmed;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(12 + _ItemRow.childIndent, 7, 40, 7),
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: dimmed ? AppColors.textMuted : AppColors.text,
+                  fontFamily: AppFonts.mono,
+                  fontFamilyFallback: AppFonts.monoFallbacks,
+                  fontSize: 12,
+                ),
+              ),
+              if (description.isNotEmpty)
+                Text(
+                  description,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.textFaint, fontSize: 11.5),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        toggle,
+      ],
+    ),
+  );
+}
+
 /// One customization's file, edited as text (⌘S saves); or, where it is
 /// not to be edited here, what it is.
 class _CustomizationEditor extends StatefulWidget {
@@ -1012,6 +1298,7 @@ class _CustomizationEditor extends StatefulWidget {
     required this.item,
     required this.store,
     required this.onBack,
+    required this.menu,
     this.onOpenFile,
     this.status,
   });
@@ -1019,6 +1306,11 @@ class _CustomizationEditor extends StatefulWidget {
   final Customization item;
   final CustomizationStore store;
   final VoidCallback onBack;
+
+  /// Its actions, under ⋯ (opened in the IDE, shown in the file manager…).
+  final List<SidebarMenuItem> Function() menu;
+
+  /// Opens a file a markdown link goes to.
   final ValueChanged<String>? onOpenFile;
 
   /// Above its text: an MCP server's status and log.
@@ -1040,6 +1332,11 @@ class _CustomizationEditorState extends State<_CustomizationEditor> {
   /// Its file is not there yet: shown as it would start
   /// ([Customization.detail]), made when saved.
   bool _missing = false;
+
+  /// A markdown file (a skill's, a rule's…) shows as the IDE shows one:
+  /// edited as it reads, unless switched to its source.
+  late final bool _markdown = isMarkdownPath(widget.item.path);
+  bool _source = false;
 
   Customization get _item => widget.item;
   bool get _dirty => _saved != null && _text.document.text != _saved;
@@ -1136,6 +1433,31 @@ class _CustomizationEditorState extends State<_CustomizationEditor> {
     widget.onBack();
   }
 
+  /// The file as its preview, its text the editor's: what is typed in
+  /// either is the other's, saved as one.
+  Widget _preview() {
+    final local = widget.store.isLocal;
+    final open = widget.onOpenFile;
+    return IdeMarkdownPreview(
+      path: _item.path,
+      model: _text.document,
+      readOnly: !_item.editable,
+      // A remote host's pictures are not read from here.
+      readBytes: local
+          ? readFileBytes
+          : (path) => Future.error(UnsupportedError(path)),
+      pathContext: local ? p.context : p.posix,
+      // Its source's editor told, which keeps whether it is saved.
+      onEdited: _text.syncFromDocument,
+      // On the page, its text under the title's and off its right edge
+      // as the actions are.
+      background: Colors.transparent,
+      padding: const EdgeInsets.fromLTRB(32, 20, 40, 160),
+      onOpenFile: open == null ? null : (path, _) => open(path),
+      onOpenExternal: (uri) => unawaited(openExternal(uri.toString())),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -1143,137 +1465,168 @@ class _CustomizationEditorState extends State<_CustomizationEditor> {
     final command = AppPlatform.isMacOS
         ? const SingleActivator(LogicalKeyboardKey.keyS, meta: true)
         : const SingleActivator(LogicalKeyboardKey.keyS, control: true);
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 900),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 24, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  SidebarIconButton(
-                    icon: Codicons.arrowLeft,
-                    tooltip: l10n.customizeBack,
-                    onTap: () => unawaited(_back()),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(_item.kind.icon, size: 15, color: AppColors.textMuted),
-                  const SizedBox(width: 8),
-                  // The name and its save state take the rest of the row
-                  // together, so the actions sit flush right: a loose
-                  // Flexible next to a Spacer would leave half the slack
-                  // after them.
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            _item.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
+    // Open on the right and below: the markdown's scroll bar on the page's
+    // edge; all else kept off it.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 0, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 24),
+            child: Row(
+              children: [
+                SidebarIconButton(
+                  icon: Codicons.arrowLeft,
+                  tooltip: l10n.customizeBack,
+                  onTap: () => unawaited(_back()),
+                ),
+                const SizedBox(width: 8),
+                Icon(_item.kind.icon, size: 15, color: AppColors.textMuted),
+                const SizedBox(width: 8),
+                // The name and its save state take the rest of the row
+                // together, so the actions sit flush right: a loose
+                // Flexible next to a Spacer would leave half the slack
+                // after them.
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          _item.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        if (_item.editable)
-                          Text(
-                            _dirty
-                                ? l10n.customizeUnsaved
-                                : _justSaved
-                                ? l10n.customizeSaved
-                                : '',
-                            style: TextStyle(
-                              color: AppColors.textFaint,
-                              fontSize: 12,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  if (widget.onOpenFile case final open? when _item.editable)
-                    SidebarIconButton(
-                      icon: Codicons.goToFile,
-                      tooltip: l10n.workspaceOpenIn(
-                        Editor.fastIde.localizedPlatformLabel(l10n),
                       ),
-                      onTap: () => open(_item.path),
-                    ),
-                  if (_item.editable) ...[
-                    const SizedBox(width: 8),
-                    _Button(
-                      label: l10n.customizeRevert,
-                      onTap: _dirty ? _revert : null,
-                    ),
+                      const SizedBox(width: 12),
+                      if (_item.editable)
+                        Text(
+                          _dirty
+                              ? l10n.customizeUnsaved
+                              : _justSaved
+                              ? l10n.customizeSaved
+                              : '',
+                          style: TextStyle(
+                            color: AppColors.textFaint,
+                            fontSize: 12,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                // What saves shows while there is something to save,
+                // left of the switch and the menu, which stay put.
+                if (_savable) ...[
+                  if (_dirty) ...[
+                    _Button(label: l10n.customizeRevert, onTap: _revert),
                     const SizedBox(width: 6),
-                    _Button(
-                      label: l10n.customizeSave,
-                      primary: true,
-                      onTap: _savable ? () => unawaited(_save()) : null,
-                    ),
                   ],
+                  _Button(
+                    label: l10n.customizeSave,
+                    primary: true,
+                    onTap: () => unawaited(_save()),
+                  ),
+                  const SizedBox(width: 12),
                 ],
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 32, top: 2, bottom: 10),
-                child: SelectableText(
-                  _item.editable
-                      ? _item.path
-                      : _item.scope != CustomizationScope.synced
-                      ? l10n.customizeReadOnly
-                      : _item.kind == CustomizationKind.mcps
-                      ? l10n.customizeConnectorReadOnly
-                      : l10n.customizeSyncedReadOnly,
-                  maxLines: 1,
-                  style: TextStyle(color: AppColors.textFaint, fontSize: 11.5),
-                ),
-              ),
-              if (_error case final error?)
-                Padding(
-                  padding: const EdgeInsets.only(left: 32, bottom: 8),
-                  child: Text(
-                    _saved == null
-                        ? l10n.customizeLoadFailed('$error')
-                        : l10n.customizeSaveFailed('$error'),
-                    style: TextStyle(
-                      color: colors['errorForeground'],
-                      fontSize: 12,
+                if (_markdown) ...[
+                  Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.partBorder),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: MarkdownSwitch(
+                      preview: !_source,
+                      onChanged: (preview) =>
+                          setState(() => _source = !preview),
+                      padding: EdgeInsets.zero,
                     ),
                   ),
-                ),
-              if (widget.status case final status?)
-                Padding(
-                  padding: const EdgeInsets.only(left: 32, bottom: 10),
-                  child: status,
-                ),
-              Expanded(
-                child: Container(
-                  margin: const EdgeInsets.only(left: 32),
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppColors.partBorder),
+                  const SizedBox(width: 6),
+                ],
+                SidebarMenu(
+                  items: widget.menu,
+                  placement: (
+                    side: FloatingSide.bottom,
+                    align: FloatingAlign.end,
                   ),
-                  child: CallbackShortcuts(
-                    bindings: {command: () => unawaited(_save())},
-                    child: IdeCodeEditor(
-                      controller: _text,
-                      path: _item.path,
-                      focusNode: _focus,
-                      readOnly: !_item.editable,
-                    ),
+                  builder: (context, menu) => SidebarIconButton(
+                    icon: Icons.more_horiz_rounded,
+                    tooltip: l10n.sidebarMoreActions,
+                    onTap: menu.open,
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+          Padding(
+            padding: const EdgeInsets.only(
+              left: 32,
+              top: 2,
+              right: 24,
+              bottom: 10,
+            ),
+            child: SelectableText(
+              _item.editable
+                  ? _item.path
+                  : _item.scope != CustomizationScope.synced
+                  ? l10n.customizeReadOnly
+                  : _item.kind == CustomizationKind.mcps
+                  ? l10n.customizeConnectorReadOnly
+                  : l10n.customizeSyncedReadOnly,
+              maxLines: 1,
+              style: TextStyle(color: AppColors.textFaint, fontSize: 11.5),
+            ),
+          ),
+          if (_error case final error?)
+            Padding(
+              padding: const EdgeInsets.only(left: 32, right: 24, bottom: 8),
+              child: Text(
+                _saved == null
+                    ? l10n.customizeLoadFailed('$error')
+                    : l10n.customizeSaveFailed('$error'),
+                style: TextStyle(
+                  color: colors['errorForeground'],
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          if (widget.status case final status?)
+            Padding(
+              padding: const EdgeInsets.only(left: 32, right: 24, bottom: 10),
+              child: status,
+            ),
+          Padding(
+            padding: const EdgeInsets.only(right: 24),
+            child: Divider(height: 1, color: AppColors.partBorder),
+          ),
+          Expanded(
+            child: CallbackShortcuts(
+              bindings: {command: () => unawaited(_save())},
+              // On the page, under a rule across it: markdown as it
+              // reads, its text under the title's; other text in the
+              // IDE's editor, its line numbers under the arrow.
+              child: _markdown && !_source
+                  ? _preview()
+                  : Padding(
+                      padding: const EdgeInsets.fromLTRB(0, 8, 24, 20),
+                      child: IdeCodeEditor(
+                        controller: _text,
+                        path: _item.path,
+                        focusNode: _focus,
+                        readOnly: !_item.editable,
+                        background: Colors.transparent,
+                        glyphMargin: false,
+                      ),
+                    ),
+            ),
+          ),
+        ],
       ),
     );
   }

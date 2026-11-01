@@ -194,6 +194,12 @@ class ForgeAccounts extends ChangeNotifier {
   /// for each of them was the hang.
   final Map<String, Future<String?>> _tokens = {};
 
+  /// Each host's refresh under way (GitLab's): the requests that find the
+  /// token expired as it goes wait for it, not refresh it again. A refresh
+  /// token is good for one refresh only, so a second would be refused (and
+  /// would write the keychain once more).
+  final Map<String, Future<_Token>> _refreshing = {};
+
   List<ForgeAccount> get accounts => List.unmodifiable(_accounts.values);
 
   ForgeAccount? accountFor(String host) => _accounts[host.toLowerCase()];
@@ -257,7 +263,16 @@ class ForgeAccounts extends ChangeNotifier {
         _clock().isBefore(expires.subtract(const Duration(minutes: 2)))) {
       return token.access;
     }
-    return (await _refresh(account, refresh)).access;
+    final host = account.host;
+    if (_refreshing[host] case final refreshing?) {
+      return (await refreshing).access;
+    }
+    late final Future<_Token> refreshing;
+    refreshing = _refresh(account, refresh).whenComplete(() {
+      if (identical(_refreshing[host], refreshing)) _refreshing.remove(host);
+    });
+    _refreshing[host] = refreshing;
+    return (await refreshing).access;
   }
 
   /// [host]'s token as the keychain has it, read once: the requests that
@@ -309,6 +324,7 @@ class ForgeAccounts extends ChangeNotifier {
     final me = await api.me();
     await _secrets.write(_secretId(host), token.encode());
     _tokens.remove(host);
+    _refreshing.remove(host);
     final account = ForgeAccount(
       kind: kind,
       host: host,
@@ -329,6 +345,7 @@ class ForgeAccounts extends ChangeNotifier {
     if (_accounts.remove(host) == null) return;
     await _secrets.delete(_secretId(host));
     _tokens.remove(host);
+    _refreshing.remove(host);
     await _keep();
     notifyListeners();
   }

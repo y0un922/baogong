@@ -209,6 +209,11 @@ class BrowserSettingsPage extends StatelessWidget {
                 l10n.browserSettingsNotInstalled,
                 l10n.browserSettingsNotInstalledDescription,
               ),
+        if (bridge.sandboxedBrowsers)
+          (
+            l10n.browserSettingsSandboxed,
+            l10n.browserSettingsSandboxedDescription,
+          ),
       ];
     }
     return [

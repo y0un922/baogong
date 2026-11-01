@@ -36,6 +36,20 @@ class EdgeStopScrollPhysics extends BouncingScrollPhysics {
   @override
   double applyBoundaryConditions(ScrollMetrics position, double value) =>
       const ClampingScrollPhysics().applyBoundaryConditions(position, value);
+
+  /// A flick goes as far as it would alone, not sped up by the fling it
+  /// stops (iOS's): the same flick four times went twice as far by the
+  /// fourth (tool/perf `follow.*`). The editors' `TrackpadFling` takes this
+  /// too.
+  @override
+  double carriedMomentum(double existingVelocity) => 0;
+
+  /// The fingers move the view from their first pixel, not after a dead
+  /// zone (iOS's 3.5px) that left the view short of them all along. (None
+  /// would be null, which [BouncingScrollPhysics] has no room for; it must
+  /// be more than 0.)
+  @override
+  double get dragStartDistanceMotionThreshold => 0.01;
 }
 
 /// A [ScrollController] for lists a mouse wheel scrolls smoothly
@@ -102,6 +116,63 @@ class _SmoothScrollingState extends State<SmoothScrolling> {
   Widget build(BuildContext context) => widget.builder(context, _controller);
 }
 
+/// A [SmoothScrolling] whose offset is kept in the nearest [PageStorage]
+/// under [identifier] as it goes, and where it starts when built there
+/// again: an IDE tab's view switched back to (`IdeViewStates.bucket`).
+class KeptScrolling extends StatefulWidget {
+  const KeptScrolling({
+    super.key,
+    required this.identifier,
+    required this.builder,
+  });
+
+  final Object identifier;
+
+  final Widget Function(BuildContext context, ScrollController controller)
+  builder;
+
+  @override
+  State<KeptScrolling> createState() => _KeptScrollingState();
+}
+
+class _KeptScrollingState extends State<KeptScrolling> {
+  PageStorageBucket? _bucket;
+  late final SmoothScrollController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _bucket = PageStorage.maybeOf(context);
+    final kept = _bucket?.readState(context, identifier: widget.identifier);
+    _controller = SmoothScrollController(
+      initialScrollOffset: kept is double ? kept : 0,
+      keepScrollOffset: false,
+    );
+  }
+
+  /// Kept while the list it scrolls is still there.
+  @override
+  void deactivate() {
+    if (_controller.hasClients) {
+      _bucket?.writeState(
+        context,
+        _controller.offset,
+        identifier: widget.identifier,
+      );
+    }
+    super.deactivate();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _controller);
+}
+
 class _SmoothScrollPosition extends ScrollPositionWithSingleContext
     with WheelGliding {
   _SmoothScrollPosition({
@@ -145,7 +216,9 @@ abstract final class _WheelSignal {
 mixin WheelGliding on ScrollPositionWithSingleContext {
   @override
   void pointerScroll(double delta) {
-    if (_WheelSignal.kind != PointerDeviceKind.mouse || delta == 0) {
+    // A smooth wheel's steps, like a trackpad's, move it as they come.
+    if (_WheelSignal.kind != PointerDeviceKind.mouse ||
+        !WheelGlide.glides(delta)) {
       super.pointerScroll(delta);
       return;
     }

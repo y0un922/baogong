@@ -1,13 +1,17 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:quill_native_bridge/quill_native_bridge.dart';
 
 import '../chat/chat_models.dart';
 import '../chat/composer/composer_files.dart';
 import '../chat/composer/file_drop.dart';
 import '../platform/app_platform.dart';
 import '../platform/event_log.dart';
+import '../theme/app_theme.dart' show AppMetrics;
 
 /// One of the window's own buttons, over a header the app draws itself: the
 /// system hit-tests and acts on those pixels, so the header only paints them
@@ -65,6 +69,13 @@ abstract final class WindowControls {
   /// them.
   static bool get drawsHeader => AppPlatform.isWindows;
 
+  /// How far from the window's top what shows over everything (menus,
+  /// popovers, dialogs, quick picks) starts: below the header Windows draws,
+  /// whose strip the window drags itself by (see [setHitTestAreas]), so
+  /// nothing over it could be clicked (#198). In the overlay's own pixels,
+  /// as the header's height: the interface's zoom is outside both.
+  static double get headerInset => drawsHeader ? AppMetrics.headerHeight : 0;
+
   /// Whether the window can be kept on top.
   static bool get canKeepOnTop => isDesktop;
 
@@ -77,6 +88,17 @@ abstract final class WindowControls {
     appEvent('window', 'appearance ${dark ? 'dark' : 'light'}');
     try {
       await _main.invokeMethod<void>('setAppearance', dark);
+    } on MissingPluginException {
+      // A host without the channel (e.g. tests).
+    }
+  }
+
+  /// The system's blur under every window, or none (see WindowBlur); kept
+  /// for the next start, whose windows open as it says.
+  static Future<void> setWindowBlur(bool on) async {
+    if (!(AppPlatform.isMacOS || AppPlatform.isWindows)) return;
+    try {
+      await _main.invokeMethod<void>('setWindowBlur', on);
     } on MissingPluginException {
       // A host without the channel (e.g. tests).
     }
@@ -136,6 +158,18 @@ abstract final class WindowControls {
         'width': by.width,
         'height': by.height,
       });
+    } on MissingPluginException {
+      // A host without the channel (e.g. tests).
+    }
+  }
+
+  /// Moves the window with the press under way, as a drag on the system's
+  /// title bar would: macOS, where the window leaves that to the title bar
+  /// Flutter draws (see title_bar_double_click.dart).
+  static Future<void> dragWindow({int? viewId}) async {
+    if (!handlesTitleDoubleClick) return;
+    try {
+      await _of(viewId).invokeMethod<void>('dragWindow');
     } on MissingPluginException {
       // A host without the channel (e.g. tests).
     }
@@ -221,7 +255,10 @@ abstract final class WindowControls {
   /// Keeps the macOS traffic lights level with the title bar Flutter draws
   /// as the interface is zoomed: [drop] (the window's points) below where
   /// the system puts them. Said once a change; 0 is where they start.
-  static Future<void> setTitleBarDrop(double drop, {required int viewId}) async {
+  static Future<void> setTitleBarDrop(
+    double drop, {
+    required int viewId,
+  }) async {
     if (!AppPlatform.isMacOS) return;
     if ((_titleBarDrops[viewId] ?? 0) == drop) return;
     _titleBarDrops[viewId] = drop;
@@ -513,6 +550,24 @@ abstract final class WindowControls {
     return (await Clipboard.getData(Clipboard.kTextPlain))?.text;
   }
 
+  /// The clipboard's HTML (a web page's, a document's copied), where the
+  /// platform can say.
+  static Future<String?> readPasteboardHtml() async {
+    final bridge = QuillNativeBridge();
+    try {
+      if (!await bridge.isSupported(
+        QuillNativeBridgeFeature.getClipboardHtml,
+      )) {
+        return null;
+      }
+      return await bridge.getClipboardHtml();
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   /// Images on the clipboard, when what it holds is images rather than
   /// text.
   static Future<List<ImageAttachment>> readPasteboardImages() =>
@@ -534,6 +589,42 @@ abstract final class WindowControls {
     } on MissingPluginException {
       return false;
     }
+  }
+
+  /// Puts [text] on the clipboard, and beside it, in a format of the app's
+  /// own, [markdown]: what an editor copied, its tags and all (see
+  /// NativeMdClipboard), [plain] where a plain text's. Whether it could;
+  /// throws [MissingPluginException] where the host has no such format.
+  static Future<bool> writePasteboardMarkdown(
+    String text,
+    String markdown, {
+    required bool plain,
+  }) async =>
+      // The host keeps the copy as it is given, its JSON.
+      await _channel.invokeMethod<bool>('writePasteboardMarkdown', {
+        'text': text,
+        'copy': jsonEncode({'markdown': markdown, 'plain': plain}),
+      }) ??
+      false;
+
+  /// The editors' copy on the clipboard ([writePasteboardMarkdown]); null
+  /// where it has none (it was copied elsewhere since). Throws
+  /// [MissingPluginException] where the host has no such format.
+  static Future<({String markdown, bool plain})?>
+  readPasteboardMarkdown() async {
+    final copy = await _channel.invokeMethod<String>('readPasteboardMarkdown');
+    if (copy == null) return null;
+    try {
+      if (jsonDecode(copy) case {
+        'markdown': final String markdown,
+        'plain': final bool plain,
+      }) {
+        return (markdown: markdown, plain: plain);
+      }
+    } on FormatException {
+      // Not one of ours after all.
+    }
+    return null;
   }
 
   /// The image file at [path] as the composer takes one (the formats it

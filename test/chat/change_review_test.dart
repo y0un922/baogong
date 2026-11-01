@@ -9,17 +9,9 @@ import 'package:baocode/chat/review/review_store_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-/// A project in a temporary folder, its checkpoints in another; Git only
-/// for the merges of Undo.
+/// A project in a temporary folder, what its files were kept in another:
+/// the agent's edits told as the kernel tells them.
 void main() {
-  final hasGit = () {
-    try {
-      return Process.runSync('git', ['--version']).exitCode == 0;
-    } on ProcessException {
-      return false;
-    }
-  }();
-
   late Directory temp;
   late String root;
   late String checkpoints;
@@ -34,31 +26,23 @@ void main() {
 
   String read(String relative) => File(path(relative)).readAsStringSync();
 
-  bool exists(String relative) => File(path(relative)).existsSync();
-
-  Future<LocalReviewStore> store() async =>
-      (await LocalReviewStore.open(root, checkpoints: checkpoints))!;
-
-  Future<ChangeReview> open({String session = 's'}) async {
-    final review = ChangeReview(await store())..session = session;
+  ChangeReview open({String? session}) {
+    final review = ChangeReview(BlobReviewStore.open(checkpoints), root: root);
     addTearDown(review.dispose);
+    if (session != null) review.session = session;
     return review;
   }
 
-  /// The agent writes [text] to [relative] (null deletes it), and reports
-  /// it with what was there.
+  /// The agent of [review] writes [text] to [relative] (null deletes it),
+  /// as Claude Code tells it: before, and after.
   Future<void> edit(ChangeReview review, String relative, String? text) async {
-    final before = exists(relative) ? read(relative) : null;
+    await review.before(path(relative));
     if (text == null) {
       File(path(relative)).deleteSync();
     } else {
       write(relative, text);
     }
-    review.report(
-      FileChange(path: path(relative), added: 1, removed: 1),
-      original: OriginalText(before),
-    );
-    await review.refresh();
+    await review.after(path(relative));
   }
 
   /// The pending changes, by path relative to the project.
@@ -66,18 +50,6 @@ void main() {
     for (final change in review.changes)
       p.split(p.relative(change.path, from: root)).join('/'): change,
   };
-
-  /// What the sessions keep, by session.
-  List<String> sessionsKept() {
-    final project = Directory(p.join(checkpoints))
-        .listSync()
-        .whereType<Directory>();
-    return [
-      for (final folder in project)
-        for (final session in folder.listSync().whereType<Directory>())
-          p.basename(session.path),
-    ]..sort();
-  }
 
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('baocode_review_');
@@ -90,13 +62,14 @@ void main() {
 
   tearDown(() => temp.delete(recursive: true));
 
-  test('lists the edits the agent reports, not what else changed', () async {
-    final review = await open();
+  test('lists what the agent edited, not what changed otherwise', () async {
+    final review = open();
+    // Not the agent's.
+    write('notes.txt', 'mine\n');
+
     await edit(review, 'a.txt', 'one\n2\n3\n4\n5\n6\n');
     await edit(review, 'lib/c.txt', 'c\nc\n');
     await edit(review, 'lib/b.txt', null);
-    // A command's, or the user's: not reported.
-    write('notes.txt', 'mine\n');
 
     final changes = changesOf(review);
     expect(changes.keys, unorderedEquals(['a.txt', 'lib/b.txt', 'lib/c.txt']));
@@ -112,8 +85,24 @@ void main() {
     expect(changesOf(review).keys, unorderedEquals(['a.txt', 'lib/b.txt']));
   });
 
+  test('an edit not let through, or never told the end of, is not listed '
+      'once the turn ends', () async {
+    final review = open();
+    await review.before(path('a.txt'));
+    await review.after(path('a.txt'));
+    await review.before(path('lib/b.txt'));
+    expect(review.changes, isEmpty);
+    await review.look();
+    expect(review.changes, isEmpty);
+
+    // What the user does after is not the agent's.
+    write('lib/b.txt', 'mine\n');
+    await review.look();
+    expect(review.changes, isEmpty);
+  });
+
   test('keeps a change without touching the file', () async {
-    final review = await open();
+    final review = open();
     await edit(review, 'a.txt', 'one\n');
     await edit(review, 'lib/b.txt', 'bee\n');
 
@@ -121,7 +110,7 @@ void main() {
     expect(changesOf(review).keys, ['lib/b.txt']);
     expect(read('a.txt'), 'one\n');
 
-    // Changed again by the agent: listed against what was kept.
+    // Edited again: listed against what was kept.
     await edit(review, 'a.txt', 'one\ntwo\n');
     expect(changesOf(review)['a.txt']!.added, 1);
     expect(changesOf(review)['a.txt']!.removed, 0);
@@ -131,7 +120,7 @@ void main() {
   });
 
   test('undoes edits, creations and deletions', () async {
-    final review = await open();
+    final review = open();
     await edit(review, 'a.txt', 'one\n');
     await edit(review, 'new/deep/c.txt', 'c\n');
     await edit(review, 'lib/b.txt', null);
@@ -143,17 +132,21 @@ void main() {
     expect(read('lib/b.txt'), 'b\n');
     // The folders it made go with the file.
     expect(Directory(path('new')).existsSync(), isFalse);
+
+    // Undone, it is not the agent's change.
+    await review.look();
+    expect(review.changes, isEmpty);
   });
 
   test('undo keeps what changed since the agent, or leaves the file', () async {
-    final review = await open();
+    final review = open();
     await edit(review, 'a.txt', 'one\n2\n3\n4\n5\n');
     await edit(review, 'lib/b.txt', 'bee\n');
 
     // The user, after the turn.
     write('a.txt', 'one\n2\n3\n4\nfive\n');
     write('lib/b.txt', 'B\n');
-    await review.refresh();
+    await review.look();
 
     await review.undo([path('a.txt')]);
     expect(read('a.txt'), '1\n2\n3\n4\nfive\n');
@@ -163,18 +156,60 @@ void main() {
     await review.undo([path('lib/b.txt')]);
     expect(read('lib/b.txt'), 'B\n');
     expect(changesOf(review)['lib/b.txt']!.conflict, isTrue);
-  }, skip: !hasGit);
+  });
 
-  test('a file put back since is no longer pending', () async {
-    final review = await open();
-    await edit(review, 'a.txt', 'one\n');
-    write('a.txt', '1\n2\n3\n4\n5\n');
-    await review.refresh();
-    expect(review.changes, isEmpty);
+  test('what changed between two of its edits is not the agent\'s', () async {
+    final review = open();
+    await edit(review, 'a.txt', 'one\n2\n3\n4\n5\n');
+    // The user, between turns.
+    write('a.txt', 'one\n2\n3\n4\nfive\n');
+    await edit(review, 'a.txt', 'one\n2\nthree\n4\nfive\n');
+
+    final change = changesOf(review)['a.txt']!;
+    expect((change.added, change.removed), (2, 2));
+    expect(await review.original(path('a.txt'))!(), '1\n2\n3\n4\nfive\n');
+
+    await review.undoAll();
+    expect(read('a.txt'), '1\n2\n3\n4\nfive\n');
+  });
+
+  test('two conversations in one file: each lists and undoes its own '
+      'change', () async {
+    final first = open(session: 'first');
+    final second = open(session: 'second');
+    await edit(first, 'a.txt', 'one\n2\n3\n4\n5\n');
+    await edit(second, 'a.txt', 'one\n2\n3\n4\nfive\n');
+    await edit(first, 'a.txt', 'ONE\n2\n3\n4\nfive\n');
+
+    final mine = changesOf(first)['a.txt']!;
+    final theirs = changesOf(second)['a.txt']!;
+    expect((mine.added, mine.removed), (1, 1));
+    expect((theirs.added, theirs.removed), (1, 1));
+    expect(await first.original(path('a.txt'))!(), '1\n2\n3\n4\nfive\n');
+    expect(await second.original(path('a.txt'))!(), 'one\n2\n3\n4\n5\n');
+
+    await first.undoAll();
+    expect(read('a.txt'), '1\n2\n3\n4\nfive\n');
+    await second.undoAll();
+    expect(read('a.txt'), '1\n2\n3\n4\n5\n');
+  });
+
+  test('its own edits under way at once are its own', () async {
+    final review = open();
+    // Two subagents, one file: the second begins as the first writes.
+    await review.before(path('a.txt'));
+    write('a.txt', 'one\n2\n3\n4\n5\n');
+    await review.before(path('a.txt'));
+    await review.after(path('a.txt'));
+    write('a.txt', 'one\n2\n3\n4\nfive\n');
+    await review.after(path('a.txt'));
+
+    expect(await review.original(path('a.txt'))!(), '1\n2\n3\n4\n5\n');
+    expect(changesOf(review)['a.txt']!.added, 2);
   });
 
   test('keeps and undoes a change part by part', () async {
-    final review = await open();
+    final review = open();
     await edit(review, 'a.txt', 'one\n2\n3\n4\nfive\n');
     final a = path('a.txt');
     final created = review.baseOf(a);
@@ -199,128 +234,156 @@ void main() {
   });
 
   test('keeping every part of a change keeps it', () async {
-    final review = await open();
+    final review = open(session: 's');
     await edit(review, 'a.txt', '1\n2\nthree\n4\n5\n');
     await review.keepPart(path('a.txt'), '1\n2\nthree\n4\n5\n');
     expect(review.changes, isEmpty);
     expect(read('a.txt'), '1\n2\nthree\n4\n5\n');
   });
 
-  test('puts back line endings as they were', () async {
-    File(path('crlf.txt')).writeAsBytesSync('x\r\ny\r\n'.codeUnits);
-    final review = await open();
-    await edit(review, 'crlf.txt', 'x\r\nz\r\n');
+  test('puts back line endings, bytes and links as they were', () async {
+    File(path('crlf.txt')).writeAsBytesSync([...'x\r\ny\r\n'.codeUnits, 0xff]);
+    Link(path('link')).createSync('a.txt');
+    final review = open();
+    await review.before(path('crlf.txt'));
+    File(path('crlf.txt')).writeAsBytesSync('x\r\nz\r\n'.codeUnits);
+    await review.after(path('crlf.txt'));
+    await review.before(path('link'));
+    Link(path('link')).updateSync('lib/b.txt');
+    await review.after(path('link'));
+    expect(review.changes, hasLength(2));
+
     await review.undoAll();
-    expect(File(path('crlf.txt')).readAsBytesSync(), 'x\r\ny\r\n'.codeUnits);
+    expect(File(path('crlf.txt')).readAsBytesSync(), [
+      ...'x\r\ny\r\n'.codeUnits,
+      0xff,
+    ]);
+    expect(Link(path('link')).targetSync(), 'a.txt');
   });
 
-  test('takes a patch back out of the file for what it was', () async {
-    final review = await open();
-    write('a.txt', '1\nTWO\n3\n4\n5\nsix\n');
-    review.report(
-      FileChange(path: path('a.txt'), added: 2, removed: 1),
-      original: const OriginalByPatch(
-        '@@ -1,3 +1,3 @@\n 1\n-2\n+TWO\n 3\n@@ -5 +5,2 @@\n 5\n+six\n',
-      ),
-    );
-    await review.refresh();
-    expect(changesOf(review)['a.txt']!.tracked, isTrue);
-    expect(await review.original(path('a.txt'))!(), '1\n2\n3\n4\n5\n');
+  test('an edit told only once made is held against what the agent told '
+      'it was', () async {
+    final review = open(session: 's');
+    String beside(String name) => p.join(p.dirname(root), 'elsewhere', name);
+    File(beside('o.txt'))
+      ..parent.createSync(recursive: true)
+      ..writeAsStringSync('keep\nnew line\nkeep\n');
+    write('a.txt', 'changed\n');
+    write('patched.txt', 'x\nY\nz\n');
+    write('new.txt', 'n\n');
+    // Claude Code tells the text (a subagent's, its edits); Codex, its
+    // diff; a new file.
+    review
+      ..report(
+        FileChange(path: path('a.txt'), added: 1, removed: 5),
+        original: const OriginalText('1\n2\n3\n4\n5\n'),
+      )
+      ..report(
+        FileChange(path: beside('o.txt'), added: 1, removed: 1),
+        original: const OriginalByEdits([(before: 'old', after: 'new')]),
+      )
+      ..report(
+        FileChange(path: path('patched.txt'), added: 1, removed: 1),
+        original: const OriginalByPatch('@@ -1,3 +1,3 @@\n x\n-y\n+Y\n z\n'),
+      )
+      ..report(
+        FileChange(path: path('new.txt'), added: 1, removed: 0),
+        original: const OriginalText(null),
+      );
+    await review.look();
+    expect(review.changes, hasLength(4));
+    expect(review.changes.every((change) => change.tracked), isTrue);
 
-    // One that does not fit: listed, not undone.
-    write('lib/b.txt', 'other\n');
-    review.report(
-      FileChange(path: path('lib/b.txt'), added: 1, removed: 1),
-      original: const OriginalByPatch('@@ -1 +1 @@\n-b\n+bee\n'),
-    );
-    await review.refresh();
-    expect(changesOf(review)['lib/b.txt']!.tracked, isFalse);
+    await review.undoAll();
+    expect(read('a.txt'), '1\n2\n3\n4\n5\n');
+    expect(File(beside('o.txt')).readAsStringSync(), 'keep\nold line\nkeep\n');
+    expect(read('patched.txt'), 'x\ny\nz\n');
+    expect(File(path('new.txt')).existsSync(), isFalse);
   });
 
-  test('lists the edits it cannot undo, to keep', () async {
-    final review = await open();
-    // What it was not told.
-    write('out/gen.txt', 'g\n');
-    review.report(FileChange(path: path('out/gen.txt'), added: 1, removed: 0));
-    // Outside the project.
-    final elsewhere = File(p.join(temp.path, 'elsewhere.txt'))
-      ..writeAsStringSync('e\ne\n');
-    review.report(FileChange(path: elsewhere.path, added: 2, removed: 0));
-    await review.refresh();
-
-    expect(changesOf(review)['out/gen.txt']!.tracked, isFalse);
+  test('lists an edit it was not told the before of, to keep and not '
+      'undo, till its file is gone', () async {
+    final review = open();
+    write('gen.txt', 'g\n');
+    write('script.sh', 's\n');
+    review
+      ..report(FileChange(path: path('gen.txt'), added: 1, removed: 0))
+      ..report(FileChange(path: path('script.sh'), added: 1, removed: 0));
+    await review.look();
     expect(review.changes.where((c) => !c.tracked), hasLength(2));
-    await review.undoAll();
-    expect(exists('out/gen.txt'), isTrue);
 
-    // Gone since: nothing left of it to keep.
-    elsewhere.deleteSync();
-    await review.refresh();
-    expect(changesOf(review).keys, ['out/gen.txt']);
+    await review.undoAll();
+    expect(File(path('gen.txt')).existsSync(), isTrue);
+    File(path('script.sh')).deleteSync();
+    await review.look();
+    expect(changesOf(review).keys, ['gen.txt']);
     await review.keepAll();
     expect(review.changes, isEmpty);
   });
 
-  test('carries on where the session left off', () async {
-    final review = await open(session: 'session-1');
-    await edit(review, 'a.txt', 'one\n');
+  test('a project opened through a link: its files told by their real '
+      'path are its own', () async {
+    final link = p.join(temp.path, 'linked');
+    Link(link).createSync(root);
+    final review = ChangeReview(
+      BlobReviewStore.open(checkpoints),
+      root: link,
+      realRoot: root,
+    );
+    addTearDown(review.dispose);
+    // As the agent tells it: by the real path.
+    await edit(review, 'a.txt', 'changed\n');
+    expect([for (final c in review.changes) c.path], [p.join(link, 'a.txt')]);
+    await review.undo([p.join(link, 'a.txt')]);
+    expect(read('a.txt'), '1\n2\n3\n4\n5\n');
+  });
 
-    final reopened = await ChangeReview.resume(await store(), 'session-1');
+  test('carries on where the session left off', () async {
+    final review = open(session: 'session-1');
+    await edit(review, 'a.txt', 'one\n');
+    await review.look();
+
+    final reopened = await ChangeReview.resume(
+      BlobReviewStore.open(checkpoints),
+      'session-1',
+      root: root,
+    );
     addTearDown(reopened.dispose);
     expect(changesOf(reopened).keys, ['a.txt']);
-    await reopened.undoAll();
+    await edit(reopened, 'lib/b.txt', 'agent\n');
+    expect(changesOf(reopened).keys, unorderedEquals(['a.txt', 'lib/b.txt']));
+    await reopened.undo([path('a.txt')]);
     expect(read('a.txt'), '1\n2\n3\n4\n5\n');
+
+    // Nothing left pending: nothing kept.
+    await reopened.keepAll();
+    final again = await ChangeReview.resume(
+      BlobReviewStore.open(checkpoints),
+      'session-1',
+      root: root,
+    );
+    addTearDown(again.dispose);
+    expect(again.changes, isEmpty);
   });
 
-  test(
-    'each session keeps its own, and nothing once none is pending',
-    () async {
-      final mine = await open(session: 'mine');
-      final theirs = await open(session: 'theirs');
-      await edit(mine, 'a.txt', 'one\n');
-      await edit(theirs, 'lib/b.txt', 'bee\n');
-      expect(changesOf(mine).keys, ['a.txt']);
-      expect(changesOf(theirs).keys, ['lib/b.txt']);
-      expect(sessionsKept(), ['mine', 'theirs']);
-
-      await mine.keepAll();
-      expect(sessionsKept(), ['theirs']);
-      await theirs.undoAll();
-      expect(sessionsKept(), isEmpty);
-      // Nor the project's folder.
-      expect(Directory(checkpoints).listSync().whereType<Directory>(), isEmpty);
-    },
-  );
-
-  test('keeps only what it still needs', () async {
-    final review = await open();
+  test('a session renamed keeps its changes under its new name', () async {
+    final review = open(session: 'old');
     await edit(review, 'a.txt', 'one\n');
-    await edit(review, 'a.txt', 'one\ntwo\n');
-    await edit(review, 'lib/b.txt', 'bee\n');
-    final blobs = Directory(p.join((await store()).folder, 's', 'blobs'));
-    // What a.txt and b.txt were, and are.
-    expect(blobs.listSync(), hasLength(4));
-    await review.keep([path('lib/b.txt')]);
-    expect(blobs.listSync(), hasLength(2));
-  });
-
-  test('a session named anew takes what it kept along', () async {
-    final review = await open(session: 'first');
-    await edit(review, 'a.txt', 'one\n');
-    review.session = 'second';
-    await review.refresh();
-    expect(sessionsKept(), ['second']);
-    await review.undoAll();
-    expect(read('a.txt'), '1\n2\n3\n4\n5\n');
-  });
-
-  test("drops an earlier build's repository of snapshots", () async {
-    final repository = Directory(
-      p.join(checkpoints, p.basename((await store()).folder)),
-    )..createSync(recursive: true);
-    File(p.join(repository.path, 'HEAD')).writeAsStringSync('ref: x\n');
-    File(p.join(repository.path, 'index')).writeAsStringSync('big');
-    await store();
-    expect(File(p.join(repository.path, 'HEAD')).existsSync(), isFalse);
+    review.session = 'new';
+    await review.look();
+    final moved = await ChangeReview.resume(
+      BlobReviewStore.open(checkpoints),
+      'new',
+      root: root,
+    );
+    addTearDown(moved.dispose);
+    expect(changesOf(moved).keys, ['a.txt']);
+    final gone = await ChangeReview.resume(
+      BlobReviewStore.open(checkpoints),
+      'old',
+      root: root,
+    );
+    addTearDown(gone.dispose);
+    expect(gone.changes, isEmpty);
   });
 }

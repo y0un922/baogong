@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show TextSelection;
 import 'package:path/path.dart' as p;
 
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
@@ -12,7 +11,9 @@ import 'git/git_repository.dart';
 import 'git/scm_host.dart';
 import 'git/repository_scan.dart';
 import 'ide_layout.dart';
+import 'ide_local_history.dart';
 import 'ide_notifications.dart';
+import 'ide_view_state.dart';
 import 'lsp/language_features.dart';
 import 'lsp/lsp_protocol.dart';
 import 'search/ide_search_view.dart' show IdeSearchReplaceBackend;
@@ -181,11 +182,6 @@ class IdeDocument {
   /// makes the file again (VS Code's orphaned editors).
   bool deleted = false;
 
-  /// Where its carets were when its editor was last let go (a preview, an
-  /// image or a placeholder shown in its place): given back when it is
-  /// shown again, as upstream keeps an editor's view state.
-  List<TextSelection>? selections;
-
   /// Tells the tab apart from [path]'s others.
   String get key => label == null ? path : '$path\u0000$label';
 
@@ -225,6 +221,7 @@ class IdeWorkspace extends ChangeNotifier
     List<String> roots = const [],
     this._gitOf,
     IdeRepositoryDetection? repositoryDetection,
+    this.openWorktree,
     p.Context? paths,
   }) : _detection = repositoryDetection,
        paths = paths == null
@@ -290,7 +287,12 @@ class IdeWorkspace extends ChangeNotifier
       if (!_repositories.containsKey(root)) _repositories[root] = gitOf(root);
       _detectIn(root);
     }
-    if (!repositories.any((r) => identical(r.$2, _activeRepository))) {
+    for (final own in [..._worktrees.keys]) {
+      if (!_ownRepositories.any((r) => identical(r.$2, own))) {
+        _worktrees.remove(own)?.dispose();
+      }
+    }
+    if (!_ownRepositories.any((r) => identical(r.$2, _activeRepository))) {
       _activeRepository = null;
     }
   }
@@ -350,9 +352,15 @@ class IdeWorkspace extends ChangeNotifier
   /// found in its subfolders (`git.autoRepositoryDetection`); a project of
   /// one folder's, its own and those found in its subfolders, when there
   /// are any (none otherwise: [git] is its one). A folder that is not a
-  /// repository is left out when ones were found in it.
+  /// repository is left out when ones were found in it. Each the worktree
+  /// picked in its place, where one is ([showWorktree]).
   @override
   List<(String root, IdeGitRepository git)> get repositories => [
+    for (final (folder, git) in _ownRepositories)
+      (folder, _worktrees[git] ?? git),
+  ];
+
+  List<(String root, IdeGitRepository git)> get _ownRepositories => [
     for (final folder in isMultiRoot ? _roots : [root])
       if (isMultiRoot || (_found[folder]?.isNotEmpty ?? false))
         ...ideFolderRepositories(
@@ -363,6 +371,41 @@ class IdeWorkspace extends ChangeNotifier
   ];
 
   IdeGitRepository? _activeRepository;
+
+  /// Where each tab's editor was left, by its key: given back when it
+  /// shows again (VS Code's editors' view state).
+  final IdeViewStates viewStates = IdeViewStates();
+
+  /// The document each moved or saved elsewhere became.
+  final Expando<IdeDocument> _successors = Expando();
+
+  IdeDocument _latest(IdeDocument doc) {
+    for (var next = _successors[doc]; next != null; next = _successors[doc]) {
+      doc = next;
+    }
+    return doc;
+  }
+
+  /// [doc]'s view state, where it was left.
+  IdeViewState viewStateOf(IdeDocument doc) => viewStates[_latest(doc).key];
+
+  /// [doc]'s view state, [update]d: the document it became's, after it
+  /// moved.
+  void keepViewState(
+    IdeDocument doc,
+    IdeViewState Function(IdeViewState kept) update,
+  ) {
+    final latest = _latest(doc);
+    // A new file closed is gone; another of its name is another.
+    if (latest.isUntitled && !_documents.contains(latest)) return;
+    viewStates.keep(latest.key, update(viewStates[latest.key]));
+  }
+
+  /// [from] is [to] from now on: its view state too.
+  void _succeeded(IdeDocument from, IdeDocument to) {
+    _successors[from] = to;
+    viewStates.move(from.key, to.key);
+  }
 
   /// Repositories whose groups are folded in CHANGES, by root (#76).
   @override
@@ -386,6 +429,10 @@ class IdeWorkspace extends ChangeNotifier
   /// the one picked of a workspace's (its first until one is).
   @override
   void selectRepository(IdeGitRepository repository) {
+    // A worktree picked in a repository's place: that repository.
+    for (final MapEntry(key: own, value: worktree) in _worktrees.entries) {
+      if (identical(worktree, repository)) repository = own;
+    }
     if (identical(repository, _activeRepository)) return;
     _activeRepository = repository;
     notifyListeners();
@@ -453,12 +500,45 @@ class IdeWorkspace extends ChangeNotifier
   /// Control and the timeline; null for none. Disposed with the workspace.
   /// A multi-folder workspace's is the one picked of its [repositories], as
   /// is a folder's with repositories in its subfolders.
+  /// The worktree picked in its place, where one is ([showWorktree]).
   @override
-  IdeGitRepository? get git =>
-      isMultiRoot || (_found[root]?.isNotEmpty ?? false)
-      ? _activeRepository ?? repositories.firstOrNull?.$2
-      : _git;
+  IdeGitRepository? get git => switch (_pickedGit) {
+    final git? => _worktrees[git] ?? git,
+    null => null,
+  };
   final IdeGitRepository? _git;
+
+  IdeGitRepository? get _pickedGit =>
+      isMultiRoot || (_found[root]?.isNotEmpty ?? false)
+      ? _activeRepository ?? _ownRepositories.firstOrNull?.$2
+      : _git;
+
+  /// Makes the repository of a worktree's folder; worktrees are only
+  /// listed when null.
+  final IdeGitRepository? Function(String path)? openWorktree;
+
+  /// The worktrees Source Control shows in place of the repositories they
+  /// are of, as picked on the Git log: by the latter.
+  final Map<IdeGitRepository, IdeGitRepository> _worktrees = Map.identity();
+
+  /// Has Source Control show the worktree at [path] of the repository
+  /// shown: its changes, its branch, what Git does; its main one's (the
+  /// folder's own) again for it.
+  void showWorktree(String path) {
+    final own = _pickedGit;
+    final open = openWorktree;
+    if (own == null || open == null) return;
+    final current = _worktrees[own];
+    if (paths.equals(path, (current ?? own).service.root)) return;
+    final git = paths.equals(path, own.service.root) ? null : open(path);
+    current?.dispose();
+    if (git == null) {
+      _worktrees.remove(own);
+    } else {
+      _worktrees[own] = git;
+    }
+    notifyListeners();
+  }
 
   /// Tells the project's Git its files changed, after a search replaced
   /// some ([IdeSearchReplaceBackend.refreshGit]).
@@ -502,6 +582,12 @@ class IdeWorkspace extends ChangeNotifier
   List<IdeDocument> get documents => List.unmodifiable(_documents);
   IdeDocument? get active =>
       _documents.where((d) => d.key == _activeKey).firstOrNull;
+
+  @override
+  String? get activePath => switch (active) {
+    final document? when document.isFile => document.path,
+    _ => null,
+  };
 
   /// The open model of [path]'s file, which its tabs share.
   EditorDocumentModel? _fileModel(String path) =>
@@ -842,6 +928,7 @@ class IdeWorkspace extends ChangeNotifier
           : paths.join(to, paths.relative(doc.path, from: from));
       _stopSync(doc, force: true);
       final next = IdeDocument._moved(path, doc);
+      _succeeded(doc, next);
       _documents[index] = next;
       moved.add(next);
       if (_activeKey == doc.key) _activeKey = next.key;
@@ -1119,6 +1206,9 @@ class IdeWorkspace extends ChangeNotifier
   /// again).
   void Function(String path)? onSaved;
 
+  /// Keeps each file's text as it was before a save and as saved.
+  IdeLocalHistory? localHistory;
+
   /// Opens a new file, not saved anywhere yet (`Untitled-1`), and selects
   /// it.
   IdeDocument newUntitled() {
@@ -1168,6 +1258,7 @@ class IdeWorkspace extends ChangeNotifier
     if (index < 0) return null;
     _stopSync(doc, force: true);
     final saved = IdeDocument._saved(path, doc)..savedText = text;
+    _succeeded(doc, saved);
     _documents[index] = saved;
     if (_activeKey == doc.key) _activeKey = saved.key;
     _startSync(saved);
@@ -1197,7 +1288,11 @@ class IdeWorkspace extends ChangeNotifier
           // Back meanwhile: written over only if it is as it was.
         }
       }
+      if (expectedText != null) {
+        unawaited(localHistory?.record(doc.path, expectedText));
+      }
       await files.write(doc.path, text, expectedText: expectedText);
+      unawaited(localHistory?.record(doc.path, text));
       if (_disposed || !_documents.contains(doc)) return;
       doc.deleted = false;
       doc.savedText = text;
@@ -1216,6 +1311,7 @@ class IdeWorkspace extends ChangeNotifier
     if (index < 0) return;
     _selection++;
     _documents.removeAt(index);
+    if (doc.isUntitled) viewStates.keep(doc.key, IdeViewState.empty);
     _stopSync(doc);
     _release(doc);
     if (_activeKey == doc.key) {
@@ -1244,6 +1340,9 @@ class IdeWorkspace extends ChangeNotifier
     }
     if (_sync case final sync?) unawaited(sync.shutdown());
     _git?.dispose();
+    for (final worktree in _worktrees.values) {
+      worktree.dispose();
+    }
     for (final repository in _repositories.values) {
       repository?.dispose();
     }

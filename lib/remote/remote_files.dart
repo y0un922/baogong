@@ -27,10 +27,63 @@ const openRemoteFileCommandId = 'baocode.remote.openFile';
 /// replaceable under test.
 Future<List<String>> Function() defaultRemoteConfigHosts = sshConfigHosts;
 
+/// This machine's WSL distributions to pick from (none off Windows);
+/// replaceable under test.
+Future<List<String>> Function() defaultWslHosts = wslHosts;
+
+/// How long reading a folder on a host may take before the pick says it
+/// is reading it: a fast one goes straight to its contents. Replaceable
+/// under test.
+@visibleForTesting
+Duration remoteReadingDelay = const Duration(milliseconds: 200);
+
+/// A folder being read: the pick saying so (see [readingPick]) and whether
+/// the user closed it meanwhile, which cancels what the reading would show.
+class ReadingWait {
+  ReadingWait._(this._timer);
+
+  final Timer _timer;
+
+  /// The pick was closed (Escape, a click outside, or another quick input
+  /// opened): what was being read is not shown.
+  bool dismissed = false;
+
+  /// Stops the pick from showing, as the reading ends.
+  void cancel() => _timer.cancel();
+}
+
+/// Shows, once reading [directory] takes longer than [remoteReadingDelay],
+/// a pick saying so: the one accepted is gone until the folders come back,
+/// which on a slow host is a wait worth a word. [next] shows a pick once
+/// the last has hidden.
+ReadingWait readingPick(
+  void Function(IdeQuickPick pick) next, {
+  required AppLocalizations l10n,
+  required String placeholder,
+  required String directory,
+}) {
+  late final ReadingWait wait;
+  final timer = Timer(remoteReadingDelay, () {
+    next(
+      IdeQuickPick(
+        placeholder: placeholder,
+        onDidHide: () => wait.dismissed = true,
+        items: [
+          IdeQuickPickItem(
+            label: l10n.remoteReadingFolder(directory),
+            icon: const IdeSpinning(Icon(Codicons.loading)),
+          ),
+        ],
+      ),
+    );
+  });
+  return wait = ReadingWait._(timer);
+}
+
 /// The SSH hosts to pick one from, in the quick input: the user's added
 /// hosts first (by the names [labelOf] and icons [iconOf] given them, at
 /// the addresses [addressOf] says), then `~/.ssh/config`'s, with a typed
-/// `user@host[:port]` accepted. Each host picked is given to [onPick]; a
+/// `user@host[:port]` accepted, and this machine's WSL distributions last. Each host picked is given to [onPick]; a
 /// server is added with [onAdd] (what was typed, if anything), and an added
 /// host not of `~/.ssh/config` edited with [onEdit] (its row's button).
 class RemoteHostPicker {
@@ -47,8 +100,10 @@ class RemoteHostPicker {
     this.onEdit,
     SshHosts? hosts,
     Future<List<String>> Function()? configHosts,
+    Future<List<String>> Function()? wslHosts,
   }) : hosts = hosts ?? SshHosts.instance,
-       _configHosts = configHosts ?? defaultRemoteConfigHosts;
+       _configHosts = configHosts ?? defaultRemoteConfigHosts,
+       _wslHosts = wslHosts ?? defaultWslHosts;
 
   final void Function(IdeQuickPick pick) show;
   final AppLocalizations l10n;
@@ -68,37 +123,57 @@ class RemoteHostPicker {
   final ValueChanged<String>? onEdit;
   final SshHosts hosts;
   final Future<List<String>> Function() _configHosts;
+  final Future<List<String>> Function() _wslHosts;
 
   /// Shows the pick.
   Future<void> start() async {
-    List<String> known;
-    try {
-      known = await _configHosts();
-    } on Object {
-      known = const [];
+    Future<List<String>> orNone(Future<List<String>> Function() list) async {
+      try {
+        return await list();
+      } on Object {
+        return const [];
+      }
     }
+
+    final [known, wsl] = await Future.wait([
+      orNone(_configHosts),
+      orNone(_wslHosts),
+    ]);
     final connected = {for (final host in hosts.connected) host.host};
     final added = [...this.added];
     final config = [
       for (final host in known)
         if (!added.contains(host)) host,
     ];
+    final distributions = [
+      for (final host in wsl)
+        if (!added.contains(host)) host,
+    ];
     final onEdit = this.onEdit;
     IdeQuickPickItem hostItem(String host) {
-      final label = labelOf?.call(host) ?? host;
-      final address = addressOf?.call(host) ?? host;
+      final label = labelOf?.call(host) ?? RemoteLocation.hostName(host);
+      final address = addressOf?.call(host) ?? RemoteLocation.hostName(host);
       final description = [
         if (label != address) address,
         if (connected.contains(host)) l10n.sidebarHostConnected,
       ].join(' · ');
       return IdeQuickPickItem(
         label: label,
-        icon: iconOf?.call(host) ?? const Icon(Codicons.remote),
+        icon:
+            iconOf?.call(host) ??
+            Icon(
+              RemoteLocation.isWsl(host)
+                  ? Codicons.terminalLinux
+                  : Codicons.remote,
+            ),
         description: description.isEmpty ? null : description,
         onAccept: () => onPick(host),
         buttons: [
-          // Those of ~/.ssh/config are edited there.
-          if (onEdit != null && !known.contains(host))
+          // Those of ~/.ssh/config are edited there; WSL's are not
+          // servers.
+          if (onEdit != null &&
+              !known.contains(host) &&
+              !RemoteLocation.isWsl(host))
             IdeQuickPickItemButton(
               icon: Codicons.edit,
               tooltip: l10n.remoteEditServer,
@@ -118,7 +193,8 @@ class RemoteHostPicker {
           return [
             if (typed.isNotEmpty &&
                 !known.contains(typed) &&
-                !added.contains(typed))
+                !added.contains(typed) &&
+                !distributions.contains(typed))
               SshTarget.isValid(typed)
                   ? IdeQuickPickItem(
                       label: l10n.remoteConnectTo(typed),
@@ -137,7 +213,10 @@ class RemoteHostPicker {
                 alwaysShow: true,
                 onAccept: () => onAdd(typed.isEmpty ? null : typed),
               ),
-            if (known.isEmpty && added.isEmpty && typed.isEmpty)
+            if (known.isEmpty &&
+                added.isEmpty &&
+                distributions.isEmpty &&
+                typed.isEmpty)
               IdeQuickPickItem(label: l10n.remoteNoHosts),
             if (added.isNotEmpty) ...[
               IdeQuickPickSeparator(l10n.remoteAddedHosts),
@@ -146,6 +225,10 @@ class RemoteHostPicker {
             if (config.isNotEmpty) ...[
               const IdeQuickPickSeparator('~/.ssh/config'),
               for (final host in config) hostItem(host),
+            ],
+            if (distributions.isNotEmpty) ...[
+              const IdeQuickPickSeparator('WSL'),
+              for (final host in distributions) hostItem(host),
             ],
           ];
         },
@@ -194,6 +277,15 @@ class OpenRemoteFileFlow {
   /// The next pick, once the one accepted has hidden.
   void _next(IdeQuickPick pick) => Timer.run(() => show(pick));
 
+  /// The pick saying [directory] is being read, once reading it takes a
+  /// while (see [readingPick]).
+  ReadingWait _reading(String host, String directory) => readingPick(
+    _next,
+    l10n: l10n,
+    placeholder: l10n.remoteFilePlaceholder(RemoteLocation.hostName(host)),
+    directory: directory,
+  );
+
   /// The hosts to pick from, then a file of the host picked.
   Future<void> start() => _picker.start();
 
@@ -203,10 +295,10 @@ class OpenRemoteFileFlow {
     final ssh = _picker.hosts[host];
     show(
       IdeQuickPick(
-        placeholder: l10n.remoteConnecting(host),
+        placeholder: l10n.remoteConnecting(RemoteLocation.hostName(host)),
         items: [
           IdeQuickPickItem(
-            label: l10n.remoteConnecting(host),
+            label: l10n.remoteConnecting(RemoteLocation.hostName(host)),
             icon: const IdeSpinning(Icon(Codicons.loading)),
           ),
         ],
@@ -219,11 +311,13 @@ class OpenRemoteFileFlow {
       final (message, detail) = sshErrorText(error, l10n);
       _next(
         IdeQuickPick(
-          placeholder: l10n.remoteConnectFailed(host),
+          placeholder: l10n.remoteConnectFailed(RemoteLocation.hostName(host)),
           sortByLabel: false,
           items: [
             IdeQuickPickItem(
-              label: message ?? l10n.remoteConnectFailed(host),
+              label:
+                  message ??
+                  l10n.remoteConnectFailed(RemoteLocation.hostName(host)),
               detail: detail?.split('\n').last,
               icon: const Icon(Codicons.error),
             ),
@@ -250,15 +344,16 @@ class OpenRemoteFileFlow {
   Future<void> browse(
     String host,
     RemoteClient client,
-    String directory,
-  ) async {
+    String directory, {
+    ReadingWait? waiting,
+  }) async {
     final paths = p.posix;
     List<String> folders = const [];
     List<String> files = const [];
     String? failure;
 
-    /// Whether the entries are being read: the refresh button is dimmed
-    /// meanwhile, and the pick reads them again once they are.
+    /// Whether the entries are being read: the pick's rows are read again
+    /// as it changes (its `refresh`).
     final reading = ValueNotifier(false);
 
     /// Reads the entries again, e.g. one made in a terminal since.
@@ -289,23 +384,41 @@ class OpenRemoteFileFlow {
       }
     }
 
-    await read();
+    final wait = waiting ?? _reading(host, directory);
+    try {
+      await read();
+    } finally {
+      wait.cancel();
+    }
+    // Closed meanwhile: nothing of this read is shown.
+    if (wait.dismissed) return;
     final parent = paths.dirname(directory);
     // A path typed (absolute, or starting with `~`): a file opened where
     // it is, a folder browsed.
     Future<void> goTo(String path) async {
+      final wait = _reading(host, path);
       try {
         final real = await client.realPath(path);
-        if (await client.stat(real) == 'file') return openFile(host, real);
-        await browse(host, client, real);
+        if (wait.dismissed) {
+          wait.cancel();
+          return;
+        }
+        if (await client.stat(real) == 'file') {
+          wait.cancel();
+          if (wait.dismissed) return;
+          return openFile(host, real);
+        }
+        await browse(host, client, real, waiting: wait);
       } on Object catch (error) {
+        wait.cancel();
+        if (wait.dismissed) return;
         reportFailure(host, path, '$error');
       }
     }
 
     _next(
       IdeQuickPick(
-        placeholder: l10n.remoteFilePlaceholder(host),
+        placeholder: l10n.remoteFilePlaceholder(RemoteLocation.hostName(host)),
         sortByLabel: false,
         refresh: reading,
         buttons: [

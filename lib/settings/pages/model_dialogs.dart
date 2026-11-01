@@ -15,6 +15,7 @@ import '../../models/upstream.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
+import 'models_page.dart' show ModelsSettingsPage;
 import 'settings_dropdown.dart';
 
 /// Asks [provider]'s upstream for its models, with [key].
@@ -645,6 +646,9 @@ class _ModelEditDialogState extends State<ModelEditDialog> {
       null => '',
     },
   );
+  late final TextEditingController _endpointUrl = TextEditingController(
+    text: _start?.endpointUrl,
+  );
   late bool _images = _start?.images ?? true;
 
   /// What it is for, as picked; null to go by its name.
@@ -658,6 +662,9 @@ class _ModelEditDialogState extends State<ModelEditDialog> {
     final kind = _shownKind;
     return kind == guessModelKind(_id.text.trim()) ? null : kind;
   }
+
+  /// The endpoint it is spoken to at, as picked; null for its upstream's.
+  late ProviderProtocol? _protocol = _start?.protocol;
 
   /// The model's own efforts and contexts; null for the defaults.
   late List<String>? _efforts = _start?.efforts;
@@ -683,10 +690,50 @@ class _ModelEditDialogState extends State<ModelEditDialog> {
     _id.dispose();
     _label.dispose();
     _context.dispose();
+    _endpointUrl.dispose();
     super.dispose();
   }
 
   bool get _adding => widget.model == null;
+
+  /// [_protocol] as kept: none for a picture's model, or on an upstream
+  /// signed in to (Codex), whose models all go as it does.
+  ProviderProtocol? get _keptProtocol =>
+      _shownKind.generatesImages || widget.provider.protocol.usesAccounts
+      ? null
+      : _protocol;
+
+  /// Its address as kept: none where [_keptProtocol] is none for want of
+  /// an endpoint of its own to speak to.
+  String? get _keptEndpointUrl =>
+      _shownKind.generatesImages || widget.provider.protocol.usesAccounts
+      ? null
+      : switch (_endpointUrl.text.trim()) {
+          '' => null,
+          final url => url,
+        };
+
+  /// Where it goes with no address of its own, as its endpoint type is
+  /// picked: the upstream's endpoint if it speaks the upstream's
+  /// protocol, else as the base URL says.
+  String get _endpointUrlByDefault {
+    final provider = widget.provider;
+    final protocol = _protocol ?? provider.protocol;
+    final speaking = provider.copyWith(
+      protocol: protocol,
+      endpointUrl: () =>
+          protocol == provider.protocol ? provider.endpointUrl : null,
+    );
+    return '${UpstreamUrls.endpoint(speaking) ?? ''}';
+  }
+
+  /// What the Endpoint choice shows [protocol] as; the upstream's for
+  /// null.
+  String _endpointName(ProviderProtocol? protocol) => protocol == null
+      ? context.l10n.modelsEndpointUpstream(
+          ModelsSettingsPage.protocolName(context, widget.provider.protocol),
+        )
+      : ModelsSettingsPage.protocolName(context, protocol);
 
   /// [options], or null when they are [defaults]: the model then follows
   /// the defaults as they change.
@@ -740,6 +787,8 @@ class _ModelEditDialogState extends State<ModelEditDialog> {
               images: _images,
               custom: true,
               kind: _keptKind,
+              protocol: _keptProtocol,
+              endpointUrl: _keptEndpointUrl,
             )
           : model.copyWith(
               label: () => label.isEmpty ? null : label,
@@ -748,6 +797,8 @@ class _ModelEditDialogState extends State<ModelEditDialog> {
               contexts: () => _contexts,
               images: _images,
               kind: () => _keptKind,
+              protocol: () => _keptProtocol,
+              endpointUrl: () => _keptEndpointUrl,
             ),
     );
   }
@@ -871,6 +922,66 @@ class _ModelEditDialogState extends State<ModelEditDialog> {
                 ),
               )
             else ...[
+              if (!widget.provider.protocol.usesAccounts)
+                _field(
+                  l10n.modelsEndpoint,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SettingsDropdown(
+                        current: _endpointName(_protocol),
+                        semanticLabel:
+                            '${l10n.modelsEndpoint}: ${_endpointName(_protocol)}',
+                        entries: () => [
+                          IdeMenuAction(
+                            _endpointName(null),
+                            checked: _protocol == null,
+                            onSelected: () => setState(() => _protocol = null),
+                          ),
+                          const IdeMenuSeparator(),
+                          for (final protocol in ProviderProtocol.forModels)
+                            IdeMenuAction(
+                              _endpointName(protocol),
+                              checked: protocol == _protocol,
+                              onSelected: () =>
+                                  setState(() => _protocol = protocol),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        l10n.modelsEndpointDescription,
+                        style: _text(
+                          context,
+                          size: 12,
+                        ).copyWith(color: AppColors.textMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              if (!widget.provider.protocol.usesAccounts)
+                _field(
+                  l10n.modelsEndpointUrl,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      IdeInputBox(
+                        controller: _endpointUrl,
+                        placeholder: _endpointUrlByDefault,
+                        semanticsLabel: l10n.modelsEndpointUrl,
+                        onSubmitted: (_) => _save(),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        l10n.modelsModelEndpointUrlDescription,
+                        style: _text(
+                          context,
+                          size: 12,
+                        ).copyWith(color: AppColors.textMuted),
+                      ),
+                    ],
+                  ),
+                ),
               _field(
                 l10n.modelsContextWindow,
                 IdeInputBox(

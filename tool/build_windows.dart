@@ -13,29 +13,53 @@
 //                                                  without VERSION; tool/
 //                                                  fetch_remote_server.dart)
 //                                                  instead of building one
-//   dart run tool/build_windows.dart --stock-engine keep Flutter's own
-//                                                  flutter_windows.dll
+//   dart run tool/build_windows.dart --patched-engine
+//                                                  put in tool/engine's
+//                                                  flutter_windows.dll (x64)
+//   dart run tool/build_windows.dart --channel      the channel build
+//                                                  (BAOCODE_CHANNEL;
+//                                                  lib/channel/), its
+//                                                  installer named
+//                                                  -setup-channel.exe
+//   dart run tool/build_windows.dart --arch arm64   say which processor
+//                                                  flutter builds for: this
+//                                                  machine's (flutter builds
+//                                                  for no other), told by
+//                                                  the Dart running this
+//                                                  when not given. Arm's
+//                                                  installer is named
+//                                                  -setup-arm64.exe
 //
-// The bundle's flutter_windows.dll is replaced by tool/engine's, the engine
-// built with tool/engine/windows_text.patch (see tool/engine/README.md).
+// The bundle keeps Flutter's own flutter_windows.dll: the app draws with
+// Skia (windows/runner/main.cpp), and tool/engine/windows_text.patch only
+// changes Impeller's text (see tool/engine/README.md). --patched-engine puts
+// that engine in, for x64; there is none built for arm64.
 //
 // The bundle carries OpenSSH for Windows (openssh\), Microsoft's build, for
 // remote projects where the system's ssh is too old to ask for a password
 // (Windows 10's 8.1): downloaded once into build\openssh\ and checked.
 //
+// The Dart code's symbols are saved as it is built, to build\symbols\
+// app.windows-<x64|arm64>.symbols: the hang reports name its frames by their
+// offsets in app.so (windows/runner/hang_watchdog.cpp), which
+// `llvm-symbolizer --obj=` that file turns into functions and lines. Only
+// saved: the app's own stack traces stay as they were, named.
+//
 // The installer lands in build/installers/; beside it, remote\<VERSION>\,
 // the remote server's gzipped builds, which the app downloads instead of
 // carrying them (tool/build_remote_server.dart), to upload with the
 // release.
+import 'dart:ffi' show Abi;
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
-/// Where the bundle flutter leaves behind goes, and where the installer is
-/// written. Under build/, which the repository already ignores and flutter
-/// clean already removes.
-const _bundleRelative = r'build\windows\x64\runner\Release';
+/// Where the bundle flutter leaves behind goes (for [arch]), and where the
+/// installer is written. Under build/, which the repository already ignores
+/// and flutter clean already removes.
+String _bundleRelative(String arch) => 'build\\windows\\$arch\\runner\\Release';
 const _installersRelative = r'build\installers';
+const _symbolsRelative = r'build\symbols';
 
 /// What has to be in the bundle for the app to start. A Release build that
 /// fails at the link step (a running baocode.exe holding the output file) still
@@ -53,19 +77,29 @@ const _required = [
   'msvcp140.dll',
   'vcruntime140.dll',
   'vcruntime140_1.dll',
+  // The phones' link: iroh (bao_iroh's hook/build.dart builds it).
+  'bao_iroh.dll',
   r'data\app.so',
   r'data\icudtl.dat',
   r'data\flutter_assets',
 ];
 
 /// The OpenSSH for Windows release the bundle carries (Win32-OpenSSH's
-/// OpenSSH-Win64.zip), its SHA-256, and what of it goes in `openssh\`: the
-/// client, ssh-keygen (to forget a host's changed key), their library and
-/// their licenses. The app takes it over the system's ssh where that one is
+/// OpenSSH-Win64.zip, OpenSSH-ARM64.zip for arm64), their SHA-256, and what
+/// of it goes in `openssh\`: the client, ssh-keygen (to forget a host's
+/// changed key), their library and their licenses. The app takes it over the system's ssh where that one is
 /// older than 8.4 or missing (chooseSsh in package:bao_remote).
 const _openSshRelease = '10.0.0.0p2-Preview';
-const _openSshSha256 =
-    '23f50f3458c4c5d0b12217c6a5ddfde0137210a30fa870e98b29827f7b43aba5';
+const _openSshBuilds = {
+  'x64': (
+    name: 'OpenSSH-Win64',
+    sha256: '23f50f3458c4c5d0b12217c6a5ddfde0137210a30fa870e98b29827f7b43aba5',
+  ),
+  'arm64': (
+    name: 'OpenSSH-ARM64',
+    sha256: '698c6aec31c1dd0fb996206e8741f4531a97355686b5431ef347d531b07fcd42',
+  ),
+};
 const _openSshFiles = [
   'ssh.exe',
   'ssh-keygen.exe',
@@ -98,17 +132,45 @@ Future<void> main(List<String> arguments) async {
             !arguments[releaseAt + 1].startsWith('--')
       ? arguments[releaseAt + 1]
       : 'latest';
-  final stockEngine = arguments.contains('--stock-engine');
+  final channel = arguments.contains('--channel');
+  final archAt = arguments.indexOf('--arch');
+  final arch = archAt >= 0 && archAt + 1 < arguments.length
+      ? arguments[archAt + 1]
+      : Abi.current() == Abi.windowsArm64
+      ? 'arm64'
+      : 'x64';
+  if (!_openSshBuilds.containsKey(arch)) {
+    _fail('--arch is x64 or arm64, not $arch.');
+  }
+  final patchedEngine = arguments.contains('--patched-engine');
+  // No patched engine built for arm64.
+  if (patchedEngine && arch != 'x64') {
+    _fail('There is no patched engine built for $arch.');
+  }
 
   // The script lives in tool/, so the repository is one level above it.
   final root = File.fromUri(Platform.script).parent.parent.absolute;
-  final bundle = Directory('${root.path}\\$_bundleRelative');
+  final bundle = Directory('${root.path}\\${_bundleRelative(arch)}');
   final installers = Directory('${root.path}\\$_installersRelative');
   final version = _readVersion(File('${root.path}\\pubspec.yaml'));
 
   if (!skipBuild) {
-    _step('Building the Release bundle');
-    await _run('flutter', ['build', 'windows', '--release'], root.path);
+    _step(
+      'Building the Release bundle for $arch'
+      '${channel ? ' (the channel build)' : ''}',
+    );
+    final symbols = Directory('${root.path}\\$_symbolsRelative')
+      ..createSync(recursive: true);
+    await _run('flutter', [
+      'build',
+      'windows',
+      '--release',
+      if (channel) '--dart-define=BAOCODE_CHANNEL=true',
+      // Not --split-debug-info, which would also leave the app's stack
+      // traces (errors.log) unnamed, as offsets.
+      '--extra-gen-snapshot-options=--save-debugging-info='
+          '${symbols.path}\\app.windows-$arch.symbols',
+    ], root.path);
   } else {
     _step('Using the bundle already built');
   }
@@ -116,11 +178,11 @@ Future<void> main(List<String> arguments) async {
   _step('Checking the bundle');
   _checkBundle(bundle, _required);
 
-  if (stockEngine) {
-    _step('Keeping Flutter\'s own engine');
-  } else {
+  if (patchedEngine) {
     _step('Putting in the patched engine');
     _swapEngine(root, bundle);
+  } else {
+    _step('Keeping Flutter\'s own engine');
   }
 
   // The server remote projects run on their host (Linux and macOS, x64 and
@@ -166,8 +228,8 @@ Future<void> main(List<String> arguments) async {
       .readAsStringSync()
       .trim();
 
-  _step('Putting in OpenSSH for Windows $_openSshRelease');
-  await _putOpenSsh(root, bundle);
+  _step('Putting in OpenSSH for Windows $_openSshRelease ($arch)');
+  await _putOpenSsh(root, bundle, arch);
   _checkBundle(bundle, [for (final name in _openSshFiles) 'openssh\\$name']);
 
   _step('Compiling the installer');
@@ -177,6 +239,8 @@ Future<void> main(List<String> arguments) async {
     '/DBundleDir=${bundle.path}',
     '/DAppVersion=${version.full}',
     '/DOutDir=${installers.path}',
+    '/DArch=$arch',
+    if (channel) '/DEdition=-channel',
     '${root.path}\\tool\\baocode.iss',
   ], root.path);
 
@@ -197,7 +261,8 @@ Future<void> main(List<String> arguments) async {
 
   _step('Done');
   final installer = File(
-    '${installers.path}\\Baogong-${version.marketing}-setup.exe',
+    '${installers.path}\\Baogong-${version.marketing}-setup'
+    '${arch == 'x64' ? '' : '-$arch'}${channel ? '-channel' : ''}.exe',
   );
   for (final file in [installer, ...servers]) {
     if (!file.existsSync()) continue;
@@ -223,8 +288,8 @@ Future<void> main(List<String> arguments) async {
   }
   stdout.writeln();
   stdout.writeln(
-    'The app needs the Microsoft Visual C++ Redistributable (x64). Windows\n'
-    '10 and 11 normally have it; the installer does not bundle it.',
+    'The bundle carries the Visual C++ runtime it was built with (see\n'
+    'windows/CMakeLists.txt).',
   );
 }
 
@@ -300,7 +365,7 @@ void _swapEngine(Directory root, Directory bundle) {
       'one replaces, so Flutter has changed version. Rebuild the engine with\n'
       'tool/engine/build_windows_engine.ps1 -Tag <the new version> -Mode release,\n'
       'put its flutter_windows.dll in tool/engine, and update both hashes in\n'
-      'this script; or build with --stock-engine.\n'
+      'this script; or build without --patched-engine.\n'
       '  bundle: $current',
     );
   }
@@ -308,18 +373,19 @@ void _swapEngine(Directory root, Directory bundle) {
   stdout.writeln('  ${target.path} replaced.');
 }
 
-/// Puts [_openSshFiles] of the OpenSSH release in the bundle's `openssh\`:
-/// downloaded into build\openssh\ once, and checked against
-/// [_openSshSha256] each time.
-Future<void> _putOpenSsh(Directory root, Directory bundle) async {
+/// Puts [_openSshFiles] of the OpenSSH release for [arch] in the bundle's
+/// `openssh\`: downloaded into build\openssh\ once, and checked against
+/// its SHA-256 ([_openSshBuilds]) each time.
+Future<void> _putOpenSsh(Directory root, Directory bundle, String arch) async {
+  final (name: build, sha256: expected) = _openSshBuilds[arch]!;
   final cache = Directory('${root.path}\\build\\openssh');
-  final zip = File('${cache.path}\\OpenSSH-Win64-$_openSshRelease.zip');
+  final zip = File('${cache.path}\\$build-$_openSshRelease.zip');
   String sha256Of(File file) =>
       sha256.convert(file.readAsBytesSync()).toString();
-  if (!zip.existsSync() || sha256Of(zip) != _openSshSha256) {
+  if (!zip.existsSync() || sha256Of(zip) != expected) {
     final url = Uri.parse(
       'https://github.com/PowerShell/Win32-OpenSSH/releases/download/'
-      '$_openSshRelease/OpenSSH-Win64.zip',
+      '$_openSshRelease/$build.zip',
     );
     stdout.writeln('  Downloading $url');
     cache.createSync(recursive: true);
@@ -333,16 +399,16 @@ Future<void> _putOpenSsh(Directory root, Directory bundle) async {
     } finally {
       client.close();
     }
-    if (sha256Of(zip) != _openSshSha256) {
+    if (sha256Of(zip) != expected) {
       zip.deleteSync();
       _fail(
         'The OpenSSH download is not the one this script expects.\n'
         'After choosing another release, update _openSshRelease and\n'
-        '_openSshSha256 in this script.',
+        '_openSshBuilds in this script.',
       );
     }
   }
-  final unpacked = Directory('${cache.path}\\$_openSshRelease');
+  final unpacked = Directory('${cache.path}\\$build-$_openSshRelease');
   if (unpacked.existsSync()) unpacked.deleteSync(recursive: true);
   unpacked.createSync(recursive: true);
   // Windows' own tar (bsdtar) reads zips.
@@ -351,7 +417,7 @@ Future<void> _putOpenSsh(Directory root, Directory bundle) async {
   if (target.existsSync()) target.deleteSync(recursive: true);
   target.createSync(recursive: true);
   for (final name in _openSshFiles) {
-    final file = File('${unpacked.path}\\OpenSSH-Win64\\$name');
+    final file = File('${unpacked.path}\\$build\\$name');
     if (!file.existsSync()) _fail('No $name in the OpenSSH release.');
     file.copySync('${target.path}\\$name');
   }

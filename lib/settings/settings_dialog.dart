@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../base/smooth_scroll.dart';
+import '../channel/channel_setup.dart' show ChannelSetup;
 import '../ide/ide_color_theme_picker.dart' show ideSelectColorThemeCommandId;
 import '../keybindings/default_keybindings.dart' show openKeybindingsCommandId;
 import '../keybindings/key_chord.dart';
@@ -27,6 +28,7 @@ enum SettingsSection {
   appearance,
   terminal,
   models,
+  usage,
   network,
   ssh,
   mobile,
@@ -38,6 +40,7 @@ enum SettingsSection {
   language,
   keyboard,
   updates,
+  about,
   dataDirectory,
 }
 
@@ -48,6 +51,7 @@ enum SettingsCategory {
     SettingsSection.appearance,
     SettingsSection.terminal,
     SettingsSection.models,
+    SettingsSection.usage,
     SettingsSection.network,
     SettingsSection.ssh,
     SettingsSection.mobile,
@@ -59,6 +63,7 @@ enum SettingsCategory {
     SettingsSection.language,
     SettingsSection.keyboard,
     SettingsSection.updates,
+    SettingsSection.about,
   ]),
   advanced([SettingsSection.dataDirectory]);
 
@@ -238,7 +243,9 @@ class SettingsDialogState extends State<SettingsDialog> {
     SettingsSection.general => Codicons.settingsGear,
     SettingsSection.appearance => Codicons.symbolColor,
     SettingsSection.terminal => Codicons.terminal,
-    SettingsSection.models => Codicons.sparkle,
+    SettingsSection.models =>
+      ChannelSetup.channelBuild ? Codicons.person : Codicons.sparkle,
+    SettingsSection.usage => Codicons.graph,
     SettingsSection.network => Codicons.radioTower,
     SettingsSection.ssh => Codicons.remote,
     SettingsSection.mobile => Codicons.deviceMobile,
@@ -250,6 +257,7 @@ class SettingsDialogState extends State<SettingsDialog> {
     SettingsSection.language => Codicons.globe,
     SettingsSection.keyboard => Codicons.keyboard,
     SettingsSection.updates => Codicons.cloudDownload,
+    SettingsSection.about => Codicons.info,
     SettingsSection.dataDirectory => Codicons.folder,
   };
 
@@ -267,7 +275,11 @@ class SettingsDialogState extends State<SettingsDialog> {
       SettingsSection.general => l10n.settingsSectionGeneral,
       SettingsSection.appearance => l10n.settingsSectionAppearance,
       SettingsSection.terminal => l10n.settingsSectionTerminal,
-      SettingsSection.models => l10n.settingsSectionModels,
+      SettingsSection.models =>
+        ChannelSetup.channelBuild
+            ? l10n.channelAccountTitle
+            : l10n.settingsSectionModels,
+      SettingsSection.usage => l10n.settingsSectionUsage,
       SettingsSection.network => l10n.settingsSectionNetwork,
       SettingsSection.ssh => l10n.settingsSectionSsh,
       SettingsSection.mobile => l10n.settingsSectionMobile,
@@ -279,6 +291,7 @@ class SettingsDialogState extends State<SettingsDialog> {
       SettingsSection.language => l10n.settingsSectionLanguage,
       SettingsSection.keyboard => l10n.settingsSectionKeyboard,
       SettingsSection.updates => l10n.settingsSectionUpdates,
+      SettingsSection.about => l10n.settingsSectionAbout,
       SettingsSection.dataDirectory => l10n.settingsSectionDataDirectory,
     };
   }
@@ -288,6 +301,7 @@ class SettingsDialogState extends State<SettingsDialog> {
       switch (section) {
         SettingsSection.appearance => context.l10n.settingsAppearanceKeywords,
         SettingsSection.terminal => context.l10n.settingsTerminalKeywords,
+        SettingsSection.usage => context.l10n.ustatKeywords,
         SettingsSection.network => context.l10n.settingsNetworkKeywords,
         SettingsSection.ssh => context.l10n.settingsSshKeywords,
         SettingsSection.mobile => context.l10n.settingsMobileKeywords,

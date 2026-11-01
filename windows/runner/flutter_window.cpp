@@ -7,6 +7,7 @@
 
 #include "flutter/generated_plugin_registrant.h"
 #include "hang_watchdog.h"
+#include "log_folder.h"
 
 static_assert(AppWindows::kCloseMessage != hang_watchdog::kPingMessage);
 
@@ -76,6 +77,9 @@ bool FlutterWindow::OnCreate() {
   // The stash's shortcut (see lib/stash/), a hot key of this window's.
   stash_ = std::make_unique<StashChannel>(messenger, GetHandle());
 
+  // The channel build's login window (see lib/channel/account/).
+  login_window_ = std::make_unique<LoginWindow>(messenger, GetHandle());
+
   // Shown with its first frame — unless the app starts in the IDE's windows
   // alone (see AppWindows::MainShownAtLaunch), which show themselves.
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
@@ -108,6 +112,7 @@ void FlutterWindow::OnDestroy() {
     attention_->DetachWindows();
   }
   stash_ = nullptr;
+  login_window_ = nullptr;
   app_windows_ = nullptr;
   ReleaseView();
 
@@ -183,6 +188,12 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   // with it, which left the app running and the installer unable to close
   // it. What it ran (agents, terminals) is ended at the next launch.
   if (message == WM_ENDSESSION && wparam) {
+    log_folder::AppendExit(
+        (lparam & ENDSESSION_CLOSEAPP) != 0
+            ? "closed by an installer (the Restart Manager)"
+            : (lparam & ENDSESSION_LOGOFF) != 0
+                  ? "the session ended: logging off"
+                  : "the session ended: shutting down");
     ::DestroyWindow(hwnd);
     return 0;
   }

@@ -6,6 +6,8 @@ import 'package:baocode/ide/git/commit_message.dart';
 import 'package:baocode/ide/git/git_repository.dart';
 import 'package:baocode/ide/git/repository_scan.dart';
 import 'package:baocode/ide/ide_color_theme_picker.dart';
+import 'package:baocode/ide/ide_commands.dart';
+import 'package:baocode/chat/composer/composer_files.dart' show CodeReference;
 import 'package:baocode/debug/service/debug_service.dart';
 import 'package:baocode/ide/extensions/ide_extensions.dart';
 import 'package:baocode/ide/ide_workbench.dart';
@@ -189,12 +191,16 @@ Future<IdeWorkspace> pumpWorkbench(
   List<String>? roots,
   IdeGitRepository? Function(String root)? gitOf,
   IdeRepositoryDetection? repositoryDetection,
+  IdeGitRepository? Function(String path)? openWorktree,
   VoidCallback? onAddFolder,
   ValueChanged<String>? onRemoveFolder,
   Project? project,
   IdeExtensions? extensions,
   DebugService? debugService,
   TerminalTasks? terminalTasks,
+  ValueChanged<String>? onAskInChat,
+  ValueChanged<List<CodeReference>>? onAddCodeToChat,
+  List<IdeCommand> commands = const [],
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -209,6 +215,7 @@ Future<IdeWorkspace> pumpWorkbench(
     roots: [for (final root in roots ?? const <String>[]) inRoot(root)],
     gitOf: roots == null ? null : (root) => gitOf?.call(root),
     repositoryDetection: repositoryDetection,
+    openWorktree: openWorktree,
   );
   addTearDown(() {
     workspace.dispose();
@@ -226,6 +233,9 @@ Future<IdeWorkspace> pumpWorkbench(
         project: project ?? Project.at(testRoot),
         onAddFolder: onAddFolder,
         onRemoveFolder: onRemoveFolder,
+        onAskInChat: onAskInChat,
+        onAddCodeToChat: onAddCodeToChat,
+        commands: commands,
         visible: true,
         chat: chat,
         onBack: onBack ?? () {},

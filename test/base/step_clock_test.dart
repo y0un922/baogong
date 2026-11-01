@@ -1,4 +1,5 @@
 import 'package:baocode/base/step_clock.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -23,6 +24,27 @@ void main() {
     clock.stop();
     await tester.pump(const Duration(milliseconds: 500));
     expect(told, inInclusiveRange(9, 11));
+  });
+
+  testWidgets('clocks on other steps change in the same frames, no more '
+      'than 30 a second', (tester) async {
+    final frame = StepClock.frame.inMicroseconds;
+    final told = <int>{};
+    final clocks = [
+      for (final ms in [53, 62, 120, 33]) StepClock(Duration(milliseconds: ms)),
+    ];
+    for (final each in clocks) {
+      each
+        ..addListener(() => told.add(clock.now().microsecondsSinceEpoch))
+        ..start();
+    }
+    await tester.pump(const Duration(seconds: 2));
+    for (final each in clocks) {
+      each.dispose();
+    }
+    expect(told, isNotEmpty);
+    expect(told.every((at) => at % frame == 0), isTrue);
+    expect(told.length, lessThanOrEqualTo(61));
   });
 
   testWidgets('still where tickers are off or motion is turned down', (
@@ -55,5 +77,32 @@ void main() {
     await tester.pumpWidget(under(tickers: true, motionDown: true));
     expect(clock.isRunning, isFalse);
     expect(still, isTrue);
+  });
+
+  testWidgets('a loop goes round on the shared clock\'s frames, not every '
+      'vsync: there and back where it turns back', (tester) async {
+    final loop = StepLoop(const Duration(seconds: 1), reverse: true);
+    addTearDown(loop.dispose);
+    final values = <double>[];
+    loop.addListener(() => values.add(loop.value));
+    late BuildContext context;
+    await tester.pumpWidget(
+      Builder(
+        builder: (c) {
+          context = c;
+          return const SizedBox();
+        },
+      ),
+    );
+    expect(loop.value, 0);
+    loop.start(context);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(loop.value, closeTo(0.5, 0.05));
+    await tester.pump(const Duration(milliseconds: 1000));
+    expect(loop.value, closeTo(0.5, 0.05), reason: 'on its way back');
+    expect(values.length, inInclusiveRange(40, 46));
+    expect(tester.hasRunningAnimations, isFalse);
+    loop.stop();
+    expect(loop.value, 0);
   });
 }

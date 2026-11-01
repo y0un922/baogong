@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer.dart';
+import 'package:baocode/chat/composer/composer_controller.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/composer/composer_polish.dart';
 import 'package:baocode/chat/composer/composer_translate.dart';
@@ -9,8 +11,6 @@ import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
-import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -19,22 +19,16 @@ void main() {
   group('composerTranslateToEnglish', () {
     test('Chinese goes to English, English to Chinese', () {
       expect(
-        composerTranslateToEnglish(
-          composerPolishText(Delta()..insert('修一下这个 bug')),
-        ),
+        composerTranslateToEnglish(composerPolishText('修一下这个 bug')),
         isTrue,
       );
       expect(
-        composerTranslateToEnglish(
-          composerPolishText(Delta()..insert('fix this bug')),
-        ),
+        composerTranslateToEnglish(composerPolishText('fix this bug')),
         isFalse,
       );
       // A tag alone says nothing: it goes the way of the words with it.
       expect(
-        composerTranslateToEnglish(
-          composerPolishText(Delta()..insert({file.type: file.data})),
-        ),
+        composerTranslateToEnglish(composerPolishText(file.atom)),
         isFalse,
       );
     });
@@ -53,26 +47,22 @@ void main() {
           };
       final content = await translateComposerText(
         composerPolishText(
-          Delta()
-            ..insert('修一下 ')
-            ..insert({file.type: file.data})
-            ..insert(' 这个 bug：\n```\nlet x = 1\n```\n日志在 /tmp/run/out.log'),
+          '修一下 ${file.atom} 这个 bug：\n```\nlet x = 1\n```\n'
+          '日志在 /tmp/run/out.log',
         ),
       );
       expect(asked, contains('<message>\n修一下 ⟦1⟧ 这个 bug：\n⟦2⟧'));
-      final ops = content.toList();
-      expect(ops[0].data, 'Fix the bug in ');
-      expect(ops[1].data, {file.type: file.data});
       expect(
-        ops.skip(2).map((op) => op.data).join(),
-        ':\n```\nlet x = 1\n```\nThe log is in /tmp/run/out.log.',
+        content,
+        'Fix the bug in ${file.atom}:\n```\nlet x = 1\n```\n'
+        'The log is in /tmp/run/out.log.',
       );
     });
 
     test('into English, a reply far longer than the message is taken '
         '(Chinese is fewer characters)', () async {
       // 800 characters of Chinese come back as about 3,000 of English.
-      final asked = composerPolishText(Delta()..insert('雨' * 800));
+      final asked = composerPolishText('雨' * 800);
       composerTranslateAsker = (
         system,
         prompt, {
@@ -80,16 +70,11 @@ void main() {
         exact = false,
         location,
       }) async => 'a' * 3000;
-      final content = await translateComposerText(asked);
-      expect(content.toList().map((op) => op.data).join(), 'a' * 3000);
+      expect(await translateComposerText(asked), 'a' * 3000);
     });
 
     test('a marker lost or empty is not taken; a longer reply is', () async {
-      final asked = composerPolishText(
-        Delta()
-          ..insert('修一下 ')
-          ..insert({file.type: file.data}),
-      );
+      final asked = composerPolishText('修一下 ${file.atom}');
       composerTranslateAsker = (
         system,
         prompt, {
@@ -120,34 +105,33 @@ void main() {
         exact = false,
         location,
       }) async => 'Fix it in ⟦1⟧. ${'x' * 4000}';
-      final content = await translateComposerText(asked);
-      final ops = content.toList();
-      expect(ops[0].data, 'Fix it in ');
-      expect(ops[1].data, {file.type: file.data});
-      expect(ops.skip(2).map((op) => op.data).join(), '. ${'x' * 4000}');
+      expect(
+        await translateComposerText(asked),
+        'Fix it in ${file.atom}. ${'x' * 4000}',
+      );
     });
   });
 
   group('the composer', () {
     tearDown(() => composerTranslateAsker = null);
 
-    Future<QuillController> pumpComposer(WidgetTester tester) async {
+    Future<ComposerController> pumpComposer(WidgetTester tester) async {
       final session = ChatSession(historyCount: 0);
       addTearDown(session.dispose);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildAppTheme(),
-          localizationsDelegates: const [
-            AppLocalizations.delegate,
-            FlutterQuillLocalizations.delegate,
-          ],
+          localizationsDelegates: const [AppLocalizations.delegate],
           home: Scaffold(
             body: ChatComposer(session: session, draft: session.draft),
           ),
         ),
       );
       await tester.pump();
-      return tester.widget<QuillEditor>(find.byType(QuillEditor)).controller;
+      return tester
+              .widget<MarkdownEditor>(find.byType(MarkdownEditor))
+              .controller
+          as ComposerController;
     }
 
     Finder translateButton() => find.byWidgetPredicate(
@@ -170,16 +154,14 @@ void main() {
             return reply.future;
           };
       final controller = await pumpComposer(tester);
-      controller.compose(
-        Delta()
-          ..insert('修一下 ')
-          ..insert({file.type: file.data})
-          ..insert(' 这个 bug'),
-        const TextSelection.collapsed(offset: 0),
-        ChangeSource.local,
+      controller.replace(
+        0,
+        0,
+        '修一下 ${file.atom} 这个 bug',
+        selection: const TextSelection.collapsed(offset: 0),
       );
       await tester.pump();
-      final before = controller.document.toDelta();
+      final before = controller.text;
 
       // Chinese first: the hint says English.
       expect(
@@ -191,10 +173,8 @@ void main() {
       expect(prompt, contains('修一下 ⟦1⟧ 这个 bug'));
       reply.complete('Fix the bug in ⟦1⟧.');
       await tester.pumpAndSettle();
-      final ops = controller.document.toDelta().toList();
-      expect(ops[0].data, 'Fix the bug in ');
-      expect(ops[1].data, {file.type: file.data});
-      expect(ops[2].data, '.\n');
+      expect(controller.text, 'Fix the bug in ${file.atom}.');
+      expect(controller.embeds.single.embed, file);
       // English now: the hint says Chinese.
       expect(
         tester.widget<IdeHover>(translateButton()).message,
@@ -203,7 +183,7 @@ void main() {
 
       controller.undo();
       await tester.pump();
-      expect(controller.document.toDelta(), before);
+      expect(controller.text, before);
     });
 
     testWidgets('with nothing to translate, the button does nothing', (
@@ -216,11 +196,7 @@ void main() {
             return 'Fix it.';
           };
       final controller = await pumpComposer(tester);
-      controller.compose(
-        Delta()..insert({file.type: file.data}),
-        const TextSelection.collapsed(offset: 0),
-        ChangeSource.local,
-      );
+      controller.replace(0, 0, file.atom);
       await tester.pump();
       await tester.tap(translateButton());
       await tester.pump();

@@ -9,76 +9,108 @@ import '../chat_models.dart';
 import 'review_store.dart';
 import 'unpatch.dart';
 
-/// A file the agent changed: what it was before (kept, the file as it is
-/// becomes that), what the agent left, and what is there now.
+/// A file the agent changed: what it was before, and what the agent left.
 class _Entry {
-  _Entry(this.base);
+  _Entry(this.base) : after = base, current = base;
 
+  /// What it was before the agent's first edit, with what changed in it
+  /// since that was not the agent's: undone, the file goes back to it.
   ReviewBlob? base;
+
+  /// What the agent left: its change is from [base] to this.
   ReviewBlob? after;
+
+  /// What is there now, as last looked at (not kept).
   ReviewBlob? current;
+
+  /// Undo could not carry over what changed since the agent left it.
   bool conflict = false;
 
-  /// Whether it differs from what was there before.
-  bool get pending => switch ((base, current)) {
-    (null, null) => false,
-    (final base?, final current) => !base.sameContent(current),
-    _ => true,
-  };
+  /// Edits of it begun and not done: the agent may be writing it.
+  int writing = 0;
+
+  /// Whether the agent changed it, and it is not back as it was.
+  bool get pending => !_same(base, after) && !_same(base, current);
 
   Map<String, Object?> toJson() => {
     'base': base?.toJson(),
     'after': after?.toJson(),
-    'current': current?.toJson(),
     'conflict': conflict,
   };
 
-  static _Entry fromJson(Map<String, Object?> json) =>
-      _Entry(ReviewBlob.fromJson(json['base']))
-        ..after = ReviewBlob.fromJson(json['after'])
-        ..current = ReviewBlob.fromJson(json['current'])
-        ..conflict = json['conflict'] == true;
+  static _Entry fromJson(Map<String, Object?> json) {
+    final after = ReviewBlob.fromJson(json['after']);
+    return _Entry(ReviewBlob.fromJson(json['base']))
+      ..after = after
+      ..current = after
+      ..conflict = json['conflict'] == true;
+  }
 }
 
-/// What an agent changed in its project, held against what was there
-/// before, for the user to keep or undo file by file: the review behind
-/// Keep and Undo.
+bool _same(ReviewBlob? a, ReviewBlob? b) =>
+    a == null ? b == null : a.sameContent(b);
+
+/// What an agent changed, held against what was there before, for the
+/// user to keep or undo file by file: the review behind Keep and Undo.
 ///
-/// Only the edits the agent reports are in it, with what each file was
-/// before as the agent tells ([FileOriginal]): what a command changes is
-/// not. Each conversation keeps its own ([ReviewStore], a folder of its
-/// session), and nothing of the rest of the project. Whatever changes a
-/// file since the agent left it (the user, between turns) is carried over
-/// by Undo (a three-way merge) rather than written over: where it cannot,
-/// the file is left as it is and marked.
+/// The kernel tells it of each edit as the agent makes it: [before], it
+/// keeps what the file is (the agent writes once that is done), and
+/// [after], what the agent left. One that tells of an edit only once it is
+/// made ([report]) tells what the file was ([FileOriginal]). What a
+/// command writes is not seen.
+///
+/// Its account is of its own agent's edits alone: what else changes a
+/// file it changed (another agent, the user) is not its, and is put into
+/// what it holds the file against when the agent edits it again. Undo
+/// takes the agent's change out of the file as it is (a three-way merge):
+/// where it cannot, the file is left as it is and marked.
 ///
 /// Kept, a change is only no longer listed: nothing is written, staged or
-/// committed. Undone, the file is put back. Once none is pending, what
-/// the session kept is gone.
+/// committed. Undone, the file is put back.
 class ChangeReview extends ChangeNotifier {
   /// Its files' paths spelled as [paths] has them: this machine's way
   /// when null.
-  ChangeReview(this._store, {p.Context? paths}) : _paths = paths ?? p.context;
+  ///
+  /// [realRoot] is [root] with its links resolved, where that is another
+  /// path: the agent may tell the project's files by it (Claude Code does:
+  /// macOS's `/tmp` is `/private/tmp`), and they are listed by [root].
+  ChangeReview(
+    this._store, {
+    required this.root,
+    p.Context? paths,
+    this.realRoot,
+  }) : _paths = paths ?? p.context;
 
-  /// The review of the project at [root], continuing what [session] left;
-  /// null where there can be none (see [openReviewStore]).
+  /// The review of the agent working in [root], continuing what [session]
+  /// left; null where there can be none (see [openReviewStore]).
   static Future<ChangeReview?> open(String root, {String? session}) async {
     final store = await openReviewStore(root);
     if (store == null) return null;
     // A remote project's paths are its host's (POSIX), whatever this
     // machine spells its own with.
     final paths = RemoteLocation.pathsOf(root);
-    if (session == null) return ChangeReview(store, paths: paths);
-    return resume(store, session, paths: paths);
+    final realRoot = await realRootOf(root);
+    root = RemoteLocation.pathOf(root);
+    if (session == null) {
+      return ChangeReview(store, root: root, paths: paths, realRoot: realRoot);
+    }
+    return resume(store, session, root: root, paths: paths, realRoot: realRoot);
   }
 
   /// The review over [store], with the changes [session] left pending.
   static Future<ChangeReview> resume(
     ReviewStore store,
     String session, {
+    required String root,
     p.Context? paths,
+    String? realRoot,
   }) async {
-    final review = ChangeReview(store, paths: paths);
+    final review = ChangeReview(
+      store,
+      root: root,
+      paths: paths,
+      realRoot: realRoot,
+    );
     await review._load(session);
     return review;
   }
@@ -86,16 +118,21 @@ class ChangeReview extends ChangeNotifier {
   final ReviewStore _store;
   final p.Context _paths;
 
+  /// The agent's directory (on its host): a path it tells relative is in
+  /// it.
+  final String root;
+
+  /// [root] with its links resolved, where that is another path.
+  final String? realRoot;
+
   /// How its files' paths are spelled.
   p.Context get paths => _paths;
 
-  String get root => _store.root;
-
-  /// By path relative to [root].
+  /// By absolute path.
   final Map<String, _Entry> _entries = {};
 
-  /// Edits it cannot undo (what the file was is not known, or it is
-  /// outside the project), by absolute path: listed, to be kept.
+  /// Edits it was told of that cannot be undone (what the file was is not
+  /// known), by absolute path: listed, to be kept.
   final Map<String, FileChange> _unseen = {};
 
   List<FileChange> _changes = const [];
@@ -103,13 +140,13 @@ class ChangeReview extends ChangeNotifier {
   /// The pending changes, one per file, with absolute paths.
   List<FileChange> get changes => _changes;
 
-  /// Why it stopped: the store failed. Its changes are then no longer
-  /// known.
+  /// Why it stopped: the store failed (the remote host went away). Its
+  /// changes are then no longer known.
   String? get failure => _failure;
   String? _failure;
 
   /// The session it is kept under, once known. Anew, what the one before
-  /// kept moves to it.
+  /// kept is kept under it instead.
   String? get session => _session;
   String? _session;
   set session(String? id) {
@@ -120,13 +157,11 @@ class ChangeReview extends ChangeNotifier {
       _enqueue(() async {
         // Nothing yet: nothing to keep.
         if (_entries.isEmpty && _unseen.isEmpty) return;
-        if (before != null) await _move(before, id);
         await _persist();
+        if (before != null) await _store.forget(before);
       }),
     );
   }
-
-  // --- Looking ----------------------------------------------------------------
 
   Future<void> _queue = Future.value();
   bool _disposed = false;
@@ -150,160 +185,221 @@ class ChangeReview extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  /// Looks at its files again (before a turn, as one ends): one put back
-  /// as it was since is no longer pending.
-  Future<void> refresh() => _enqueue(() => _look(_entries.keys.toList()));
+  // --- The agent's edits --------------------------------------------------------
 
-  /// The agent edited [change]'s file, which was [original] before.
-  /// Without [original], or outside the project, the edit is listed, to
-  /// be kept and not undone.
-  void report(FileChange change, {FileOriginal? original}) {
-    final path = _relative(change.path);
-    if (path == null) {
-      // Outside the project.
-      _unsee(change);
-      unawaited(_enqueue(_refresh));
-      return;
-    }
-    unawaited(_enqueue(() => _take(path, change, original)));
-  }
-
-  void _unsee(FileChange change) {
-    final absolute = _absolute(change.path);
-    _unseen[absolute] = _merged(_unseen[absolute], change, absolute);
-  }
-
-  static FileChange _merged(
-    FileChange? before,
-    FileChange change,
-    String path,
-  ) => FileChange(
-    path: path,
-    added: (before?.added ?? 0) + change.added,
-    removed: (before?.removed ?? 0) + change.removed,
-    tracked: false,
-  );
-
-  Future<void> _take(
-    String path,
-    FileChange change,
-    FileOriginal? original,
-  ) async {
-    final session = _session;
-    final absolute = _absolute(path);
-    if (session == null || _unseen.containsKey(absolute)) {
-      _unsee(change);
-      return _refresh();
-    }
-    final after = await _store.take(session, path);
-    var entry = _entries[path];
-    if (entry == null) {
-      final (known, base) = await _baseOf(session, path, original, after);
-      if (!known) {
-        _unsee(change);
-        return _refresh();
+  /// The agent is about to write [path]: what is there is kept, the first
+  /// time, as what it was; and what changed in it since the agent last
+  /// wrote it is not the agent's.
+  Future<void> before(String path) {
+    final key = _key(path);
+    return _enqueue(() async {
+      final entry = _entries[key];
+      if (entry == null) {
+        try {
+          _entries[key] = _Entry(await _store.take(key))..writing = 1;
+        } on Exception {
+          // Not to be kept (too large): listed once reported, not undone.
+        }
+        return;
       }
-      entry = _entries[path] = _Entry(base);
+      // Another edit of the agent's under way: what changed may be its.
+      final busy = entry.writing > 0;
+      entry.writing++;
+      if (busy) return;
+      final now = await _store.current(key);
+      entry.current = now;
+      if (!_same(now, entry.after)) await _rebase(entry, key);
+    });
+  }
+
+  /// What changed in [entry]'s file since the agent left it (another
+  /// agent, the user) put into what it is held against: the agent's change
+  /// stays its own.
+  Future<void> _rebase(_Entry entry, String key) async {
+    final now = await _store.take(key);
+    final base = entry.base;
+    final after = entry.after;
+    if (now == null || after == null) {
+      // Deleted since, or there again since the agent deleted it: what
+      // the agent did to it is gone.
+      entry.base = now;
+    } else if (base != null && !base.isLink && !after.isLink && !now.isLink) {
+      final merged = await _store.merge(base, after, now);
+      // Where it cannot be told apart, it is the agent's.
+      if (merged != null) {
+        entry.base = await _store.store(merged, mode: now.mode);
+      }
     }
     entry
-      ..after = after
-      ..current = after
+      ..after = now
+      ..current = now
       ..conflict = false;
-    _entries.removeWhere((_, entry) => !entry.pending);
-    await _refresh();
-    await _persist();
   }
 
-  /// What [path] was before the agent's edit: whether it is known, and
-  /// its blob (null where there was no file).
-  Future<(bool, ReviewBlob?)> _baseOf(
-    String session,
-    String path,
+  /// The agent wrote [path], or gave up writing it: what it left is its
+  /// change.
+  Future<void> after(String path) {
+    final key = _key(path);
+    return _enqueue(() async {
+      final entry = _entries[key];
+      if (entry == null) return;
+      if (entry.writing > 0) entry.writing--;
+      await _taken(entry, key);
+      await _refresh();
+      await _persist();
+    });
+  }
+
+  /// [entry]'s file as it is now is what the agent left.
+  Future<void> _taken(_Entry entry, String key) async {
+    final now = await _store.take(key);
+    entry
+      ..after = now
+      ..current = now
+      ..conflict = false;
+  }
+
+  /// The agent edited [change]'s file, which was [original] before: told
+  /// once the edit is made, by a kernel that does not tell [before] (or
+  /// tells this as well).
+  void report(FileChange change, {FileOriginal? original}) {
+    final key = _key(change.path);
+    unawaited(
+      _enqueue(() async {
+        if (_entries[key] case final entry?) {
+          // Its last edit done: what it left, once more.
+          if (entry.writing == 0) await _taken(entry, key);
+        } else {
+          await _adopt(key, change, original);
+        }
+        await _refresh();
+        await _persist();
+      }),
+    );
+  }
+
+  /// [key]'s file, edited without [before]: held against what it was as
+  /// the agent told, else listed to be kept.
+  Future<void> _adopt(
+    String key,
+    FileChange change,
     FileOriginal? original,
-    ReviewBlob? after,
   ) async {
-    final mode = switch (after?.mode) {
-      final mode? when mode != '120000' => mode,
-      _ => '100644',
-    };
+    final known = original == null ? null : await _baseOf(key, original);
+    if (known == null) {
+      _unseen[key] = FileChange(
+        path: key,
+        added: (_unseen[key]?.added ?? 0) + change.added,
+        removed: (_unseen[key]?.removed ?? 0) + change.removed,
+        tracked: false,
+      );
+      return;
+    }
+    final now = await _store.take(key);
+    _entries[key] = _Entry(known.base)
+      ..after = now
+      ..current = now;
+  }
+
+  /// What [path] was before the agent's edit, as [original] tells; null
+  /// where that is not known.
+  Future<({ReviewBlob? base})?> _baseOf(
+    String path,
+    FileOriginal original,
+  ) async {
     switch (original) {
       case OriginalText(text: null):
-        return (true, null);
+        return (base: null);
       case OriginalText(:final text?):
-        return (
-          true,
-          await _store.store(session, utf8.encode(text), mode: mode),
-        );
-      case OriginalByPatch(:final diff) when after != null && !after.isLink:
-        final now = utf8.decode(
-          await _store.read(session, after),
-          allowMalformed: true,
-        );
-        final text = unpatch(now, diff);
-        if (text == null) return (false, null);
-        return (
-          true,
-          await _store.store(session, utf8.encode(text), mode: mode),
-        );
-      case _:
-        return (false, null);
+        final now = await _store.current(path);
+        final mode = switch (now?.mode) {
+          final mode? when mode != '120000' => mode,
+          _ => '100644',
+        };
+        return (base: await _store.store(utf8.encode(text), mode: mode));
+      case OriginalByPatch() || OriginalByEdits():
+        final after = await _store.take(path);
+        if (after == null || after.isLink) return null;
+        final now = utf8.decode(await _store.read(after), allowMalformed: true);
+        final text = switch (original) {
+          OriginalByPatch(:final diff) => unpatch(now, diff),
+          OriginalByEdits() => original.undo(now),
+          OriginalText() => null,
+        };
+        if (text == null) return null;
+        return (base: await _store.store(utf8.encode(text), mode: after.mode));
     }
   }
 
-  /// [paths] (relative) as they are now: not the agent's.
-  Future<void> _look(List<String> paths) async {
-    for (final path in paths) {
-      final entry = _entries[path];
-      if (entry == null) continue;
-      final now = await _store.current(path);
-      if (now != entry.current) {
-        entry
-          ..current = now
-          ..conflict = false;
+  /// Looks at its files again, as a turn ends: what changed since is not
+  /// the agent's, and edits it began and did not tell the end of (denied,
+  /// stopped) are over.
+  Future<void> look() => _enqueue(() async {
+    for (final MapEntry(key: path, value: entry) in _entries.entries) {
+      if (entry.writing > 0) {
+        entry.writing = 0;
+        await _taken(entry, path);
+        continue;
       }
+      final now = await _store.current(path);
+      if (_same(now, entry.current)) continue;
+      entry
+        ..current = now
+        ..conflict = false;
     }
     // Those it cannot undo that are gone since (a script the agent wrote
     // and deleted): nothing is left of them to keep.
     for (final path in [..._unseen.keys]) {
-      if (!await _store.exists(path)) _unseen.remove(path);
+      if (await _store.current(path) == null) _unseen.remove(path);
     }
-    _entries.removeWhere((_, entry) => !entry.pending);
     await _refresh();
     await _persist();
+  });
+
+  /// Line counts worked out not long ago, by the blobs counted between:
+  /// named by what is in them, they count the same again.
+  static final Map<String, ({int added, int removed})?> _counts = {};
+
+  Future<({int added, int removed})?> _countsOf(_Entry entry) async {
+    final key = '${entry.base?.oid}>${entry.after?.oid}';
+    if (_counts.containsKey(key)) return _counts[key] = _counts.remove(key);
+    final counts = await _store.lineCounts(entry.base, entry.after);
+    _counts[key] = counts;
+    if (_counts.length > 256) _counts.remove(_counts.keys.first);
+    return counts;
   }
 
   /// [changes] anew, with their line counts.
   Future<void> _refresh() async {
-    final session = _session;
-    Map<String, ({int added, int removed})?> counts = const {};
-    if (session != null && _entries.isNotEmpty) {
+    _entries.removeWhere((_, entry) => !entry.pending && entry.writing == 0);
+    final listed = <FileChange>[];
+    for (final path in _entries.keys.toList()..sort()) {
+      final entry = _entries[path]!;
+      if (!entry.pending) continue;
+      ({int added, int removed})? counts;
+      var counted = false;
       try {
-        counts = await _store.lineCounts(session, {
-          for (final MapEntry(key: path, value: entry) in _entries.entries)
-            path: entry.base,
-        });
-      } on Object {
-        // Listed without their counts.
+        counts = await _countsOf(entry);
+        counted = true;
+      } on Exception {
+        // Listed without its counts.
       }
+      listed.add(
+        FileChange(
+          path: path,
+          added: counts?.added ?? 0,
+          removed: counts?.removed ?? 0,
+          binary: counted && counts == null,
+          kind: entry.base == null
+              ? FileChangeKind.added
+              : entry.after == null
+              ? FileChangeKind.deleted
+              : FileChangeKind.modified,
+          conflict: entry.conflict,
+        ),
+      );
     }
-    final paths = _entries.keys.toList()..sort();
-    _changes = [
-      for (final path in paths)
-        if (_entries[path] case final entry?)
-          FileChange(
-            path: _absolute(path),
-            added: counts[path]?.added ?? 0,
-            removed: counts[path]?.removed ?? 0,
-            binary: counts.containsKey(path) && counts[path] == null,
-            kind: entry.base == null
-                ? FileChangeKind.added
-                : entry.current == null
-                ? FileChangeKind.deleted
-                : FileChangeKind.modified,
-            conflict: entry.conflict,
-          ),
-      ..._unseen.values,
-    ];
+    _changes = [...listed, ..._unseen.values];
     if (!_disposed) notifyListeners();
   }
 
@@ -311,11 +407,11 @@ class ChangeReview extends ChangeNotifier {
 
   /// Keeps the changes to [paths] (absolute): they are no longer listed.
   Future<void> keep(Iterable<String> paths) {
-    final kept = paths.toList();
+    final kept = [for (final path in paths) _key(path)];
     return _enqueue(() async {
       for (final path in kept) {
         _unseen.remove(path);
-        _entries.remove(_relative(path));
+        _entries.remove(path);
       }
       await _refresh();
       await _persist();
@@ -324,7 +420,7 @@ class ChangeReview extends ChangeNotifier {
 
   Future<void> keepAll() => _enqueue(() async {
     _unseen.clear();
-    _entries.clear();
+    _entries.removeWhere((_, entry) => entry.writing == 0);
     await _refresh();
     await _persist();
   });
@@ -333,51 +429,48 @@ class ChangeReview extends ChangeNotifier {
   /// agent changed them, keeping what changed since where it can (else the
   /// file stays, marked [FileChange.conflict]).
   Future<void> undo(Iterable<String> paths) {
-    final wanted = paths.toList();
+    final wanted = [for (final path in paths) _key(path)];
     return _enqueue(() async {
-      final session = _session;
-      if (session == null) return;
-      final undone = <String>[];
-      for (final absolute in wanted) {
-        final path = _relative(absolute);
-        final entry = path == null ? null : _entries[path];
-        if (path == null || entry == null) continue;
+      for (final path in wanted) {
+        final entry = _entries[path];
+        if (entry == null || !entry.pending) continue;
         try {
-          if (await _undo(session, path, entry)) {
-            undone.add(path);
+          if (await _undo(path, entry)) {
+            _entries.remove(path);
           } else {
             entry.conflict = true;
           }
-        } on Object {
+        } on Exception {
           entry.conflict = true;
         }
-      }
-      for (final path in undone) {
-        _entries.remove(path);
       }
       await _refresh();
       await _persist();
     });
   }
 
-  Future<void> undoAll() =>
-      undo([for (final path in _entries.keys) _absolute(path)]);
+  Future<void> undoAll() => undo([
+    for (final MapEntry(key: path, value: entry) in _entries.entries)
+      if (entry.pending) path,
+  ]);
 
   /// Whether [path] is back as it was.
-  Future<bool> _undo(String session, String path, _Entry entry) async {
+  Future<bool> _undo(String path, _Entry entry) async {
     final now = await _store.current(path);
     final base = entry.base;
     final after = entry.after;
     // Already back.
-    if (base == null ? now == null : base.sameContent(now)) return true;
+    if (_same(base, now)) return true;
     // As the agent left it: put back what was.
-    if (now == null ? after == null : now.sameContent(after)) {
-      await _store.restore(session, path, base);
+    if (_same(now, after)) {
+      await _store.restore(path, base, root: root);
       return true;
     }
     // Changed since: the agent's change taken out of it.
     if (now != null && after != null && base != null && !now.isLink) {
-      final merged = await _store.merge(session, path, after, base);
+      final mine = await _store.take(path);
+      if (mine == null) return false;
+      final merged = await _store.merge(mine, after, base);
       if (merged == null) return false;
       await _store.write(path, merged);
       return true;
@@ -392,9 +485,8 @@ class ChangeReview extends ChangeNotifier {
   /// part of the change is kept; null when it has no change pending that
   /// can be undone.
   String? baseOf(String path) {
-    final relative = _relative(path);
-    final entry = relative == null ? null : _entries[relative];
-    if (entry == null) return null;
+    final entry = _entries[_key(path)];
+    if (entry == null || !entry.pending) return null;
     return entry.base?.oid ?? '';
   }
 
@@ -403,27 +495,25 @@ class ChangeReview extends ChangeNotifier {
   /// against. Nothing is written. Fails (the review goes on) where the
   /// store cannot keep it.
   Future<void> keepPart(String path, String base) {
-    final relative = _relative(path);
+    final key = _key(path);
     final completer = Completer<void>();
     unawaited(
       _enqueue(() async {
-        final session = _session;
-        final entry = relative == null ? null : _entries[relative];
-        if (entry == null || session == null) return completer.complete();
+        final entry = _entries[key];
+        if (entry == null) return completer.complete();
         try {
-          final mode = entry.base?.mode ?? entry.current?.mode ?? '100644';
-          entry.base = await _store.store(
-            session,
-            utf8.encode(base),
-            mode: mode,
-          );
+          final mode = entry.base?.mode ?? entry.after?.mode ?? '100644';
+          entry.base = await _store.store(utf8.encode(base), mode: mode);
+          // The file as it is now (saved since, it may be what is kept):
+          // the change goes when nothing of it is left.
+          entry
+            ..current = await _store.current(key)
+            ..conflict = false;
         } on Object catch (error, stack) {
           return completer.completeError(error, stack);
         }
-        entry.conflict = false;
-        // The file as it is now (saved since the last look, it may be what
-        // is kept): the change goes when nothing of it is left.
-        await _look([relative!]);
+        await _refresh();
+        await _persist();
         completer.complete();
       }).whenComplete(() {
         if (!completer.isCompleted) completer.complete();
@@ -433,68 +523,76 @@ class ChangeReview extends ChangeNotifier {
   }
 
   /// Looks at [paths] (absolute) again after they were written outside the
-  /// agent's turn (part of a change undone in the editor): not the agent's.
+  /// agent's turn (part of a change undone in the editor): what is left of
+  /// the agent's change is what is there.
   Future<void> settle(Iterable<String> paths) {
-    final relative = [for (final path in paths) ?_relative(path)];
-    return _enqueue(() => _look(relative));
+    final keys = [for (final path in paths) _key(path)];
+    return _enqueue(() async {
+      for (final key in keys) {
+        if (_entries[key] case final entry?) await _taken(entry, key);
+      }
+      await _refresh();
+      await _persist();
+    });
   }
 
   /// The text of [path] (absolute) before the agent changed it: empty for
   /// a file it created; null when it is not known.
   Future<String> Function()? original(String path) {
-    final relative = _relative(path);
-    if (relative == null || !_entries.containsKey(relative)) return null;
+    final key = _key(path);
+    if (_entries[key]?.pending != true) return null;
     return () async {
-      final base = _entries[relative]?.base;
-      final session = _session;
-      if (base == null || session == null) return '';
-      return utf8.decode(
-        await _store.read(session, base),
-        allowMalformed: true,
-      );
+      final base = _entries[key]?.base;
+      if (base == null) return '';
+      return utf8.decode(await _store.read(base), allowMalformed: true);
     };
   }
 
   // --- Keeping it between runs ----------------------------------------------
 
-  Iterable<ReviewBlob> get _blobs => [
-    for (final entry in _entries.values) ...[?entry.base, ?entry.after],
-  ];
+  /// The session and what [_persist] last kept under it (empty: nothing):
+  /// kept again only once it changed.
+  String? _persisted;
 
   Future<void> _persist() async {
     final session = _session;
     if (session == null) return;
-    if (_entries.isEmpty && _unseen.isEmpty) {
-      await _store.forget(session);
-      return;
-    }
-    await _store.save(
-      session,
-      jsonEncode({
-        'version': 2,
-        'entries': {
-          for (final MapEntry(key: path, value: entry) in _entries.entries)
-            path: entry.toJson(),
-        },
-        'unseen': [
-          for (final change in _unseen.values)
-            {
-              'path': change.path,
-              'added': change.added,
-              'removed': change.removed,
+    final kept = {
+      for (final MapEntry(key: path, value: entry) in _entries.entries)
+        if (entry.pending) path: entry,
+    };
+    final nothing = kept.isEmpty && _unseen.isEmpty;
+    final data = nothing
+        ? ''
+        : jsonEncode({
+            'version': 4,
+            'entries': {
+              for (final MapEntry(key: path, value: entry) in kept.entries)
+                path: entry.toJson(),
             },
+            'unseen': [
+              for (final change in _unseen.values)
+                {
+                  'path': change.path,
+                  'added': change.added,
+                  'removed': change.removed,
+                },
+            ],
+          });
+    final record = '$session\x00$data';
+    if (record == _persisted) return;
+    if (nothing) {
+      await _store.forget(session);
+    } else {
+      await _store.save(
+        session,
+        data,
+        blobs: [
+          for (final entry in kept.values) ...[?entry.base, ?entry.after],
         ],
-      }),
-      blobs: _blobs,
-    );
-  }
-
-  /// What [from] kept, kept for [to] instead.
-  Future<void> _move(String from, String to) async {
-    for (final blob in {..._blobs}) {
-      await _store.store(to, await _store.read(from, blob), mode: blob.mode);
+      );
     }
-    await _store.forget(from);
+    _persisted = record;
   }
 
   Future<void> _load(String session) async {
@@ -503,9 +601,7 @@ class ChangeReview extends ChangeNotifier {
       final data = await _store.load(session);
       if (data == null) return;
       final json = jsonDecode(data);
-      // One of an earlier build (snapshots of the whole project) is not
-      // read: what it listed is begun anew.
-      if (json is! Map<String, Object?> || json['version'] != 2) return;
+      if (json is! Map<String, Object?> || json['version'] != 4) return;
       if (json['entries'] case final Map<String, Object?> entries) {
         for (final MapEntry(key: path, value: entry) in entries.entries) {
           if (entry is Map<String, Object?>) {
@@ -529,6 +625,7 @@ class ChangeReview extends ChangeNotifier {
           }
         }
       }
+      _persisted = '$session\x00$data';
       await _refresh();
     } on Object {
       // Begun anew.
@@ -539,23 +636,30 @@ class ChangeReview extends ChangeNotifier {
 
   // --- Paths ------------------------------------------------------------------
 
-  /// [path] (absolute, or relative to [root]) relative to [root], with
-  /// `/`; null outside it.
-  String? _relative(String path) {
-    final absolute = _absolute(path);
-    if (!_paths.isWithin(root, absolute)) return null;
-    return _paths.split(_paths.relative(absolute, from: root)).join('/');
+  /// [path] (absolute, or relative to [root]) absolute, normalized, and in
+  /// [root] where it is in [realRoot].
+  String _key(String path) {
+    final absolute = _paths.normalize(
+      _paths.isAbsolute(path)
+          ? path
+          : _paths.joinAll([root, ...path.split('/')]),
+    );
+    final real = realRoot;
+    if (real == null ||
+        !(_paths.equals(real, absolute) || _paths.isWithin(real, absolute))) {
+      return absolute;
+    }
+    return _paths.normalize(
+      _paths.join(root, _paths.relative(absolute, from: real)),
+    );
   }
-
-  String _absolute(String path) => _paths.normalize(
-    _paths.isAbsolute(path) ? path : _paths.joinAll([root, ...path.split('/')]),
-  );
 
   /// Drops what it kept between runs, once what is under way is done: the
   /// conversation is gone.
   Future<void> discard() {
     final session = _session;
     _session = null;
+    _persisted = null;
     if (session == null) return Future.value();
     return _queue = _queue.then(
       (_) => _store.forget(session).catchError((Object _) {}),

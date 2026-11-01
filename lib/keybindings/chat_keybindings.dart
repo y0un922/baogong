@@ -20,6 +20,11 @@
 //   its chat, ⌘N/Ctrl+N starts a chat there and ⌘W/Ctrl+W closes its tab
 //   (BaoCode's `baocode.chat.closeTab`), as Close Editor an editor's. From
 //   a subagent's conversation, Focus Chat Input goes back to the chat's.
+// - Add Selection to Chat (upstream's has no key) takes ⌘L/Ctrl+L, as
+//   Cursor has it, from the IDE's editor and from the side panel's files
+//   with lines selected: their lines go in the chat's input as tags of
+//   them, after what is typed. Without, the IDE's editor's shows the chat
+//   with the keyboard in its input; the side panel's is Focus Chat Input.
 // - Cancel also takes a plain Escape in the input while a turn runs, as the
 //   agents' own terminals do; Accept and Skip need no focus in the chat (in
 //   the chat window they act on the agent focused, as Cancel and Focus Chat
@@ -63,6 +68,21 @@ abstract final class ChatCommandIds {
   static const focusPane = 'baocode.chat.focusPane';
   static const focusNextPane = 'baocode.chat.focusNextPane';
   static const focusPreviousPane = 'baocode.chat.focusPreviousPane';
+
+  /// The pane beside the focused one, that way.
+  static const focusPaneLeft = 'baocode.chat.focusPaneLeft';
+  static const focusPaneRight = 'baocode.chat.focusPaneRight';
+  static const focusPaneUp = 'baocode.chat.focusPaneUp';
+  static const focusPaneDown = 'baocode.chat.focusPaneDown';
+
+  /// Among the focused pane's agents (it and those under it), the next or
+  /// previous tab.
+  static const nextPaneTab = 'baocode.chat.nextPaneTab';
+  static const previousPaneTab = 'baocode.chat.previousPaneTab';
+
+  /// The agents under a pane as tabs above it, or behind its layers
+  /// button.
+  static const togglePaneTabs = 'baocode.chat.togglePaneTabs';
   static const searchAgents = 'baocode.chat.searchAgents';
 
   /// The search palette, on everything: agents, what was said in them,
@@ -83,6 +103,7 @@ abstract final class ChatCommandIds {
   /// The side panel's terminal, the keyboard in it (one made where none
   /// is); from it, the panel hidden and the keyboard back in the chat.
   static const sidePanelTerminal = 'baocode.chat.sidePanel.terminal';
+  static const sidePanelUsage = 'baocode.chat.sidePanel.usage';
 
   /// A new terminal in the side panel, the keyboard in it.
   static const sidePanelNewTerminal = 'baocode.chat.sidePanel.newTerminal';
@@ -140,6 +161,10 @@ abstract final class ChatCommandIds {
   static const nextMode = 'baocode.chat.nextMode';
   static const openModelPicker = 'workbench.action.chat.openModelPicker';
   static const attachContext = 'workbench.action.chat.attachContext';
+
+  /// The lines selected in the IDE's editor, or in the side panel's file
+  /// shown, put in the chat's input as tags of them.
+  static const attachSelection = 'workbench.action.chat.attachSelection';
   static const pasteRaw = 'baocode.chat.pasteRaw';
   static const selectNextSuggestion = 'baocode.chat.selectNextSuggestion';
   static const selectPrevSuggestion = 'baocode.chat.selectPrevSuggestion';
@@ -208,6 +233,10 @@ abstract final class ChatContextKeys {
   /// A subagent's conversation shows over the chat's.
   static const subagentVisible = 'chatSubagentVisible';
 
+  /// The chat is a conversation asked beside another (`/btw`), shown in
+  /// its place, and no subagent's shows over it.
+  static const asideVisible = 'chatAsideVisible';
+
   /// The focus is on a prompt's options (a question, an approval, a plan).
   static const inInteraction = 'inChatInteraction';
 
@@ -231,6 +260,13 @@ final List<CommandInfo> chatExtraCommands = [
       ('${ChatCommandIds.focusPane}$i', 'Focus Pane $i'),
     (ChatCommandIds.focusNextPane, 'Focus Next Pane'),
     (ChatCommandIds.focusPreviousPane, 'Focus Previous Pane'),
+    (ChatCommandIds.focusPaneLeft, 'Focus Left Pane'),
+    (ChatCommandIds.focusPaneRight, 'Focus Right Pane'),
+    (ChatCommandIds.focusPaneUp, 'Focus Above Pane'),
+    (ChatCommandIds.focusPaneDown, 'Focus Below Pane'),
+    (ChatCommandIds.nextPaneTab, 'Open Next Tab in Pane'),
+    (ChatCommandIds.previousPaneTab, 'Open Previous Tab in Pane'),
+    (ChatCommandIds.togglePaneTabs, 'Toggle Pane Tabs'),
     (ChatCommandIds.search, 'Search'),
     (ChatCommandIds.searchAgents, 'Search Agents'),
     (ChatCommandIds.openIde, 'Open in Fast Ide'),
@@ -241,6 +277,7 @@ final List<CommandInfo> chatExtraCommands = [
     (ChatCommandIds.sidePanelTerminal, 'Toggle Agent Terminal'),
     (ChatCommandIds.sidePanelNewTerminal, 'New Agent Terminal'),
     (ChatCommandIds.sidePanelToggleList, 'Toggle Side Panel List'),
+    (ChatCommandIds.sidePanelUsage, 'Show Conversation Usage'),
     (ChatCommandIds.sidePanelCloseTab, 'Close Side Panel Tab'),
     for (var i = 1; i <= ChatCommandIds.sidePanelPageIndexes; i++)
       ('${ChatCommandIds.sidePanelPage}$i', 'Show Side Panel Page $i'),
@@ -269,6 +306,7 @@ final List<CommandInfo> chatExtraCommands = [
     (ChatCommandIds.nextMode, 'Switch to Next Mode'),
     (ChatCommandIds.openModelPicker, 'Open Model Picker'),
     (ChatCommandIds.attachContext, 'Add Context…'),
+    (ChatCommandIds.attachSelection, 'Add Selection to Chat'),
     (ChatCommandIds.pasteRaw, 'Paste as Plain Text'),
     (ChatCommandIds.selectNextSuggestion, 'Select Next Suggestion'),
     (ChatCommandIds.selectPrevSuggestion, 'Select Previous Suggestion'),
@@ -298,6 +336,13 @@ const _nextPrompt =
     '$_input && ${ChatContextKeys.cursorAtBottom} && '
     '!${ChatContextKeys.suggestWidgetVisible}';
 const _interaction = ChatContextKeys.inInteraction;
+
+/// The panes' and their tabs' arrow keys: not while typing, where they move
+/// by words, unless in the chat's empty input; on macOS, which moves by
+/// words with ⌥, anywhere.
+const _paneArrows =
+    '$_window && !textInputFocus || '
+    '$_window && $_input && !${ChatContextKeys.inputHasText}';
 
 /// Not while typing elsewhere than the chat's input (a denial's reason).
 const _tool =
@@ -398,6 +443,24 @@ final List<KeybindingEntry> chatExtraKeybindings = [
     command: ChatCommandIds.previousAgent,
     when: _window,
   ),
+  // As IntelliJ's: the arrows go to the pane that way, with Shift through
+  // the focused pane's tabs. Registered only where there is one to go to.
+  for (final (arrow, command) in [
+    ('left', ChatCommandIds.focusPaneLeft),
+    ('right', ChatCommandIds.focusPaneRight),
+    ('up', ChatCommandIds.focusPaneUp),
+    ('down', ChatCommandIds.focusPaneDown),
+    ('shift+left', ChatCommandIds.previousPaneTab),
+    ('shift+right', ChatCommandIds.nextPaneTab),
+  ]) ...[
+    KeybindingEntry(
+      win: 'ctrl+$arrow',
+      linux: 'ctrl+$arrow',
+      command: command,
+      when: _paneArrows,
+    ),
+    KeybindingEntry(mac: 'ctrl+$arrow', command: command, when: _window),
+  ],
   // As Open Editor at Index; the panes as the editor groups (⌘1…).
   for (var i = 1; i <= ChatCommandIds.agentIndexes; i++)
     KeybindingEntry(
@@ -523,6 +586,13 @@ final List<KeybindingEntry> chatExtraKeybindings = [
     command: ChatCommandIds.focusInput,
     when: '$_window || ${ChatContextKeys.inChat}',
   ),
+  // As Cursor's: over Focus Chat Input, where lines can be selected.
+  const KeybindingEntry(
+    key: 'ctrl+l',
+    mac: 'cmd+l',
+    command: ChatCommandIds.attachSelection,
+    when: 'ideMode && editorTextFocus || $_sidePanel',
+  ),
   // On macOS ⌘↑ moves the caret up until it is at the top.
   const KeybindingEntry(
     mac: 'cmd+up',
@@ -573,6 +643,25 @@ final List<KeybindingEntry> chatExtraKeybindings = [
     key: 'escape',
     command: ChatCommandIds.closeSubagent,
     when: '${ChatContextKeys.subagentVisible} && !inputFocus',
+  ),
+  // From a /btw conversation back to the one it was asked beside, as from
+  // a subagent; in its input too while it has nothing to take the key.
+  const KeybindingEntry(
+    key: 'escape',
+    command: ChatCommandIds.closeSubagent,
+    when:
+        '${ChatContextKeys.asideVisible} && !inputFocus && '
+        '!${ChatContextKeys.inInteraction}',
+  ),
+  const KeybindingEntry(
+    key: 'escape',
+    command: ChatCommandIds.closeSubagent,
+    when:
+        '${ChatContextKeys.asideVisible} && $_input && '
+        '!${ChatContextKeys.inputHasText} && '
+        '!${ChatContextKeys.requestInProgress} && '
+        '!${ChatContextKeys.currentlyEditing} && '
+        '!${ChatContextKeys.suggestWidgetVisible}',
   ),
   // Its input's.
   const KeybindingEntry(
@@ -745,6 +834,7 @@ const Set<String> chatContextKeys = {
   ChatContextKeys.currentlyEditing,
   ChatContextKeys.hasToolConfirmation,
   ChatContextKeys.subagentVisible,
+  ChatContextKeys.asideVisible,
   ChatContextKeys.inInteraction,
   ChatContextKeys.sidePanelFocus,
 };

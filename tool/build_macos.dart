@@ -11,6 +11,9 @@
 //                                                remote server already in
 //                                                build/remote/ (CI builds
 //                                                it once, for both apps)
+//   dart run tool/build_macos.dart --channel      the channel build
+//                                                (BAOCODE_CHANNEL; lib/channel/),
+//                                                its files named -channel
 //   dart run tool/build_macos.dart --remote-release [VERSION]
 //                                                take the remote server
 //                                                published (the newest
@@ -19,10 +22,17 @@
 //                                                instead of building one
 //
 // They land in build/installers/: Baogong-<version>-<arch>.dmg and
-// Baogong-<version>-mac-<arch>.zip, arch arm64 or x64; beside them,
+// Baogong-<version>-mac-<arch>.zip, arch arm64 or x64 (the channel
+// build's ending in -channel: Baogong-<version>-<arch>-channel.dmg…); beside them,
 // remote/<VERSION>/, the remote server's gzipped builds, which the app
 // downloads instead of carrying them (tool/build_remote_server.dart), to
 // upload with the release.
+//
+// The Dart code's symbols are saved as it is built, to build/symbols/
+// App.macos.symbols (universal: the App framework's executable before it is
+// stripped): a jank sample (lib/diagnostics/jank_sample.dart) names its
+// frames by their offsets in App, which tool/symbolize_jank_sample.dart
+// turns into functions with that file. The app ships stripped, as before.
 //
 // Signed with a Developer ID and notarised when the environment says how
 // (docs/release.md has how to get each):
@@ -50,6 +60,10 @@ import 'dart:io';
 /// clean already removes.
 const _bundleRelative = 'build/macos/Build/Products/Release/BaoCode.app';
 const _installersRelative = 'build/installers';
+const _symbolsRelative = 'build/symbols';
+
+/// The App framework's executable: the Dart code, compiled.
+const _appExecutable = 'Contents/Frameworks/App.framework/Versions/A/App';
 
 /// Where each architecture's app is made of the universal one.
 const _thinRelative = 'build/macos/thin';
@@ -89,6 +103,8 @@ const _required = [
   'Contents/Frameworks/App.framework/Resources/flutter_assets',
   // The terminal's native half (bao_pty's hook/build.dart builds it).
   'Contents/Frameworks/bao_pty.framework',
+  // The phones' link: iroh (bao_iroh's hook/build.dart builds it).
+  'Contents/Frameworks/bao_iroh.framework',
   // Finder's context menu (macos/FinderExtension), which Settings → General
   // turns on.
   'Contents/PlugIns/FinderExtension.appex',
@@ -109,6 +125,8 @@ Future<void> main(List<String> arguments) async {
     );
   }
   final skipBuild = arguments.contains('--skip-build');
+  final channel = arguments.contains('--channel');
+  final edition = channel ? '-channel' : '';
   final releaseAt = arguments.indexOf('--remote-release');
   final remoteRelease = releaseAt < 0
       ? null
@@ -131,8 +149,22 @@ Future<void> main(List<String> arguments) async {
   final version = _readVersion(File('${root.path}/pubspec.yaml'));
 
   if (!skipBuild) {
-    _step('Building the Release app');
-    await _run('flutter', ['build', 'macos', '--release'], root.path);
+    _step('Building the Release app${channel ? ' (the channel build)' : ''}');
+    await _run('flutter', [
+      'build',
+      'macos',
+      '--release',
+      if (channel) '--dart-define=BAOCODE_CHANNEL=true',
+      // Its symbols kept, to be saved before it is stripped below.
+      '--extra-gen-snapshot-options=--no-strip',
+    ], root.path);
+    _step('Saving the Dart code\'s symbols, then stripping them');
+    final app = File('${bundle.path}/$_appExecutable');
+    final symbols = Directory('${root.path}/$_symbolsRelative')
+      ..createSync(recursive: true);
+    app.copySync('${symbols.path}/App.macos.symbols');
+    // -x: the local symbols, the Dart code's (as flutter strips it).
+    await _run('strip', ['-x', app.path, '-o', app.path], root.path);
   } else {
     _step('Using the app already built');
   }
@@ -216,7 +248,7 @@ Future<void> main(List<String> arguments) async {
 
     _step('Making the $arch disk image');
     final dmg = File(
-      '${installers.path}/$_appName-${version.marketing}-$arch.dmg',
+      '${installers.path}/$_appName-${version.marketing}-$arch$edition.dmg',
     );
     // A window with the app, an arrow and an Applications shortcut to drag
     // it onto, on the background tool/dmg_background.swift draws (the
@@ -258,8 +290,8 @@ Future<void> main(List<String> arguments) async {
         // stapled to each is the one for its own signature.
         _step('Notarising the $arch disk image (a few minutes)');
         await signing.notarise(dmg);
-        await _run('xcrun', ['stapler', 'staple', dmg.path], root.path);
-        await _run('xcrun', ['stapler', 'staple', app.path], root.path);
+        await signing.staple(dmg.path);
+        await signing.staple(app.path);
       }
     }
 
@@ -269,7 +301,7 @@ Future<void> main(List<String> arguments) async {
     // permissions and extended attributes, which a framework's signature
     // depends on).
     final zip = File(
-      '${installers.path}/$_appName-${version.marketing}-mac-$arch.zip',
+      '${installers.path}/$_appName-${version.marketing}-mac-$arch$edition.zip',
     );
     if (zip.existsSync()) zip.deleteSync();
     await _run('ditto', [
@@ -324,9 +356,13 @@ Future<void> main(List<String> arguments) async {
     ..writeln('To publish it as an update, sign the zips into the manifest:')
     ..writeln('  dart run tool/release_manifest.dart \\')
     ..writeln(
-      '    --macos-arm64 $base-mac-arm64.zip --dmg-arm64 $base-arm64.dmg \\',
+      '    --macos-arm64$edition $base-mac-arm64$edition.zip '
+      '--dmg-arm64$edition $base-arm64$edition.dmg \\',
     )
-    ..writeln('    --macos-x64 $base-mac-x64.zip --dmg-x64 $base-x64.dmg');
+    ..writeln(
+      '    --macos-x64$edition $base-mac-x64$edition.zip '
+      '--dmg-x64$edition $base-x64$edition.dmg',
+    );
 }
 
 /// Signing with a Developer ID, and notarising, as the environment says
@@ -450,6 +486,32 @@ class _Signing {
         ...credentials,
       ]);
       _fail('Apple did not notarise ${file.path}:\n${log.stdout}');
+    }
+  }
+
+  /// Staples the notarisation ticket to [path], trying again for about
+  /// twelve minutes: stapler fetches the ticket from Apple's CloudKit, which
+  /// can drop the connection (-1005, stapler's error 68) for minutes on
+  /// end, or not have the ticket yet just after it is accepted. Within two
+  /// and a half minutes it had failed builds four times in a week (all the
+  /// failures there were), while notarising never did.
+  Future<void> staple(String path) async {
+    const waits = [15, 30, 60, 90, 120, 180, 240];
+    for (var attempt = 1; ; attempt++) {
+      stdout.writeln('  \$ xcrun stapler staple $path');
+      final result = await Process.run('xcrun', ['stapler', 'staple', path]);
+      if (result.exitCode == 0) return;
+      stdout.writeln('${result.stdout}'.trim());
+      stderr.writeln('${result.stderr}'.trim());
+      if (attempt > waits.length) {
+        _fail('stapler exited with code ${result.exitCode}, $attempt times.');
+      }
+      final wait = waits[attempt - 1];
+      stdout.writeln(
+        '  Trying again in $wait seconds '
+        '(attempt ${attempt + 1} of ${waits.length + 1})',
+      );
+      await Future<void>.delayed(Duration(seconds: wait));
     }
   }
 }

@@ -6,10 +6,10 @@ import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_quill/quill_delta.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
+import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/kernel/claude_code/mock_claude_code_transport.dart';
@@ -242,13 +242,13 @@ void main() {
       number: 1,
     );
     keptThread().session.draft.save(
-      Delta()..insert('Half a question\n'),
+      'Half a question',
       const TextSelection.collapsed(offset: 4),
       [image],
     );
     workspace.create(project: keptThread().project);
     newThread().session.draft.save(
-      Delta()..insert('Not asked yet\n'),
+      'Not asked yet',
       const TextSelection(baseOffset: 0, extentOffset: 3),
       const [],
     );
@@ -262,14 +262,14 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     workspace = await pumpLoaded(tester, drafts: drafts);
     final kept = keptThread().session.draft;
-    expect(kept.content, Delta()..insert('Half a question\n'));
+    expect(kept.content, 'Half a question');
     expect(kept.selection, const TextSelection.collapsed(offset: 4));
     expect(kept.images.single.bytes, [1, 2, 3]);
     expect(kept.images.single.name, 'shot.png');
     expect(kept.images.single.number, 1);
     workspace.create(project: keptThread().project);
     final draft = newThread().session.draft;
-    expect(draft.content, Delta()..insert('Not asked yet\n'));
+    expect(draft.content, 'Not asked yet');
     expect(
       draft.selection,
       const TextSelection(baseOffset: 0, extentOffset: 3),
@@ -277,12 +277,47 @@ void main() {
 
     // Emptied: not kept.
     keptThread().session.draft.save(
-      Delta()..insert('\n'),
+      '',
       const TextSelection.collapsed(offset: 0),
       const [],
     );
     await tester.pump(const Duration(milliseconds: 600));
     expect((await drafts.read()).keys, {'new:/tmp/project'});
+  });
+
+  testWidgets('a draft kept by a version before, as the old editor\'s '
+      'operations, comes back as text, its tags tags', (tester) async {
+    final tag = ComposerTokenEmbed.file('/tmp/project/lib/main.dart');
+    final drafts = MemoryPreferenceStore({
+      FakeCatalog.kept.id: {
+        'content': [
+          {'insert': 'see '},
+          {
+            'insert': {tag.type: tag.data},
+          },
+          {
+            'insert': ' now',
+            'attributes': {'header': 2},
+          },
+          {'insert': '\n'},
+        ],
+        // After the tag: one character of the old text.
+        'base': 5,
+        'extent': 5,
+        'images': const [],
+      },
+    });
+    final workspace = await pumpLoaded(tester, drafts: drafts);
+    final draft = workspace.threads
+        .firstWhere((thread) => thread.id == FakeCatalog.kept.id)
+        .session
+        .draft;
+    expect(draft.content, 'see ${tag.atom} now');
+    expect(
+      draft.selection,
+      TextSelection.collapsed(offset: 'see ${tag.atom}'.length),
+    );
+    expect(composerPlainText(draft.content!), 'see ${tag.plainText} now');
   });
 
   testWidgets('an opened folder becomes the first project', (tester) async {
@@ -389,6 +424,34 @@ void main() {
     expect(thread.title, 'Login');
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     expect(renames, ['Login']);
+    thread.session.stop();
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('a title summed up on request is from all that was asked, '
+      'and left to the user to keep', (tester) async {
+    final renames = <String>[];
+    final asked = <String>[];
+    final workspace = await pumpLoaded(
+      tester,
+      kernel: titledClaude(renames),
+      titler: (message, {model, location}) async {
+        asked.add(message);
+        return 'Generated ${asked.length}';
+      },
+    );
+    final thread = workspace.selected;
+    thread.session.send(const ComposerMessage(text: 'Fix the login test'));
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    expect(thread.title, 'Generated 1');
+
+    expect(askedTitles(thread.session), ['Fix the login test']);
+    final summary = await workspace.summarizeTitle(thread);
+    expect(summary, 'Generated 2');
+    expect(asked.last, 'Fix the login test');
+    expect(thread.title, 'Generated 1');
     thread.session.stop();
     await tester.pump(const Duration(seconds: 1));
   });
@@ -952,6 +1015,32 @@ void main() {
   });
 
   group('the chat panes', () {
+    testWidgets(
+      'rearranged panes and the moved agent focused survive a restart',
+      (tester) async {
+        final store = MemoryPreferenceStore();
+        var workspace = await pumpLoaded(tester, preferences: store);
+        final draft = workspace.selected;
+        final kept = workspace.threads.firstWhere(
+          (thread) => thread.record?.id == FakeCatalog.kept.id,
+        );
+        workspace.openBeside(kept, draft, PaneSide.right);
+        workspace.rearrangePane(kept, draft, side: PaneSide.bottom);
+        expect(workspace.grid.rowsSplit, isTrue);
+        expect(workspace.grid.columnsSplit, isFalse);
+        expect(workspace.current, same(kept));
+
+        await tester.pumpWidget(const SizedBox());
+        workspace = await pumpLoaded(tester, preferences: store);
+        expect(workspace.grid.panes, hasLength(2));
+        expect(workspace.grid.at(0)?.id, isNull);
+        expect(workspace.grid.at(2)?.id, FakeCatalog.kept.id);
+        expect(workspace.grid.rowsSplit, isTrue);
+        expect(workspace.grid.columnsSplit, isFalse);
+        expect(workspace.current?.id, FakeCatalog.kept.id);
+      },
+    );
+
     testWidgets('the agents open, where they were, and the one focused are '
         'kept between runs', (tester) async {
       final store = MemoryPreferenceStore();
@@ -961,7 +1050,7 @@ void main() {
         (thread) => thread.record?.id == FakeCatalog.kept.id,
       );
       workspace.openBeside(kept, draft, PaneSide.right);
-      workspace.grid.columnRatio = .3;
+      workspace.grid.setColumnRatioIn(0, .3);
       workspace.keepGridLines();
 
       // The next run.
@@ -976,7 +1065,7 @@ void main() {
       expect(workspace.grid.at(0), same(panes.first));
       expect(workspace.grid.at(1), same(panes.last));
       expect(workspace.selected, same(panes.last));
-      expect(workspace.grid.columnRatio, .3);
+      expect(workspace.grid.columnRatios, [.3, .3]);
     });
 
     testWidgets('a pane splits for a new agent in its project, at its right '

@@ -55,7 +55,10 @@ class _FakeCodex extends CodexService {
   }
 
   @override
-  Future<void> refreshUsage(ModelProvider provider) async => refreshed++;
+  Future<void> refreshUsage(
+    ModelProvider provider, {
+    bool force = true,
+  }) async => refreshed++;
 
   @override
   CodexUsage? usage(String providerId, String accountId) => usages[accountId];
@@ -66,6 +69,16 @@ class _FakeCodex extends CodexService {
 
   @override
   DateTime? limitedUntil(String providerId, String accountId) => null;
+
+  @override
+  bool signedOut(String providerId, String accountId) => accountId == 'b';
+
+  @override
+  ProviderAccount? accountFor(ModelProvider provider, {String? session}) =>
+      null;
+
+  @override
+  DateTime? backAt(ModelProvider provider) => null;
 
   @override
   Future<void> removeAccount(String providerId, String accountId) async {
@@ -413,7 +426,8 @@ void main() {
     );
     await tester.enterText(fields.at(0), 'my-model');
     await tester.enterText(fields.at(1), 'Mine');
-    await tester.enterText(fields.at(2), '128k');
+    // Its endpoint URL (2) left to its upstream's.
+    await tester.enterText(fields.at(3), '128k');
     // An effort taken off, a context added: its own lists.
     await tester.tap(
       find.byWidgetPredicate(
@@ -421,7 +435,7 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.enterText(fields.at(4), '64k');
+    await tester.enterText(fields.at(5), '64k');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
     await tester.ensureVisible(find.text('Does not take images'));
@@ -596,6 +610,197 @@ void main() {
     expect(providers.provider('an')!.roles.subagent, '@ds/deepseek-chat');
   });
 
+  testWidgets('every role but the main model may pick another upstream\'s '
+      'model, unset once that model is removed there', (tester) async {
+    await providers.save(
+      const ModelProvider(
+        id: 'an',
+        name: 'Claude',
+        baseUrl: 'https://api.anthropic.com',
+        models: [ProviderModel(id: 'claude-opus-4-5')],
+      ),
+    );
+    await providers.save(
+      const ModelProvider(
+        id: 'ds',
+        name: 'DeepSeek',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: 'https://api.deepseek.com',
+        models: [
+          ProviderModel(id: 'deepseek-chat'),
+          ProviderModel(id: 'deepseek-reasoner'),
+        ],
+      ),
+    );
+    await pump(tester);
+    await tester.tap(find.text('Claude').last);
+    await tester.pumpAndSettle();
+
+    Finder row(String label) =>
+        find.ancestor(of: find.text(label), matching: find.byType(Row)).first;
+    Future<void> pick(String role, String upstream, String model) async {
+      await tester.ensureVisible(row(role));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(of: row(role), matching: find.text('Unset')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(upstream).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(model).last);
+      await tester.pumpAndSettle();
+    }
+
+    await pick('Opus Tier', 'DeepSeek', 'deepseek-reasoner');
+    await pick('Sonnet Tier', 'DeepSeek', 'deepseek-chat');
+    await pick('Haiku Tier', 'DeepSeek', 'deepseek-chat');
+    var roles = providers.provider('an')!.roles;
+    expect(
+      (roles.opus, roles.sonnet, roles.haiku),
+      ('@ds/deepseek-reasoner', '@ds/deepseek-chat', '@ds/deepseek-chat'),
+    );
+    expect(providers.provider('an')!.throughProxy, isTrue);
+    expect(find.text('DeepSeek · deepseek-reasoner'), findsOneWidget);
+    expect(find.text('DeepSeek · deepseek-chat'), findsNWidgets(2));
+    // The Haiku warning is for one unset.
+    expect(
+      find.textContaining('Unset, background work runs on the model picked'),
+      findsNothing,
+    );
+
+    // The main model stands in on this upstream: its own models only.
+    await tester.ensureVisible(row('Main Model'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(of: row('Main Model'), matching: find.text('Unset')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('claude-opus-4-5'), findsWidgets);
+    expect(find.text('DeepSeek'), findsNothing);
+    await tester.tapAt(Offset.zero);
+    await tester.pumpAndSettle();
+
+    // A model removed on its upstream's page: the roles on it unset.
+    await tester.tap(find.byType(IdeBackButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DeepSeek').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find
+          .byWidgetPredicate(
+            (widget) =>
+                widget is IdeActionButton && widget.tooltip == 'More Actions',
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove').last);
+    await tester.pumpAndSettle();
+    expect(providers.provider('ds')!.models.map((m) => m.id), [
+      'deepseek-reasoner',
+    ]);
+    roles = providers.provider('an')!.roles;
+    expect(
+      (roles.opus, roles.sonnet, roles.haiku),
+      ('@ds/deepseek-reasoner', null, null),
+    );
+  });
+
+  testWidgets('a model is spoken to at an endpoint of its own, or its '
+      'upstream\'s again', (tester) async {
+    await providers.save(
+      const ModelProvider(
+        id: 'gw',
+        name: 'Relay',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: 'https://relay.example/v1',
+        models: [ProviderModel(id: 'claude-sonnet-4-5')],
+      ),
+    );
+    await pump(tester);
+    await tester.tap(find.text('Relay'));
+    await tester.pumpAndSettle();
+    expect(find.text('Anthropic'), findsNothing);
+
+    Future<void> edit(String from, String to) async {
+      await tester.tap(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is IdeActionButton && widget.tooltip == 'More Actions',
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit…'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ModelEditDialog), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ModelEditDialog),
+          matching: find.text(from),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(to).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+    }
+
+    await edit(
+      'As the upstream (OpenAI Chat Completions)',
+      'Anthropic-compatible',
+    );
+    var provider = providers.provider('gw')!;
+    expect(provider.models.single.protocol, ProviderProtocol.anthropic);
+    expect(
+      provider.protocolOf(provider.models.single),
+      ProviderProtocol.anthropic,
+    );
+    expect(find.text('Anthropic'), findsOneWidget);
+    // Its auth set for it, under Advanced.
+    await tester.ensureVisible(find.text('Advanced'));
+    await tester.tap(find.text('Advanced'));
+    await tester.pumpAndSettle();
+    expect(find.text('Authentication'), findsOneWidget);
+    expect(find.text('Send Reasoning Back'), findsOneWidget);
+
+    await edit(
+      'Anthropic-compatible',
+      'As the upstream (OpenAI Chat Completions)',
+    );
+    provider = providers.provider('gw')!;
+    expect(provider.models.single.protocol, isNull);
+    expect(find.text('Anthropic'), findsNothing);
+    expect(find.text('Authentication'), findsNothing);
+  });
+
+  testWidgets('a ChatGPT upstream\'s models have no endpoint of their own', (
+    tester,
+  ) async {
+    await providers.save(
+      const ModelProvider(
+        id: 'cx',
+        name: 'ChatGPT',
+        protocol: ProviderProtocol.codex,
+        models: [ProviderModel(id: 'gpt-5.5')],
+      ),
+    );
+    await pump(tester, codex: _FakeCodex(providers));
+    await tester.tap(find.text('ChatGPT').last);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is IdeActionButton && widget.tooltip == 'More Actions',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit…'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ModelEditDialog), findsOneWidget);
+    expect(find.text('Endpoint'), findsNothing);
+  });
+
   testWidgets('Fast is not a provider-wide setting', (tester) async {
     for (final (id, name, protocol) in [
       ('gw', 'Gateway', ProviderProtocol.openaiResponses),
@@ -640,6 +845,79 @@ void main() {
     expect(providers.provider('gw')!.headers, {
       'x-session-id': '{{CLAUDE_SESSION_ID}}',
     });
+  });
+
+  testWidgets('an upstream\'s own addresses, folded under its connection, '
+      'and a model\'s own apart from its endpoint type', (tester) async {
+    await providers.save(
+      const ModelProvider(
+        id: 'gw',
+        name: 'Gateway',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: 'http://10.0.0.1/api/v1/openai/v1',
+        models: [ProviderModel(id: 'm')],
+      ),
+    );
+    await pump(tester);
+    await tester.tap(find.text('Gateway'));
+    await tester.pumpAndSettle();
+    expect(find.text('Models URL'), findsNothing);
+    await tester.ensureVisible(find.text('Custom URLs'));
+    await tester.tap(find.text('Custom URLs'));
+    await tester.pumpAndSettle();
+    // What the base URL makes, while none is set.
+    expect(
+      find.text('http://10.0.0.1/api/v1/openai/v1/models'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('http://10.0.0.1/api/v1/openai/v1/chat/completions'),
+      findsOneWidget,
+    );
+    await type(tester, 'Models URL', 'http://10.0.0.1/api/models');
+    await type(tester, 'Endpoint URL', 'http://10.0.0.1/api/chat');
+    var provider = providers.provider('gw')!;
+    expect(provider.modelsUrl, 'http://10.0.0.1/api/models');
+    expect(provider.endpointUrl, 'http://10.0.0.1/api/chat');
+
+    await tester.ensureVisible(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is IdeActionButton && widget.tooltip == 'More Actions',
+      ),
+    );
+    await tester.tap(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is IdeActionButton && widget.tooltip == 'More Actions',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit…'));
+    await tester.pumpAndSettle();
+    final dialog = find.byType(ModelEditDialog);
+    // Its upstream's endpoint, while it has none of its own.
+    expect(
+      find.descendant(
+        of: dialog,
+        matching: find.text('http://10.0.0.1/api/chat'),
+      ),
+      findsOneWidget,
+    );
+    final input = find.descendant(
+      of: find.descendant(
+        of: dialog,
+        matching: find.bySemanticsLabel('Endpoint URL'),
+      ),
+      matching: find.byType(EditableText),
+    );
+    await tester.enterText(input.first, ' http://10.0.0.1/m ');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    provider = providers.provider('gw')!;
+    expect(provider.models.single.endpointUrl, 'http://10.0.0.1/m');
+    // Its endpoint type as it was: the upstream's.
+    expect(provider.models.single.protocol, isNull);
   });
 
   testWidgets('deleting an upstream asks first, and takes its key', (
@@ -694,6 +972,38 @@ void main() {
     expect(await providers.key(copy.id), 'sk');
     expect(find.text('Gateway Copy'), findsWidgets);
     expect(providers.provider('gw'), isNotNull);
+  });
+
+  testWidgets('the models gone upstream are removed at once, asked first, '
+      'and their roles with them', (tester) async {
+    await providers.save(
+      const ModelProvider(
+        id: 'gw',
+        name: 'Gateway',
+        baseUrl: 'https://gw',
+        models: [
+          ProviderModel(id: 'up'),
+          ProviderModel(id: 'old', missing: true),
+          ProviderModel(id: 'older', missing: true),
+        ],
+        roles: ProviderRoles(main: 'up', haiku: 'old'),
+      ),
+    );
+    await pump(tester);
+    await tester.tap(find.text('Gateway'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove Gone (2)'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Remove 2 models the upstream no longer lists?'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Remove').last);
+    await tester.pumpAndSettle();
+    final provider = providers.provider('gw')!;
+    expect(provider.models.map((m) => m.id), ['up']);
+    expect((provider.roles.main, provider.roles.haiku), ('up', null));
+    expect(find.textContaining('Remove Gone'), findsNothing);
   });
 
   testWidgets('a model duplicated: added as it is, under another id (#177)', (

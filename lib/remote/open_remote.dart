@@ -38,9 +38,7 @@ class OpenRemoteFlow {
     SshHosts? hosts,
     this.configHosts,
   }) : hosts = hosts ?? SshHosts.instance,
-       labelOf = labelOf ?? _itself;
-
-  static String _itself(String host) => host;
+       labelOf = labelOf ?? RemoteLocation.hostName;
 
   /// Where the hosts to pick from come from when not given: `~/.ssh/config`;
   /// replaceable under test (see [defaultRemoteConfigHosts]).
@@ -80,6 +78,15 @@ class OpenRemoteFlow {
   /// The next step's pick, once the one accepted has hidden.
   void _next(IdeQuickPick pick) => Timer.run(() => show(pick));
 
+  /// The pick saying [directory] is being read, once reading it takes a
+  /// while (see [readingPick]).
+  ReadingWait _reading(String host, String directory) => readingPick(
+    _next,
+    l10n: l10n,
+    placeholder: l10n.remoteFolderPlaceholder(RemoteLocation.hostName(host)),
+    directory: directory,
+  );
+
   /// The hosts to pick from (see [RemoteHostPicker]).
   Future<void> start() => RemoteHostPicker(
     show: show,
@@ -105,10 +112,10 @@ class OpenRemoteFlow {
     final ssh = hosts[host];
     (now ? show : _next)(
       IdeQuickPick(
-        placeholder: l10n.remoteConnecting(host),
+        placeholder: l10n.remoteConnecting(RemoteLocation.hostName(host)),
         items: [
           IdeQuickPickItem(
-            label: l10n.remoteConnecting(host),
+            label: l10n.remoteConnecting(RemoteLocation.hostName(host)),
             icon: const IdeSpinning(Icon(Codicons.loading)),
           ),
         ],
@@ -135,11 +142,15 @@ class OpenRemoteFlow {
             )).contains(host);
         _next(
           IdeQuickPick(
-            placeholder: l10n.remoteConnectFailed(host),
+            placeholder: l10n.remoteConnectFailed(
+              RemoteLocation.hostName(host),
+            ),
             sortByLabel: false,
             items: [
               IdeQuickPickItem(
-                label: message ?? l10n.remoteConnectFailed(host),
+                label:
+                    message ??
+                    l10n.remoteConnectFailed(RemoteLocation.hostName(host)),
                 detail: detail?.split('\n').last,
                 icon: const Icon(Codicons.error),
               ),
@@ -176,17 +187,20 @@ class OpenRemoteFlow {
   }
 
   /// The folders in [directory] on [host], to open it or go on.
+  /// [waiting] is the wait's pick, if one was shown already (a path typed
+  /// that led here).
   Future<void> _browse(
     String host,
     RemoteClient client,
-    String directory,
-  ) async {
+    String directory, {
+    ReadingWait? waiting,
+  }) async {
     final paths = p.posix;
     List<String> folders = const [];
     String? failure;
 
-    /// Whether the folders are being read: the refresh button is dimmed
-    /// meanwhile, and notifies the pick once they are (its `refresh`).
+    /// Whether the folders are being read: the pick's rows are read again
+    /// as it changes (its `refresh`).
     final reading = ValueNotifier(false);
 
     /// Reads the folders again, e.g. one made in a terminal since.
@@ -207,13 +221,27 @@ class OpenRemoteFlow {
       }
     }
 
-    await read();
+    final wait = waiting ?? _reading(host, directory);
+    try {
+      await read();
+    } finally {
+      wait.cancel();
+    }
+    // Closed meanwhile: nothing of this read is shown.
+    if (wait.dismissed) return;
     final parent = paths.dirname(directory);
     Future<void> goTo(String path) async {
+      final wait = _reading(host, path);
       try {
         final real = await client.realPath(path);
-        await _browse(host, client, real);
+        if (wait.dismissed) {
+          wait.cancel();
+          return;
+        }
+        await _browse(host, client, real, waiting: wait);
       } on Object catch (error) {
+        wait.cancel();
+        if (wait.dismissed) return;
         _next(
           IdeQuickPick(
             items: [
@@ -232,7 +260,9 @@ class OpenRemoteFlow {
 
     _next(
       IdeQuickPick(
-        placeholder: l10n.remoteFolderPlaceholder(host),
+        placeholder: l10n.remoteFolderPlaceholder(
+          RemoteLocation.hostName(host),
+        ),
         sortByLabel: false,
         refresh: reading,
         buttons: [

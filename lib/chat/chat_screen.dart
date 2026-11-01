@@ -1,10 +1,16 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:bao_editor/textmate/textmate_syntax.dart' show TextMateSyntax;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
+import '../channel/channel_setup.dart';
+import '../ide/ide_menu.dart';
 import '../kernel/kernel_types.dart';
+import '../kernel/claude_code/claude_path_setting.dart' show installLocalClaude;
 import '../keybindings/chat_keybindings.dart';
 import '../l10n/l10n.dart';
 import '../models/model_welcome.dart';
@@ -13,8 +19,11 @@ import '../remote/remote_status.dart' show ClaudeInstallBanner, SshHostBanner;
 import '../stash/stash_actions.dart';
 import '../stash/stash_store.dart';
 import '../theme/app_theme.dart';
-import '../workspace/editor_launcher.dart' show openExternal;
+import '../theme/codicons.dart';
+import '../workspace/editor_launcher.dart';
+import '../workspace/agent_title.dart' show askedTitles;
 import '../workspace/title_bar_double_click.dart';
+import '../workspace/window_controls.dart';
 import 'agent_view.dart';
 import 'chat_column.dart';
 import 'chat_feed.dart';
@@ -25,11 +34,13 @@ import 'chat_session.dart';
 import 'open_editor.dart';
 import 'resume_after_reset.dart';
 import 'chat_width.dart';
+import 'composer/command_details.dart';
 import 'composer/composer.dart';
 import 'composer/composer_embeds.dart';
 import 'composer/composer_mock_data.dart';
 import 'composer/file_mentions.dart';
 import 'panels/activity_strip.dart';
+import 'panels/claude_core_hint.dart';
 import 'panels/health_banner.dart';
 import 'panels/interaction_panel.dart';
 import 'panels/limit_reset_panel.dart';
@@ -37,13 +48,14 @@ import 'panels/context_usage_panel.dart';
 import 'panels/goal_panel.dart';
 import 'panels/mcp_servers_panel.dart';
 import 'panels/queue_panel.dart';
-import 'panels/todo_panel.dart';
+import 'panels/reset_credits_hint.dart';
 import 'side_panel/file_link.dart';
 import 'side_panel/file_open.dart';
 import 'stop_confirmation.dart';
 import 'widgets/agent_step.dart';
 import 'widgets/chat_minimap.dart';
 import 'widgets/code_citation.dart';
+import 'widgets/hover_scroll_text.dart';
 import 'widgets/inline_rename_field.dart';
 import 'widgets/pixel_loader.dart';
 import 'widgets/plan_start.dart';
@@ -61,6 +73,11 @@ class ChatScreen extends StatefulWidget {
     this.trailing,
     this.titleBarInset,
     this.onRename,
+    this.onSummarizeTitle,
+    this.subtitle,
+    this.titleTabs,
+    this.titleDragBuilder,
+    this.onTitleDragStart,
     this.autofocus = false,
     this.embedded = false,
     this.windowTitleBar = true,
@@ -72,12 +89,17 @@ class ChatScreen extends StatefulWidget {
     this.onOpenTerminalTask,
     this.colorizeCode,
     this.colorizeCodeBlock,
+    this.codeSyntax,
     this.start,
     this.startHint,
     this.below,
     this.sessions,
     this.fileMentions,
+    this.commandFile,
     this.openEditor,
+    this.onSideQuestion,
+    this.asideAt,
+    this.back,
   });
 
   final String title;
@@ -96,6 +118,25 @@ class ChatScreen extends StatefulWidget {
 
   /// Given, a double click on the title edits it.
   final ValueChanged<String>? onRename;
+
+  /// A new title summing the conversation up, offered under the title as
+  /// it is renamed; null when none could be had.
+  final Future<String?> Function()? onSummarizeTitle;
+
+  /// After the title, fainter: e.g. a pane's project, and the host it is
+  /// on.
+  final Widget? subtitle;
+
+  /// In the title bar in place of the title (and [subtitle]), but while
+  /// it is renamed: e.g. a pane's tabs.
+  final Widget? titleTabs;
+
+  /// Wraps the title as a drag source, when not renaming. Its double click
+  /// still renames; the title bar's controls are never part of the source.
+  final Widget Function(Widget title)? titleDragBuilder;
+
+  /// A drag from the title bar's empty area, alongside the title's source.
+  final ValueChanged<PointerMoveEvent>? onTitleDragStart;
 
   /// Focuses the composer once shown, e.g. for a new agent.
   final bool autofocus;
@@ -139,6 +180,9 @@ class ChatScreen extends StatefulWidget {
   /// Colors code blocks by the language their fences name.
   final CodeBlockColorizer? colorizeCodeBlock;
 
+  /// See [CodeCitationScope.syntax].
+  final TextMateSyntax Function()? codeSyntax;
+
   /// Over the composer while nothing was sent, e.g. where the agent is to
   /// work: given, the composer waits in the middle of the screen until then.
   final Widget? start;
@@ -158,9 +202,27 @@ class ChatScreen extends StatefulWidget {
   /// Where `@` looks files up, besides the kernel (see [FileMentions]).
   final FileMentions? fileMentions;
 
+  /// The file of a `/command` (no `/`): a skill's SKILL.md, a command's
+  /// markdown; null for one built in. Its menu and its tags open it, as
+  /// [fileLinks] opens a file (see [CommandDetails]).
+  final Future<String?> Function(String command)? commandFile;
+
   /// The file open in the editor beside it, where there is one: the agent
   /// is told of it with the messages sent (see [ChatSession.send]).
   final OpenEditor? Function()? openEditor;
+
+  /// Given, `/btw …` sent here is not the agent's: what follows it, with
+  /// the message's images and mentions, is asked in a conversation of its
+  /// own beside this one, from all of this one so far.
+  final ValueChanged<ComposerMessage>? onSideQuestion;
+
+  /// What shows under the conversation's item of the id given: the
+  /// conversations asked beside it from there (see [onSideQuestion]).
+  final Widget? Function(String itemId)? asideAt;
+
+  /// Over the conversation, as over a subagent's: the way back to the one
+  /// it was asked beside, [label] that one's title. None for most.
+  final ({String label, VoidCallback onBack})? back;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -230,7 +292,7 @@ class _ChatScreenState extends State<ChatScreen>
   _AgentLayer? get _agentShown =>
       _layers.lastOrNull?.leaving == false ? _layers.last : null;
 
-  static const _layerDuration = Duration(milliseconds: 300);
+  static const _layerDuration = ConversationLayer.duration;
 
   /// The subagents left open when this conversation last showed, as they
   /// were: no way in to play again.
@@ -334,6 +396,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _backMinimapRoom.dispose();
     _session.removeListener(_checkStarting);
     _session.removeListener(_followPlan);
     _session.removeListener(_welcomeToModels);
@@ -369,6 +432,33 @@ class _ChatScreenState extends State<ChatScreen>
     _composerKey.currentState?.focus();
   }
 
+  /// Whether the conversation is a Claude Code one on this machine, whose
+  /// core may be BaoCode's own ([ClaudeCoreHint]).
+  bool get _localClaudeCode =>
+      !kIsWeb &&
+      _session.kernel.id == 'claude-code' &&
+      switch (_session.kernelContext.cwd) {
+        final cwd? => RemoteLocation.hostOf(cwd) == null,
+        null => true,
+      };
+
+  /// The CLI picked from [ClaudeCoreHint]: the session moves to it now
+  /// when at rest, downloaded first where there is none (as
+  /// [ClaudeInstallBanner] shows); else it is downloaded meanwhile, for
+  /// the session to move to it as it starts again.
+  void _movedToCli() {
+    if (!_session.isStreaming && _session.pendingInteraction == null) {
+      _session.restart();
+      return;
+    }
+    unawaited(
+      installLocalClaude().catchError((Object error) {
+        // Said again by the session that starts on it.
+        debugPrint('Claude Code not downloaded: $error');
+      }),
+    );
+  }
+
   /// The sequence of the plan writing last shown.
   int? _planShown;
 
@@ -381,10 +471,27 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Whether the welcome to models waits for the channel build's setup.
+  bool _awaitingSetup = false;
+
   /// No model to run on, the first time for the app: what setting one up
-  /// is, by itself; after that, from the banner and the model's pill.
+  /// is, by itself; after that, from the banner and the model's pill. The
+  /// channel build's setup first (lib/channel/).
   void _welcomeToModels() {
+    // The channel build's model is its account's: no setting one up.
+    if (ChannelSetup.channelBuild) return;
     if (!_session.health.noModel || ModelWelcome.welcomed) return;
+    if (ChannelSetup.current case final setup? when !setup.done) {
+      if (_awaitingSetup) return;
+      _awaitingSetup = true;
+      // Once its welcome closed, with Get Started.
+      unawaited(
+        setup.started.then((_) {
+          if (mounted) _welcomeToModels();
+        }),
+      );
+      return;
+    }
     ModelWelcome.welcomed = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(showModelWelcome(context));
@@ -421,6 +528,7 @@ class _ChatScreenState extends State<ChatScreen>
     ChatContextKeys.hasToolConfirmation =>
       _session.pendingInteraction is ApprovalRequest,
     ChatContextKeys.subagentVisible => _agentShown != null,
+    ChatContextKeys.asideVisible => widget.back != null && _agentShown == null,
     _ => null,
   };
 
@@ -440,7 +548,10 @@ class _ChatScreenState extends State<ChatScreen>
     ChatCommandIds.toggleContextPanel: _toggleContextPanel,
     if (_renames)
       ChatCommandIds.renameAgent: () => setState(() => _renaming = true),
-    if (_agentShown != null) ChatCommandIds.closeSubagent: _back,
+    if (_agentShown != null)
+      ChatCommandIds.closeSubagent: _back
+    else if (widget.back case final back?)
+      ChatCommandIds.closeSubagent: back.onBack,
   };
 
   Widget _buildTitleBar() {
@@ -451,13 +562,16 @@ class _ChatScreenState extends State<ChatScreen>
     );
     final onRename = widget.onRename;
     final inset = widget.titleBarInset ?? AppMetrics.trafficLightsWidth + 12;
-    final Widget title;
+    Widget title;
     if (_renaming && onRename != null) {
       title = SizedBox(
         width: 320,
         child: InlineRenameField(
           initial: widget.title,
           style: style.copyWith(color: AppColors.textPrimary),
+          // What was asked, to title it after instead.
+          suggestions: askedTitles(_session),
+          onSummarize: widget.onSummarizeTitle,
           onDone: (text) {
             if (text != null) onRename(text);
             setState(() => _renaming = false);
@@ -469,23 +583,19 @@ class _ChatScreenState extends State<ChatScreen>
         onDoubleTap: onRename == null
             ? null
             : () => setState(() => _renaming = true),
-        child: Text(
-          widget.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: style,
-        ),
+        // Too long for the bar: scrolled to the rest while hovered.
+        child: HoverScrollText(widget.title, style: style),
       );
+      // A pane's title drags the pane; the chat's alone, the window, as the
+      // system's title does: a long one leaves little of the bar empty.
+      title =
+          widget.titleDragBuilder?.call(title) ??
+          (widget.windowTitleBar ? TitleBarDragHandle(child: title) : title);
     }
     final bar = SizedBox(
       height: AppMetrics.titleBarHeight,
       child: CustomMultiChildLayout(
-        delegate: _TitleBarLayout(
-          inset: inset,
-          maxWidth: _maxContentWidth,
-          // Align with the composer, which leaves no minimap gutter.
-          minimap: false,
-        ),
+        delegate: _TitleBarLayout(inset: inset),
         children: [
           if (widget.leading case final leading?)
             LayoutId(id: _TitleBarSlot.leading, child: leading),
@@ -494,10 +604,35 @@ class _ChatScreenState extends State<ChatScreen>
             child: Row(
               children: [
                 Expanded(
-                  // The title, where the conversation begins: at its start,
-                  // as the row macOS draws has it (Windows draws none of
-                  // it: see window_header/).
-                  child: Align(alignment: Alignment.centerLeft, child: title),
+                  // The title at the bar's start, as the row macOS draws
+                  // has it (Windows draws none of it: see window_header/).
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: switch (widget.subtitle) {
+                      _ when !_renaming && widget.titleTabs != null =>
+                        widget.titleTabs!,
+                      final subtitle? when !_renaming => LayoutBuilder(
+                        builder: (context, constraints) => Row(
+                          children: [
+                            Flexible(child: title),
+                            const SizedBox(width: 8),
+                            // Its own width, up to some of the bar's: the
+                            // title has the rest.
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: math.min(
+                                  220,
+                                  constraints.maxWidth * .4,
+                                ),
+                              ),
+                              child: subtitle,
+                            ),
+                          ],
+                        ),
+                      ),
+                      _ => title,
+                    },
+                  ),
                 ),
               ],
             ),
@@ -512,7 +647,14 @@ class _ChatScreenState extends State<ChatScreen>
     );
     // Beside the title (a double click renames it) and the buttons, a
     // double click does what one on the system's title bar does.
-    return widget.windowTitleBar ? TitleBarDoubleClick(child: bar) : bar;
+    return TitleBarDoubleClick(
+      windowTitleBar: widget.windowTitleBar,
+      onDragStart: _renaming ? null : widget.onTitleDragStart,
+      // Beside the traffic lights it is the window's, panes side by side or
+      // not: with the sidebar hidden, nothing else along the top is.
+      windowStart: inset >= AppMetrics.trafficLightsWidth ? inset : 0,
+      child: bar,
+    );
   }
 
   Widget? _buildActivityStrip() {
@@ -542,6 +684,7 @@ class _ChatScreenState extends State<ChatScreen>
       onOpenFile: open == null
           ? null
           : (change) => open(change, _session.originalOf(change)),
+      fileActions: _fileActions,
       onStopTask: _session.stopTask,
       canOpenTask: (task) => task.kind == KernelTaskKind.command
           ? widget.onOpenTerminalTask != null
@@ -567,23 +710,85 @@ class _ChatScreenState extends State<ChatScreen>
     final commands = _session.commands;
     if (!identical(commands, _commandSource)) {
       _commandSource = commands;
+      final aside = widget.onSideQuestion != null;
       _commands = [
-        for (final command in commands)
+        // Taken here, not by the agent: a conversation beside this one
+        // (see [ChatScreen.onSideQuestion]), in place of the CLI's own.
+        if (aside)
           Suggestion(
             kind: SuggestionKind.command,
-            label: command.name,
-            detail: command.argumentHint.isEmpty
-                ? command.description
-                : '${command.argumentHint}  ${command.description}',
-            icon: command.icon,
+            label: _asideCommand,
+            detail: context.l10n.btwCommandDetail,
+            icon: Codicons.commentDiscussion,
           ),
+        for (final command in commands)
+          if (!aside || command.name != _asideCommand)
+            Suggestion(
+              kind: SuggestionKind.command,
+              label: command.name,
+              detail: command.argumentHint.isEmpty
+                  ? command.description
+                  : '${command.argumentHint}  ${command.description}',
+              icon: command.icon,
+            ),
       ];
     }
     return _commands;
   }
 
+  static const _asideCommand = 'btw';
+
+  /// Takes `/btw …` for a conversation beside this one: true when it was
+  /// one. What follows, on this line or the next, is asked there with the
+  /// message's images and mentions; `/btw` alone asks nothing.
+  bool _interceptSideQuestion(ComposerMessage message) {
+    final handler = widget.onSideQuestion;
+    if (handler == null) return false;
+    final text = message.text.trimLeft();
+    if (!text.startsWith(RegExp('^/$_asideCommand(\\s|\$)'))) return false;
+    final question = ComposerMessage(
+      text: text.substring(_asideCommand.length + 1).trim(),
+      mentions: message.mentions,
+      images: message.images,
+    );
+    if (!question.isEmpty) handler(question);
+    return true;
+  }
+
   List<KernelCommand>? _commandSource;
   List<Suggestion> _commands = const [];
+
+  /// [ChatScreen.commandFile]'s answers, asked once each while the
+  /// kernel's commands are the same.
+  final Map<String, Future<String?>> _commandFiles = {};
+  List<KernelCommand>? _commandFilesOf;
+
+  String? _describeCommand(String name) {
+    for (final command in _session.commands) {
+      if (command.name != name) continue;
+      if (command.argumentHint.isEmpty) return command.description;
+      return '${command.argumentHint}  ${command.description}';
+    }
+    return null;
+  }
+
+  Future<String?> _commandFile(String name) {
+    final find = widget.commandFile;
+    if (find == null || widget.fileLinks == null) return Future.value();
+    if (!identical(_session.commands, _commandFilesOf)) {
+      _commandFilesOf = _session.commands;
+      _commandFiles.clear();
+    }
+    return _commandFiles[name] ??= () async {
+      try {
+        return await find(name);
+      } on Object {
+        return null;
+      }
+    }();
+  }
+
+  void _openCommandFile(String path) => _openFile(FileOpenRequest(path));
 
   /// Which files the conversation's inline code names exist, asked once
   /// each (see [FileOpenScope]).
@@ -615,6 +820,71 @@ class _ChatScreenState extends State<ChatScreen>
   void _openCode(String path, int start, int end) =>
       _openFile(FileOpenRequest(path, range: FileLineRange(start, end)));
 
+  /// What else a changed file's menu offers: the file itself opened, not
+  /// its changes; on this machine, in the browser, its default app or an
+  /// editor, shown in the file manager; its path copied.
+  List<List<IdeMenuEntry>> _fileActions(FileChange change) {
+    final l10n = context.l10n;
+    final path = change.path;
+    final local = switch (_session.kernelContext.cwd) {
+      final cwd? => !RemoteLocation.isRemote(cwd),
+      null => true,
+    };
+    final deleted = change.kind == FileChangeKind.deleted;
+    final extension = _session.paths.extension(path).toLowerCase();
+    final editors = [
+      for (final editor in Editor.availableEditors)
+        if (!editor.builtIn &&
+            editor != Editor.folder &&
+            editor != Editor.terminal)
+          editor,
+    ];
+    return [
+      [
+        if (widget.fileLinks != null && !deleted)
+          IdeMenuAction(
+            l10n.scmOpenFile,
+            onSelected: () => _openFile(FileOpenRequest(path)),
+          ),
+        if (local && !deleted && !kIsWeb) ...[
+          if (extension == '.html' || extension == '.htm')
+            IdeMenuAction(
+              l10n.fileLinkOpenInBrowser,
+              onSelected: () => unawaited(openExternal(path)),
+            ),
+          if (WindowControls.canOpenInDefaultApp)
+            IdeMenuAction(
+              l10n.openInDefaultApp,
+              onSelected: () => unawaited(openExternal(path)),
+            ),
+          IdeMenuAction(
+            l10n.changeOpenWith,
+            submenu: [
+              for (final editor in editors)
+                IdeMenuAction(
+                  editor.localizedPlatformLabel(l10n),
+                  onSelected: () => unawaited(openInEditor(editor, path)),
+                ),
+            ],
+          ),
+        ],
+      ],
+      [
+        IdeMenuAction(
+          l10n.tabCopyPath,
+          onSelected: () =>
+              unawaited(Clipboard.setData(ClipboardData(text: path))),
+        ),
+        if (local && !deleted && WindowControls.canRevealInFileManager)
+          IdeMenuAction(
+            l10n.revealInFileManager,
+            onSelected: () =>
+                unawaited(WindowControls.revealInFileManager(path)),
+          ),
+      ],
+    ];
+  }
+
   /// The files `@` offers: [ChatScreen.fileMentions]' with the kernel's, or
   /// the kernel's alone; null when neither looks.
   Future<List<Suggestion>> Function(String query)? _suggestFiles(String? root) {
@@ -640,6 +910,7 @@ class _ChatScreenState extends State<ChatScreen>
           onOpen: links == null ? widget.onOpenCode : _openCode,
           colorize: widget.colorizeCode,
           colorizeBlock: widget.colorizeCodeBlock,
+          syntax: widget.codeSyntax,
           child: ComposerVocabulary(
             commands: _commandSuggestions(),
             suggestFiles: _suggestFiles(root),
@@ -673,6 +944,7 @@ class _ChatScreenState extends State<ChatScreen>
             inPanel: links.inPanel,
             onOpenInIde: links.openInIde,
             onShowBrowserTab: links.showBrowserTab,
+            onOpenFolder: links.openFolder,
             roots: links.roots?.call() ?? const [],
             seen: _session.filesSeen,
             local: switch (_session.kernelContext.cwd) {
@@ -682,6 +954,13 @@ class _ChatScreenState extends State<ChatScreen>
             child: scoped,
           );
         }
+        scoped = CommandDetails(
+          // Methods: the same each build.
+          describe: _describeCommand,
+          fileOf: _commandFile,
+          open: _openCommandFile,
+          child: scoped,
+        );
         return PlanStartScope(session: _session, child: scoped);
       },
       child: _buildBody(),
@@ -721,15 +1000,29 @@ class _ChatScreenState extends State<ChatScreen>
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      ChatHistoryView(
-                        key: _historyKey,
-                        feed: _session,
-                        maxContentWidth: _maxContentWidth,
-                        minimap: _minimap,
-                        messageRail: !widget.embedded,
-                        onOpenAgent: _openAgent,
-                        onSetGoal: _setGoal,
-                        onFindClosed: () => _composerKey.currentState?.focus(),
+                      _withBack(
+                        ChatHistoryView(
+                          key: _historyKey,
+                          feed: _session,
+                          maxContentWidth: _maxContentWidth,
+                          minimap: _minimap,
+                          messageRail: !widget.embedded,
+                          minimapRoom: widget.back == null
+                              ? null
+                              : _backMinimapRoom,
+                          onOpenAgent: _openAgent,
+                          onSetGoal: _setGoal,
+                          onFindClosed: () =>
+                              _composerKey.currentState?.focus(),
+                          after: switch (widget.asideAt) {
+                            final asideAt? => (index) => switch (_session
+                                .itemIdAt(index)) {
+                              final id? => asideAt(id),
+                              null => null,
+                            },
+                            null => null,
+                          },
+                        ),
                       ),
                       // The start hint, before the first message.
                       ListenableBuilder(
@@ -740,9 +1033,10 @@ class _ChatScreenState extends State<ChatScreen>
                           final build? when _starting => Align(
                             alignment: Alignment.bottomCenter,
                             child: SingleChildScrollView(
+                              // No minimap yet: nothing to scroll.
                               child: _ConversationColumn(
                                 maxWidth: _maxContentWidth,
-                                minimap: _minimap,
+                                minimap: false,
                                 child: build(context, const SizedBox.shrink()),
                               ),
                             ),
@@ -804,6 +1098,11 @@ class _ChatScreenState extends State<ChatScreen>
                   // Claude Code being downloaded for this machine, or put on
                   // a remote project's host.
                   ClaudeInstallBanner(location: _session.kernelContext.cwd),
+                  // BaoCode's own core picked: the CLI suggested.
+                  if (_localClaudeCode) ClaudeCoreHint(onSwitched: _movedToCli),
+                  // Reset credits of the model's ChatGPT accounts about to
+                  // expire: a plan to use them.
+                  ResetCreditsHint(model: _session.models?.selected.id),
                   _PanelSlot(
                     child: switch (_session.pendingInteraction) {
                       final request? => InteractionPanel(
@@ -837,12 +1136,39 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// The subagent [layer], [index] in: the way here, and its conversation.
+  /// Whether the history keeps the minimap's room, for the way back over
+  /// it (see [ChatScreen.back]) to be level with it.
+  final ValueNotifier<bool> _backMinimapRoom = ValueNotifier(false);
+
+  /// [history] under the way back to the conversation this one was asked
+  /// beside, as a subagent's is under its own (see [ChatScreen.back]).
+  Widget _withBack(Widget history) {
+    final back = widget.back;
+    if (back == null) return history;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ValueListenableBuilder(
+          valueListenable: _backMinimapRoom,
+          builder: (context, room, _) => SubagentHeader(
+            trail: const [],
+            backText: back.label,
+            onBack: (_) => back.onBack(),
+            maxContentWidth: _maxContentWidth,
+            minimap: room,
+          ),
+        ),
+        Expanded(child: history),
+      ],
+    );
+  }
+
   Widget _buildAgentPage(int index, _AgentLayer layer) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ListenableBuilder(
-          listenable: _session,
+          listenable: Listenable.merge([_session, layer.minimapRoom]),
           builder: (context, _) => SubagentHeader(
             trail: [
               for (final open in _layers.take(index + 1))
@@ -851,7 +1177,8 @@ class _ChatScreenState extends State<ChatScreen>
             onBack: _back,
             backFocusNode: layer.backFocus,
             maxContentWidth: _maxContentWidth,
-            minimap: _minimap,
+            // Level with the history's column.
+            minimap: layer.minimapRoom.value,
           ),
         ),
         Expanded(
@@ -860,6 +1187,7 @@ class _ChatScreenState extends State<ChatScreen>
             feed: layer.feed,
             maxContentWidth: _maxContentWidth,
             minimap: _minimap,
+            minimapRoom: layer.minimapRoom,
             onOpenAgent: _openAgent,
             onSetGoal: _setGoal,
             onFindClosed: layer.backFocus.requestFocus,
@@ -931,16 +1259,12 @@ class _ChatScreenState extends State<ChatScreen>
             _ => null,
           },
         ),
-        _PanelSlot(
-          child: TodoPanel.hasContent(_session.todos)
-              ? TodoPanel(todos: _session.todos)
-              : null,
-        ),
         // Last over the composer: what is sent next.
         _PanelSlot(
           child: switch (_session.queued) {
             final queued when queued.isNotEmpty => QueuePanel(
               messages: queued,
+              onMove: _session.moveQueued,
               onEdit: (id) => unawaited(_session.editQueued(id)),
               onSendNow: _session.sendQueuedNow,
               onRemove: _session.cancelQueued,
@@ -962,6 +1286,9 @@ class _ChatScreenState extends State<ChatScreen>
           },
           contextPanelOpen: _contextPanelOpen,
           onToggleContextPanel: _toggleContextPanel,
+          onIntercept: widget.onSideQuestion == null
+              ? null
+              : _interceptSideQuestion,
         ),
         // 新对话时文件夹栏在 start 里（NewChatFolderBar），下面的项目/分支条
         // 不再重复；发出第 1 条消息后就只剩下面这一条。
@@ -993,23 +1320,13 @@ double _columnWidth(double width, double maxWidth, {required bool minimap}) =>
     );
 
 /// The title bar's [_TitleBarSlot.leading] at [inset], clear of the traffic
-/// lights; the title across the conversation's column, clear of the
-/// leading; the buttons ([_TitleBarSlot.trailing]) at the bar's right end,
+/// lights; the title after it, at the bar's left, not the conversation's
+/// column; the buttons ([_TitleBarSlot.trailing]) at the bar's right end,
 /// the window's as the IDE's title bar has them, not the column's.
 class _TitleBarLayout extends MultiChildLayoutDelegate {
-  _TitleBarLayout({
-    required this.inset,
-    required this.maxWidth,
-    required this.minimap,
-  });
+  _TitleBarLayout({required this.inset});
 
   final double inset;
-
-  /// The conversation's column's at most.
-  final double maxWidth;
-
-  /// Whether the column leaves a minimap its room.
-  final bool minimap;
 
   /// Between the leading and the title.
   static const _gap = 6.0;
@@ -1046,22 +1363,17 @@ class _TitleBarLayout extends MultiChildLayoutDelegate {
       );
       end += trailing.width + _gap;
     }
-    final column =
-        (size.width - _columnWidth(size.width, maxWidth, minimap: minimap)) / 2;
-    final left = math.max(start, column);
-    final width = math.max(0.0, size.width - left - math.max(end, column));
+    final width = math.max(0.0, size.width - start - end);
     layoutChild(
       _TitleBarSlot.title,
       BoxConstraints.tightFor(width: width, height: size.height),
     );
-    positionChild(_TitleBarSlot.title, Offset(left, 0));
+    positionChild(_TitleBarSlot.title, Offset(start, 0));
   }
 
   @override
   bool shouldRelayout(_TitleBarLayout oldDelegate) =>
-      oldDelegate.inset != inset ||
-      oldDelegate.maxWidth != maxWidth ||
-      oldDelegate.minimap != minimap;
+      oldDelegate.inset != inset;
 }
 
 /// [child] across the conversation's column (see [_columnWidth]), level
@@ -1157,17 +1469,17 @@ class _RenderConversationColumn extends RenderShiftedBox {
 /// An open subagent: its conversation, and its way in and out.
 class _AgentLayer {
   _AgentLayer(this.feed, this.controller)
-    : animation = CurvedAnimation(
-        parent: controller,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      );
+    : animation = ConversationLayer.curve(controller);
 
   final SubagentFeed feed;
   final AnimationController controller;
   final CurvedAnimation animation;
   final FocusNode backFocus = FocusNode(debugLabel: 'Subagent back');
   final GlobalKey historyKey = GlobalKey();
+
+  /// Whether its history keeps the minimap's room (see
+  /// [ChatHistoryView.minimapRoom]).
+  final ValueNotifier<bool> minimapRoom = ValueNotifier(false);
 
   /// Going back: sliding out, no longer the one shown.
   bool leaving = false;
@@ -1176,6 +1488,7 @@ class _AgentLayer {
     animation.dispose();
     controller.dispose();
     backFocus.dispose();
+    minimapRoom.dispose();
     feed.dispose();
   }
 }

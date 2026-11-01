@@ -3,6 +3,7 @@
 #include <flutter_linux/flutter_linux.h>
 
 #include "clipboard.h"
+#include "login_window.h"
 #include "flutter/generated_plugin_registrant.h"
 
 #include <gdk/gdkkeysyms.h>
@@ -349,6 +350,8 @@ static void register_window_channel(MyApplication* self, FlView* view) {
   fl_method_channel_set_method_call_handler(self->window_channel,
                                              window_method_call_cb, self,
                                              nullptr);
+  // The channel build's login window (see lib/channel/account/).
+  login_window_register(fl_engine_get_binary_messenger(engine), self->window);
 }
 
 // Implements GApplication::activate.

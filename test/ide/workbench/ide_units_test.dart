@@ -277,11 +277,18 @@ void main() {
     await write('node_modules/m/index.js', '');
     await write('.dart_tool/cache', '');
     await write('.git/HEAD', 'ref: refs/heads/topic\n');
+    // Without Git's list, `.gitignore` files are read as Git would.
+    await write('.gitignore', 'generated/\n');
+    await write('lib/.gitignore', '*.g.dart\n');
+    await write('generated/a.dart', '');
+    await write('lib/src/b.g.dart', '');
     final listing = await listProjectFiles(IdeFileService(root), root);
     expect(
       [for (final path in listing.paths) p.relative(path, from: root)],
       [
+        '.gitignore',
         'README.md',
+        p.join('lib', '.gitignore'),
         p.join('lib', 'main.dart'),
         p.join('lib', 'src', 'deep', 'x.dart'),
       ],
@@ -356,69 +363,73 @@ void main() {
     expect(index.relativePaths, ['a.txt', 'src/b.dart']);
   });
 
-  test('many files are matched off the UI isolate, those of the filter '
-      'matched last shown till then; a remote listing is reused a while', () async {
-    var listings = 0;
-    final paths = [
-      for (var i = 0; i <= IdeFileIndex.backgroundAbove; i++)
-        inRoot('src/f$i.dart'),
-    ]..add(inRoot('lib/phone.dart'));
-    final index = IdeFileIndex(
-      IdeFileService(testRoot),
-      testRoot,
-      lister: (_, _) async {
-        listings++;
-        return IdeFileListing(paths);
-      },
-    );
-    addTearDown(index.dispose);
-    await index.refreshIfOlder(const Duration(minutes: 1));
-    await index.refreshIfOlder(const Duration(minutes: 1));
-    expect(listings, 1);
-
-    Future<List<String>> picks(String text) async {
-      final first = fileQuickPicks(
-        text,
-        index: index,
-        recent: const [],
-        onOpen: (_, _, _) {},
+  test(
+    'many files are matched off the UI isolate, those of the filter '
+    'matched last shown till then; a remote listing is reused a while',
+    () async {
+      var listings = 0;
+      final paths = [
+        for (var i = 0; i <= IdeFileIndex.backgroundAbove; i++)
+          inRoot('src/f$i.dart'),
+        inRoot('lib/phone.dart'),
+      ];
+      final index = IdeFileIndex(
+        IdeFileService(testRoot),
+        testRoot,
+        lister: (_, _) async {
+          listings++;
+          return IdeFileListing(paths);
+        },
       );
-      if (!index.searching) return [for (final pick in first) pick.label];
-      // Nothing yet: it says it is searching.
-      expect([for (final pick in first) pick.label], ['Searching files…']);
-      final found = Completer<void>();
-      void done() => found.isCompleted ? null : found.complete();
-      index.addListener(done);
-      await found.future;
-      index.removeListener(done);
-      return [
-        for (final pick in fileQuickPicks(
+      addTearDown(index.dispose);
+      await index.refreshIfOlder(const Duration(minutes: 1));
+      await index.refreshIfOlder(const Duration(minutes: 1));
+      expect(listings, 1);
+
+      Future<List<String>> picks(String text) async {
+        final first = fileQuickPicks(
           text,
           index: index,
           recent: const [],
           onOpen: (_, _, _) {},
-        ))
-          pick.label,
-      ];
-    }
+        );
+        if (!index.searching) return [for (final pick in first) pick.label];
+        // Nothing yet: it says it is searching.
+        expect([for (final pick in first) pick.label], ['Searching files…']);
+        final found = Completer<void>();
+        void done() => found.isCompleted ? null : found.complete();
+        index.addListener(done);
+        await found.future;
+        index.removeListener(done);
+        return [
+          for (final pick in fileQuickPicks(
+            text,
+            index: index,
+            recent: const [],
+            onOpen: (_, _, _) {},
+          ))
+            pick.label,
+        ];
+      }
 
-    expect(await picks('phone'), ['phone.dart']);
-    // Typed on: what was found for `phone` shows, matched anew, while the
-    // longer filter is.
-    final shown = fileQuickPicks(
-      'phonex',
-      index: index,
-      recent: const [],
-      onOpen: (_, _, _) {},
-    );
-    expect(index.searching, isTrue);
-    expect([for (final pick in shown) pick.label], ['Searching files…']);
-    final again = fileQuickPicks(
-      'phon',
-      index: index,
-      recent: const [],
-      onOpen: (_, _, _) {},
-    );
-    expect([for (final pick in again) pick.label], ['phone.dart']);
-  });
+      expect(await picks('phone'), ['phone.dart']);
+      // Typed on: what was found for `phone` shows, matched anew, while the
+      // longer filter is.
+      final shown = fileQuickPicks(
+        'phonex',
+        index: index,
+        recent: const [],
+        onOpen: (_, _, _) {},
+      );
+      expect(index.searching, isTrue);
+      expect([for (final pick in shown) pick.label], ['Searching files…']);
+      final again = fileQuickPicks(
+        'phon',
+        index: index,
+        recent: const [],
+        onOpen: (_, _, _) {},
+      );
+      expect([for (final pick in again) pick.label], ['phone.dart']);
+    },
+  );
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:bao_markdown/bao_markdown.dart' show MarkdownEditor;
 
 import 'package:bao_editor/monaco/flutter/editor_surface.dart';
 import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
@@ -13,6 +14,10 @@ import 'package:baocode/customize/customize_view.dart';
 import 'package:baocode/customize/mcp_probe.dart';
 import 'package:baocode/settings/pages/customize_page.dart';
 import 'package:baocode/ide/ide_code_editor.dart';
+import 'package:baocode/ide/ide_input.dart';
+import 'package:baocode/ide/ide_switch.dart';
+import 'package:baocode/kernel/extension_switches.dart';
+import 'package:baocode/ide/markdown/markdown_preview.dart';
 import 'package:baocode/keybindings/keybinding_service.dart';
 import 'package:baocode/main.dart';
 import 'package:baocode/sidebar/sidebar.dart';
@@ -80,6 +85,9 @@ class _MemoryStore implements CustomizationStore {
       : null;
 
   @override
+  Future<String?> commandFile(String name, {String? project}) async => null;
+
+  @override
   Future<void> write(String path, String text) async => files[path] = text;
 
   @override
@@ -131,6 +139,10 @@ EditorSurfaceController _editor(WidgetTester tester) => tester
     .controller;
 
 String _editorText(WidgetTester tester) => _editor(tester).document.text;
+
+/// A markdown customization's preview's editor (bao_markdown's).
+MarkdownEditor _markdown(WidgetTester tester) =>
+    tester.widget<MarkdownEditor>(_inView(find.byType(MarkdownEditor)));
 
 void main() {
   testWidgets('Customize lists the skills, in place of the chat', (
@@ -199,15 +211,55 @@ void main() {
 
     await tester.tap(_inView(find.text('pdf')));
     await tester.pumpAndSettle();
-    // The IDE's editor, the skill's text in it.
-    final editor = _inView(find.byType(IdeCodeEditor));
-    expect(editor, findsOneWidget);
-    // Its actions flush right, over the editor's right edge (#149).
+    // Markdown, so the IDE's markdown editor, the skill's text in it.
+    final preview = _inView(find.byType(IdeMarkdownPreview));
+    expect(preview, findsOneWidget);
+    expect(_inView(find.byType(IdeCodeEditor)), findsNothing);
+    // Its actions flush right, not halfway (#149); the preview on the
+    // page's edge, its scroll bar there; Save only once there is something
+    // to save.
+    final edge = tester.getTopRight(find.byType(CustomizeView)).dx;
+    expect(tester.getTopRight(preview).dx, edge);
     expect(
-      tester.getTopRight(_inView(find.text('Save'))).dx,
-      moreOrLessEquals(tester.getTopRight(editor).dx, epsilon: 16),
+      tester.getTopRight(_inView(find.byIcon(Icons.more_horiz_rounded))).dx,
+      moreOrLessEquals(edge - 24, epsilon: 8),
     );
-    expect(_editorText(tester), contains('Body'));
+    expect(_inView(find.text('Save')), findsNothing);
+    expect(_markdown(tester).controller.text, contains('Body'));
+    // Its front matter a form: a value edited in its field, written back
+    // as Enter ends it.
+    final fields = _inView(find.byType(IdeInputBox));
+    expect(fields, findsNWidgets(2));
+    await tester.enterText(
+      find.descendant(of: fields.at(1), matching: find.byType(TextField)),
+      'Reads PDFs: all of them\n',
+    );
+    await tester.pump();
+    expect(
+      _markdown(tester).controller.text,
+      contains('description: "Reads PDFs: all of them"\n'),
+    );
+    expect(_inView(find.text('Unsaved changes')), findsOneWidget);
+    // Edited there: unsaved, then saved with ⌘S.
+    await tester.tap(_inView(find.byType(MarkdownEditor)));
+    await tester.pump();
+    final markdown = _markdown(tester).controller;
+    markdown.replace(markdown.length, markdown.length, '\nMore');
+    await tester.pump();
+    expect(_inView(find.text('Unsaved changes')), findsOneWidget);
+    expect(_inView(find.text('Save')), findsOneWidget);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(store.files['/c/skills/pdf/SKILL.md'], endsWith('\nMore'));
+
+    // Its source: the IDE's editor, the same text.
+    await tester.tap(_inView(find.text('Markdown')));
+    await tester.pumpAndSettle();
+    expect(_inView(find.byType(IdeMarkdownPreview)), findsNothing);
+    expect(_inView(find.byType(IdeCodeEditor)), findsOneWidget);
+    expect(_editorText(tester), endsWith('\nMore'));
     await tester.tap(_inView(find.byType(EditorSurface)));
     await tester.pump();
     _editor(tester)
@@ -263,7 +315,7 @@ void main() {
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
     expect(store.files, contains('/c/skills/release-notes/SKILL.md'));
-    expect(_editorText(tester), contains('name: release-notes'));
+    expect(_markdown(tester).controller.text, contains('name: release-notes'));
   }, variant: _mac);
 
   testWidgets('MCPs and hooks say where they come from; a settings file '
@@ -382,14 +434,80 @@ void main() {
     expect(_inView(find.text('Failed')), findsOneWidget);
   }, variant: _mac);
 
+  testWidgets('switches: a skill, an MCP server and one of its tools, kept '
+      'as they are turned', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final store = _MemoryStore()
+      ..servers = [
+        const Customization(
+          kind: CustomizationKind.mcps,
+          scope: CustomizationScope.user,
+          name: 'git',
+          path: '/home/.claude.json',
+          editable: false,
+          server: {'command': 'git-mcp'},
+        ),
+      ];
+    CustomizeView.mcpProber = (config, {cwd}) async => const McpProbeResult(
+      McpProbeStatus.connected,
+      tools: [
+        (name: 'status', description: 'Shows the status'),
+        (name: 'push', description: ''),
+      ],
+    );
+    var kept = ExtensionSwitches.none;
+    ExtensionSwitches.current = () => kept;
+    ExtensionSwitches.save = (switches) async => kept = switches;
+    addTearDown(() {
+      ExtensionSwitches.current = () => ExtensionSwitches.none;
+      ExtensionSwitches.save = null;
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CustomizeSettingsPage(customizations: store)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    Finder switchOf(String label) => find.byWidgetPredicate(
+      (widget) => widget is IdeSwitch && widget.semanticLabel == label,
+    );
+    bool on(String label) => tester.widget<IdeSwitch>(switchOf(label)).value;
+
+    // All on to start.
+    expect(on('pdf'), isTrue);
+    await tester.tap(switchOf('pdf'));
+    await tester.pumpAndSettle();
+    expect(kept.disabledSkills, {'pdf'});
+    expect(on('pdf'), isFalse);
+
+    // A server's tools, as asking it found them, each with a switch.
+    await tester.tap(find.text('MCPs'));
+    await tester.pumpAndSettle();
+    expect(find.text('status'), findsNothing);
+    await tester.tap(find.text('2 tools'));
+    await tester.pumpAndSettle();
+    expect(find.text('Shows the status'), findsOneWidget);
+    await tester.tap(switchOf('push'));
+    await tester.pumpAndSettle();
+    expect(kept.disabledTools, {
+      'git': {'push'},
+    });
+    // The server off: its tools shown off, not to be turned.
+    await tester.tap(switchOf('git'));
+    await tester.pumpAndSettle();
+    expect(kept.disabledServers, {'git'});
+    expect(on('status'), isFalse);
+    expect(tester.widget<IdeSwitch>(switchOf('status')).enabled, isFalse);
+  });
+
   testWidgets('Settings → Customize edits a skill in place, without a title '
       'bar', (tester) async {
     final store = _MemoryStore();
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: CustomizeSettingsPage(customizations: store),
-        ),
+        home: Scaffold(body: CustomizeSettingsPage(customizations: store)),
       ),
     );
     await tester.pumpAndSettle();
@@ -400,9 +518,6 @@ void main() {
 
     await tester.tap(find.text('pdf'));
     await tester.pumpAndSettle();
-    final editor = tester
-        .widget<EditorSurface>(find.byType(EditorSurface))
-        .controller;
-    expect(editor.document.text, contains('Body'));
+    expect(_markdown(tester).controller.text, contains('Body'));
   });
 }

@@ -16,6 +16,7 @@ import '../ide/search/text_search.dart';
 import '../ide/terminal/pty.dart';
 import '../ide/terminal/terminal_instance.dart';
 import '../ide/terminal/terminal_profiles.dart';
+import 'remote_location.dart';
 import 'ssh_host.dart';
 
 /// [open]'s items on [host]'s connection, opened again (after what
@@ -178,8 +179,20 @@ class RemoteIdeFileService implements IdeHostFiles, IdeRangeFiles {
 IdeGitService remoteGitService(SshHost host, String root) => IdeGitService(
   root,
   pathContext: host.paths,
-  runner: (arguments, {required workingDirectory, limit}) async =>
-      (await host.ready).git(arguments, cwd: workingDirectory, limit: limit),
+  runner:
+      (
+        arguments, {
+        required workingDirectory,
+        limit,
+        stdin,
+        environment,
+      }) async => (await host.ready).git(
+        arguments,
+        cwd: workingDirectory,
+        limit: limit,
+        stdin: stdin,
+        environment: environment,
+      ),
   watcher: (repository) => resilientStream(
     host,
     (client) => client.watchRepository(repository),
@@ -326,7 +339,7 @@ LspProcessStarter remoteLspStarter(SshHost host) => (launch) async {
     );
   } on RemoteException catch (error) {
     throw LspStartException(
-      'Could not start ${launch.serverId} on ${host.host}',
+      'Could not start ${launch.serverId} on ${RemoteLocation.hostName(host.host)}',
       detail: error.message,
     );
   }

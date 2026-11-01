@@ -1035,6 +1035,22 @@ class CodexKernel
     cancel();
   }
 
+  /// Those held here ([_queue]) go in any order; those the server was given
+  /// ([_steered]) keep theirs, ahead of them, as it takes them up first.
+  @override
+  void moveQueued(String turnId, int index) {
+    final turn = _queue.where((turn) => turn.id == turnId).firstOrNull;
+    if (turn == null) return;
+    _queue
+      ..remove(turn)
+      ..insert((index - _steered.length).clamp(0, _queue.length), turn);
+    emit(
+      QueueReordered(nextSeq, [
+        for (final turn in [..._steered, ..._queue]) turn.id,
+      ]),
+    );
+  }
+
   void _endTurn({bool interrupted = false}) {
     final turn = _turn;
     if (turn == null) return;
@@ -1265,18 +1281,6 @@ class CodexKernel
         _tokenUsage(params);
       case 'account/rateLimits/updated':
         _takeLimits(params['rateLimits']);
-      case 'turn/plan/updated' when _ofTurn(params):
-        emit(
-          TodosReported(nextSeq, [
-            for (final step in params['plan'] as List? ?? const [])
-              if (step case {'step': final String text})
-                TodoEntry(text, switch (step['status']) {
-                  'completed' => TodoStatus.completed,
-                  'inProgress' => TodoStatus.inProgress,
-                  _ => TodoStatus.pending,
-                }),
-          ]),
-        );
       case 'error' when _ofTurn(params):
         final error = (params['error'] as Map?) ?? const {};
         final retry = params['willRetry'] == true;

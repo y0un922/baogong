@@ -14,6 +14,7 @@ import '../../icons/project_icon_picker.dart';
 import '../../kernel/claude_code/claude_haiku.dart';
 import '../../l10n/l10n.dart';
 import '../../models/codex/codex_api.dart' show codexClientVersion;
+import '../../models/codex/codex_quota_format.dart';
 import '../../models/codex/codex_service.dart';
 import '../../models/codex/codex_usage.dart';
 import '../../models/auxiliary_model_menu.dart';
@@ -23,6 +24,7 @@ import '../../models/model_provider.dart';
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
 import '../../models/pi_upstreams.dart';
+import '../../models/upstream.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
@@ -650,6 +652,10 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
   bool _rolesOpen = true;
   bool _advancedOpen = false;
 
+  /// The custom URLs shown: open from the first when one is set.
+  late bool _urlsOpen =
+      _provider.modelsUrl != null || _provider.endpointUrl != null;
+
   /// What the key was read as, once it is.
   String? _key;
   bool _keyRead = false;
@@ -731,6 +737,24 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
     );
     if (choice != 0) return;
     await _codex.removeAccount(_provider.id, account.id);
+  }
+
+  Future<void> _useResetCredit(ProviderAccount account) async {
+    final l10n = context.l10n;
+    final choice = await showIdeDialog(
+      context,
+      message: l10n.modelsResetCreditConfirm(account.displayName),
+      detail: l10n.modelsResetCreditConfirmDetail,
+      buttons: [l10n.modelsResetCreditUse],
+      type: IdeDialogType.question,
+    );
+    if (choice != 0) return;
+    try {
+      await _codex.useResetCredit(_providerNow, account.id);
+    } on CodexException catch (error) {
+      // Shown under the account, as its error.
+      debugPrint('$error');
+    }
   }
 
   Future<void> _readKey() async {
@@ -867,21 +891,47 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
     if (edited != null) await _save(_providerNow.withModel(edited));
   }
 
-  Future<void> _removeModel(ProviderModel model) async {
+  Future<void> _removeModel(ProviderModel model) => _removeModels({model.id});
+
+  /// Removes the models [ids] name, and the roles they had, here and on
+  /// the other upstreams.
+  Future<void> _removeModels(Set<String> ids) async {
     final provider = _providerNow;
-    var roles = provider.roles;
-    for (final role in const ['main', 'opus', 'sonnet', 'haiku', 'subagent']) {
-      if (roles[role] == model.id) roles = roles.copyWith(role, null);
+    var roles = provider.roles.without(provider.id, ids);
+    for (final role in ProviderRoles.keys) {
+      if (ids.contains(roles[role])) roles = roles.copyWith(role, null);
     }
     await _save(
       provider.copyWith(
         models: [
           for (final m in provider.models)
-            if (m.id != model.id) m,
+            if (!ids.contains(m.id)) m,
         ],
         roles: roles,
       ),
     );
+    await _providers.forgetRoles(provider.id, ids);
+  }
+
+  /// Removes, once confirmed, the models the upstream no longer lists.
+  Future<void> _removeMissing() async {
+    final l10n = context.l10n;
+    final missing = [
+      for (final model in _providerNow.sortedModels)
+        if (model.missing) model,
+    ];
+    if (missing.isEmpty) return;
+    final choice = await showIdeDialog(
+      context,
+      message: l10n.modelsRemoveMissingConfirm(missing.length),
+      detail: [
+        for (final model in missing.take(12)) model.displayName,
+        if (missing.length > 12) '…',
+      ].join('\n'),
+      buttons: [l10n.modelsRemove],
+    );
+    if (choice != 0 || !mounted) return;
+    await _removeModels({for (final model in missing) model.id});
   }
 
   /// A copy of it, its key with it, opened in its place.
@@ -932,7 +982,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
         const SizedBox(height: 16),
         _models(context),
         const SizedBox(height: 16),
-        _Folding(
+        SettingsFolding(
           title: l10n.modelsRoles,
           description: l10n.modelsRolesDescription,
           open: _rolesOpen,
@@ -940,7 +990,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
           children: _roles(context),
         ),
         const SizedBox(height: 16),
-        _Folding(
+        SettingsFolding(
           title: l10n.modelsAdvanced,
           open: _advancedOpen,
           onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
@@ -959,6 +1009,66 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
       provider = provider.copyWith(name: 'ChatGPT');
     }
     return _save(provider);
+  }
+
+  /// Whether an account out of quota uses a reset credit by itself, and
+  /// for which windows: as the model picker's switch, with its reach.
+  Widget _autoResetCredits(BuildContext context) {
+    final l10n = context.l10n;
+    final provider = _provider;
+    final choices = [
+      (
+        on: false,
+        fiveHours: provider.resetCreditsFiveHours,
+        label: l10n.modelsAutoResetCreditsOff,
+        description: l10n.modelsAutoResetCreditsOffDescription,
+      ),
+      (
+        on: true,
+        fiveHours: false,
+        label: l10n.modelsAutoResetCreditsLong,
+        description: l10n.modelsAutoResetCreditsLongDescription,
+      ),
+      (
+        on: true,
+        fiveHours: true,
+        label: l10n.modelsAutoResetCreditsAny,
+        description: l10n.modelsAutoResetCreditsAnyDescription,
+      ),
+    ];
+    final current = choices.firstWhere(
+      (choice) =>
+          choice.on == provider.autoResetCredits &&
+          (!choice.on || choice.fiveHours == provider.resetCreditsFiveHours),
+    );
+    return SettingsRow(
+      label: l10n.autoResetCreditsToggle,
+      description: current.description,
+      trailing: SettingsDropdown(
+        current: current.label,
+        semanticLabel: l10n.modelsChoiceLabel(
+          l10n.autoResetCreditsToggle,
+          current.label,
+        ),
+        entries: () => [
+          for (final choice in choices)
+            IdeMenuAction(
+              choice.label,
+              checked: identical(choice, current),
+              onSelected: () => unawaited(() async {
+                await _save(
+                  _providerNow.copyWith(
+                    autoResetCredits: choice.on,
+                    resetCreditsFiveHours: choice.fiveHours,
+                  ),
+                );
+                // Turned on: one out of quota already uses its credit now.
+                if (choice.on) await _codex.refreshUsage(_providerNow);
+              }()),
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _accounts(BuildContext context) {
@@ -984,6 +1094,9 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
               usage: _codex.usage(provider.id, account.id),
               error: _codex.error(provider.id, account.id),
               limitedUntil: _codex.limitedUntil(provider.id, account.id),
+              resetCredits: _codex.resetCredits(provider.id, account.id),
+              resetting: _codex.resetting(provider.id, account.id),
+              onReset: () => unawaited(_useResetCredit(account)),
               onEnabled: (value) => unawaited(
                 _save(
                   _providerNow.withAccount(account.copyWith(enabled: value)),
@@ -1019,6 +1132,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
               ],
             ),
           ),
+        if (provider.accounts.isNotEmpty) _autoResetCredits(context),
         SettingsRow(
           label: login != null
               ? l10n.modelsAccountSigningIn
@@ -1202,6 +1316,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
                   )
                 : const SizedBox(width: _Field.width, height: 26),
           ),
+          ..._customUrls(context),
         ],
         SettingsRow(
           label: l10n.modelsTest,
@@ -1231,6 +1346,58 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
     );
   }
 
+  /// Where its models are listed and its conversations go, given in full,
+  /// folded under a row: each field's placeholder the one its base URL
+  /// makes, used while it is empty.
+  List<Widget> _customUrls(BuildContext context) {
+    final l10n = context.l10n;
+    final provider = _provider;
+    void toggle() => setState(() => _urlsOpen = !_urlsOpen);
+    return [
+      Semantics(
+        button: true,
+        expanded: _urlsOpen,
+        child: SettingsRow(
+          label: l10n.modelsCustomUrls,
+          description: l10n.modelsCustomUrlsDescription,
+          onTap: toggle,
+          trailing: Icon(
+            _urlsOpen ? Codicons.chevronDown : Codicons.chevronRight,
+            size: 14,
+            color: SettingsColors.textSecondary,
+          ),
+        ),
+      ),
+      if (_urlsOpen) ...[
+        SettingsRow(
+          label: l10n.modelsModelsUrl,
+          description: l10n.modelsModelsUrlDescription,
+          trailing: _Field(
+            value: provider.modelsUrl ?? '',
+            label: l10n.modelsModelsUrl,
+            placeholder:
+                '${UpstreamUrls.modelsByBase(provider).firstOrNull ?? ''}',
+            onCommit: (url) =>
+                unawaited(_save(_providerNow.copyWith(modelsUrl: () => url))),
+          ),
+        ),
+        SettingsRow(
+          label: l10n.modelsEndpointUrl,
+          description: provider.protocol == ProviderProtocol.anthropic
+              ? l10n.modelsEndpointUrlAnthropicDescription
+              : l10n.modelsEndpointUrlDescription,
+          trailing: _Field(
+            value: provider.endpointUrl ?? '',
+            label: l10n.modelsEndpointUrl,
+            placeholder: '${UpstreamUrls.endpointByBase(provider) ?? ''}',
+            onCommit: (url) =>
+                unawaited(_save(_providerNow.copyWith(endpointUrl: () => url))),
+          ),
+        ),
+      ],
+    ];
+  }
+
   Widget _models(BuildContext context) {
     final l10n = context.l10n;
     final provider = _provider;
@@ -1245,6 +1412,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
                 model.displayName.toLowerCase().contains(query)))
           model,
     ];
+    final missing = provider.models.where((model) => model.missing).length;
     return SettingsGroup(
       title: l10n.modelsModelsGroup,
       description: l10n.modelsModelsDescription,
@@ -1288,6 +1456,12 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
                       secondary: true,
                       onPressed: () => setState(() => _showAll = !_showAll),
                     ),
+                  if (missing > 0)
+                    IdeButton(
+                      label: l10n.modelsRemoveMissing(missing),
+                      secondary: true,
+                      onPressed: () => unawaited(_removeMissing()),
+                    ),
                   IdeButton(
                     label: l10n.modelsFetch,
                     icon: Codicons.cloudDownload,
@@ -1314,6 +1488,10 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
           for (final model in shown)
             _ModelRow(
               model: model,
+              endpoint: switch (provider.protocolOf(model)) {
+                final protocol when protocol != provider.protocol => protocol,
+                _ => null,
+              },
               test: _modelTests[model.id],
               onEnabled: (value) => unawaited(
                 _save(_providerNow.withModel(model.copyWith(enabled: value))),
@@ -1330,9 +1508,9 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
   List<Widget> _roles(BuildContext context) {
     final l10n = context.l10n;
     final provider = _provider;
-    // The other upstreams whose models subagents may run on: through the
-    // proxy, any that can be reached (not Claude Code's own, whose key is
-    // not the app's).
+    // The other upstreams whose models a role may pick (all but the main
+    // model): through the proxy, any that can be reached (not Claude
+    // Code's own, whose key is not the app's).
     final others = [
       for (final other in _providers.enabled)
         if (other.id != provider.id && other.connected) other,
@@ -1344,6 +1522,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
       String? warning,
       bool elsewhere = false,
     }) {
+      final elsewhere = ProviderRoles.crossUpstream.contains(role);
       final current = provider.roles[role];
       final picked = parseModelRef(current);
       final pickedProvider = picked == null
@@ -1462,8 +1641,9 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
     final l10n = context.l10n;
     final provider = _provider;
     final auth = _authName(context, provider.auth);
+    final protocols = provider.protocols;
     return [
-      if (!provider.protocol.proxied)
+      if (protocols.contains(ProviderProtocol.anthropic))
         SettingsRow(
           label: l10n.modelsAuth,
           description: l10n.modelsAuthDescription,
@@ -1489,7 +1669,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
           _save(_providerNow.copyWith(disableNonessentialTraffic: value)),
         ),
       ),
-      if (provider.protocol == ProviderProtocol.openaiChat)
+      if (protocols.contains(ProviderProtocol.openaiChat))
         SettingsSwitchRow(
           label: l10n.modelsPreserveThinking,
           description: l10n.modelsPreserveThinkingDescription,
@@ -1497,7 +1677,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
           onChanged: (value) =>
               unawaited(_save(_providerNow.copyWith(preserveThinking: value))),
         ),
-      if (provider.protocol.proxied)
+      if (protocols.any((protocol) => protocol.proxied))
         SettingsSwitchRow(
           label: l10n.modelsPromptCacheKey,
           description: l10n.modelsPromptCacheKeyDescription,
@@ -1554,7 +1734,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
           _Field(
             value: formatHeaders(provider.headers),
             label: l10n.modelsHeaders,
-            placeholder: l10n.modelsHeadersPlaceholder,
+            placeholder: _headersPlaceholder,
             lines: 6,
             onCommit: (text) => unawaited(
               _save(_providerNow.copyWith(headers: parseHeaders(text))),
@@ -1602,6 +1782,15 @@ Map<String, String> parseEnvironment(String text) => {
         key: line.substring(line.indexOf('=') + 1).trim(),
 };
 
+/// The Custom Headers field's example: a client's user agent and its
+/// session headers, the session a variable. Not translated: header names
+/// and values are what they are, and `{{…}}` would be an ARB placeholder.
+const _headersPlaceholder =
+    'user-agent: opencode/1.17.12 ai-sdk/provider-utils/4.0.23 '
+    'runtime/bun/1.3.14\n'
+    'x-session-affinity: {{CLAUDE_SESSION_ID}}\n'
+    'x-session-id: {{CLAUDE_SESSION_ID}}';
+
 /// [headers] as the Custom Headers field shows it: `Name: Value` a line.
 String formatHeaders(Map<String, String> headers) =>
     [for (final MapEntry(:key, :value) in headers.entries) '$key: $value']
@@ -1624,6 +1813,7 @@ Map<String, String> parseHeaders(String text) => {
 class _ModelRow extends StatelessWidget {
   const _ModelRow({
     required this.model,
+    this.endpoint,
     required this.test,
     required this.onEnabled,
     required this.onTest,
@@ -1633,6 +1823,9 @@ class _ModelRow extends StatelessWidget {
   });
 
   final ProviderModel model;
+
+  /// The endpoint it is spoken to at, when not its upstream's.
+  final ProviderProtocol? endpoint;
   final _ModelTest? test;
   final ValueChanged<bool> onEnabled;
   final VoidCallback onTest;
@@ -1682,6 +1875,19 @@ class _ModelRow extends StatelessWidget {
                     if (model.custom) ...[
                       const SizedBox(width: 6),
                       ModelBadge(l10n.modelsCustom),
+                    ],
+                    if (endpoint case final endpoint?) ...[
+                      const SizedBox(width: 6),
+                      ModelBadge(
+                        switch (endpoint) {
+                          ProviderProtocol.openaiChat => 'Chat Completions',
+                          ProviderProtocol.openaiResponses => 'Responses',
+                          _ => 'Anthropic',
+                        },
+                        tooltip:
+                            '${l10n.modelsEndpoint}: '
+                            '${ModelsSettingsPage.protocolName(context, endpoint)}',
+                      ),
                     ],
                     if (model.kind.generatesImages) ...[
                       const SizedBox(width: 6),
@@ -1827,6 +2033,9 @@ class _AccountRow extends StatelessWidget {
     required this.limitedUntil,
     required this.onEnabled,
     required this.onRemove,
+    this.resetCredits,
+    this.resetting = false,
+    this.onReset,
   });
 
   final ProviderAccount account;
@@ -1835,6 +2044,11 @@ class _AccountRow extends StatelessWidget {
   final DateTime? limitedUntil;
   final ValueChanged<bool> onEnabled;
   final VoidCallback onRemove;
+
+  /// Its reset credits, as listed; [onReset] uses one up.
+  final List<CodexResetCredit>? resetCredits;
+  final bool resetting;
+  final VoidCallback? onReset;
 
   @override
   Widget build(BuildContext context) {
@@ -1907,18 +2121,121 @@ class _AccountRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          SettingsSwitch(
-            value: account.enabled,
-            semanticLabel: l10n.modelsAccountEnable(account.displayName),
-            onChanged: onEnabled,
-          ),
-          const SizedBox(width: 8),
-          IdeActionButton(
-            icon: Codicons.trash,
-            tooltip: l10n.modelsAccountRemove,
-            onPressed: onRemove,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SettingsSwitch(
+                    value: account.enabled,
+                    semanticLabel: l10n.modelsAccountEnable(
+                      account.displayName,
+                    ),
+                    onChanged: onEnabled,
+                  ),
+                  const SizedBox(width: 8),
+                  IdeActionButton(
+                    icon: Codicons.trash,
+                    tooltip: l10n.modelsAccountRemove,
+                    onPressed: onRemove,
+                  ),
+                ],
+              ),
+              if (usage?.resetCredits case final count? when count > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: _ResetCredits(
+                    count: count,
+                    credits: resetCredits,
+                    resetting: resetting,
+                    onReset: onReset,
+                  ),
+                ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// How many reset credits an account has, in small text; hovered, each
+/// one's expiry, and a button that uses one up.
+class _ResetCredits extends StatelessWidget {
+  const _ResetCredits({
+    required this.count,
+    required this.credits,
+    required this.resetting,
+    required this.onReset,
+  });
+
+  final int count;
+  final List<CodexResetCredit>? credits;
+  final bool resetting;
+  final VoidCallback? onReset;
+
+  static String _time(DateTime at) {
+    final local = at.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${local.month}/${local.day} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final faint = SettingsText.description.copyWith(
+      color: SettingsColors.textSecondary,
+    );
+    return IdeHover(
+      interactive: true,
+      compact: false,
+      message: l10n.modelsResetCredits(count),
+      content: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 180, maxWidth: 280),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                l10n.modelsResetCreditsTitle(count),
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              Text(l10n.modelsResetCreditsDetail, style: faint),
+              if (credits case final credits? when credits.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                for (final (i, credit) in credits.indexed)
+                  Text(
+                    '${i + 1}. ${switch (credit.expiresAt) {
+                      final at? => l10n.modelsResetCreditExpires(_time(at)),
+                      null => '—',
+                    }}',
+                    style: SettingsText.description,
+                  ),
+              ],
+              const SizedBox(height: 8),
+              IdeButton(
+                label: l10n.modelsResetCreditUse,
+                icon: Codicons.debugRestart,
+                spinning: resetting,
+                onPressed: resetting ? null : onReset,
+              ),
+            ],
+          ),
+        ),
+      ),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.help,
+        child: Text(
+          l10n.modelsResetCredits(count),
+          style: SettingsText.description.copyWith(
+            decoration: TextDecoration.underline,
+            decorationStyle: TextDecorationStyle.dotted,
+            decorationColor: SettingsColors.textSecondary,
+          ),
+        ),
       ),
     );
   }
@@ -1931,34 +2248,6 @@ class _QuotaLine extends StatelessWidget {
 
   final CodexWindow window;
 
-  static String name(BuildContext context, int? minutes) {
-    final l10n = context.l10n;
-    if (minutes == null || minutes <= 0) return '';
-    if (minutes % 10080 == 0 && minutes == 10080) return l10n.modelsQuotaWeek;
-    if (minutes % 1440 == 0) return l10n.modelsQuotaDays(minutes ~/ 1440);
-    return l10n.modelsQuotaHours((minutes / 60).round());
-  }
-
-  static String resets(BuildContext context, DateTime at, DateTime now) {
-    final l10n = context.l10n;
-    final left = at.difference(now);
-    if (left.inMinutes < 60) {
-      return l10n.modelsQuotaResetsIn(
-        l10n.modelsDurationMinutes(left.inMinutes < 1 ? 1 : left.inMinutes),
-      );
-    }
-    if (left.inHours < 24) {
-      return l10n.modelsQuotaResetsIn(
-        l10n.modelsDurationHours(left.inHours, left.inMinutes % 60),
-      );
-    }
-    final local = at.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return l10n.modelsQuotaResetsAt(
-      '${local.month}/${local.day} ${two(local.hour)}:${two(local.minute)}',
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -1970,7 +2259,7 @@ class _QuotaLine extends StatelessWidget {
         : AppColors.added;
     final detail = [
       l10n.modelsQuotaUsed(used.round()),
-      if (window.resetsAt case final at?) resets(context, at, DateTime.now()),
+      if (window.resetsAt case final at?) quotaResets(l10n, at, DateTime.now()),
     ].join(' · ');
     return Padding(
       padding: const EdgeInsets.only(top: 2),
@@ -1979,7 +2268,7 @@ class _QuotaLine extends StatelessWidget {
           SizedBox(
             width: 52,
             child: Text(
-              name(context, window.minutes),
+              quotaWindowName(l10n, window.minutes),
               style: SettingsText.description,
             ),
           ),
@@ -2084,70 +2373,6 @@ class _IconButton extends StatelessWidget {
       ),
     );
   }
-}
-
-class _Folding extends StatelessWidget {
-  const _Folding({
-    required this.title,
-    required this.open,
-    required this.onToggle,
-    required this.children,
-    this.description,
-  });
-
-  final String title;
-  final String? description;
-  final bool open;
-  final VoidCallback onToggle;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Semantics(
-        button: true,
-        expanded: open,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onToggle,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        open ? Codicons.chevronDown : Codicons.chevronRight,
-                        size: 13,
-                        color: SettingsColors.textSecondary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(title, style: SettingsText.heading),
-                    ],
-                  ),
-                  if (description case final description? when open) ...[
-                    const SizedBox(height: 2),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 17),
-                      child: Text(
-                        description,
-                        style: SettingsText.headingDescription,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      if (open) SettingsCard(children: children),
-    ],
-  );
 }
 
 /// A text setting, written when it loses focus or Enter is pressed (not

@@ -23,7 +23,10 @@ void main() {
       // leading elsewhere would be a download page that lies.
       for (final page in ['site/download.html', 'site/zh/download.html']) {
         final html = File(page).readAsStringSync();
+        expect(html, contains('data-os="android"'), reason: page);
+        expect(html, contains('data-os="ios"'), reason: page);
         for (final MapEntry(key: os, value: target) in downloadQrTargets.entries) {
+          if (!html.contains('data-os="$os"')) continue;
           final card = _cardOf(html, os);
           expect(
             _attribute(card, 'img', 'src'),

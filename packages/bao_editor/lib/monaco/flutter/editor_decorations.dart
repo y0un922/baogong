@@ -280,6 +280,74 @@ class EditorInjectedText {
   String toString() => 'EditorInjectedText($text)';
 }
 
+/// A mark by changed lines between the line numbers and the text: VS
+/// Code's dirty diff (`dirty-diff-added`, `-modified`, `-deleted`),
+/// JetBrains' change markers. A bar of [color] by each line of the
+/// decoration; [deleted], a wedge at the bottom of its line (lines deleted
+/// after it), or at the top with [above] (deleted before the first).
+@immutable
+class EditorChangeBar {
+  const EditorChangeBar(this.color, {this.deleted = false, this.above = false});
+
+  final Color color;
+  final bool deleted;
+  final bool above;
+
+  @override
+  bool operator ==(Object other) =>
+      other is EditorChangeBar &&
+      other.color == color &&
+      other.deleted == deleted &&
+      other.above == above;
+
+  @override
+  int get hashCode => Object.hash(color, deleted, above);
+}
+
+/// A line's text in [EditorLineAnnotations]' column, in [color] on
+/// [background].
+@immutable
+class EditorLineAnnotation {
+  const EditorLineAnnotation(this.text, {this.color, this.background});
+
+  final String text;
+  final Color? color;
+  final Color? background;
+
+  @override
+  bool operator ==(Object other) =>
+      other is EditorLineAnnotation &&
+      other.text == text &&
+      other.color == color &&
+      other.background == background;
+
+  @override
+  int get hashCode => Object.hash(text, color, background);
+}
+
+/// A column [width] wide between the line numbers and the decorations, a
+/// short text by each line ([of], from 1; null for none): JetBrains'
+/// Annotate, who last changed each line and when. [onTap] hears a press on
+/// a line's (a pointer over them while there is one), [onHover] the
+/// pointer over one (null once off them). A new one is painted anew.
+class EditorLineAnnotations {
+  const EditorLineAnnotations({
+    required this.width,
+    required this.of,
+    this.fontSize,
+    this.onTap,
+    this.onHover,
+  });
+
+  final double width;
+  final EditorLineAnnotation? Function(int lineNumber) of;
+
+  /// The text's size; the line numbers' when null.
+  final double? fontSize;
+  final void Function(int lineNumber, Offset globalPosition)? onTap;
+  final void Function(int? lineNumber, Offset globalPosition)? onHover;
+}
+
 /// An icon in the glyph margin (a decoration type's `gutterIconPath` with
 /// `gutterIconSize`: `auto`, `contain`, `cover` or a percentage). The
 /// surface's `gutterIconBuilder` draws it.
@@ -324,6 +392,7 @@ class EditorDecoration {
     this.underlineStyle,
     this.overlayColor,
     this.marginColor,
+    this.gutterBarColor,
     this.lineDecorationIcon,
     this.lineDecorationColor,
     this.fillsLineOnLineBreak = false,
@@ -345,6 +414,7 @@ class EditorDecoration {
     this.after,
     this.hoverMessage,
     this.showIfCollapsed = false,
+    this.changeBar,
   });
 
   const EditorDecoration.findMatch(int start, int end)
@@ -381,6 +451,10 @@ class EditorDecoration {
   /// The gutter's background on each line (`marginClassName`, e.g. a diff's
   /// `gutter-insert`).
   final Color? marginColor;
+
+  /// A bar at the gutter's left edge by each line (a unified diff's
+  /// inserted lines).
+  final Color? gutterBarColor;
 
   /// An icon on each line between the line numbers and the text
   /// (`linesDecorationsClassName`, e.g. a diff's `insert-sign`), in
@@ -440,6 +514,9 @@ class EditorDecoration {
   /// Keeps an empty range's injected text and marks (`showIfCollapsed`).
   final bool showIfCollapsed;
 
+  /// A change mark by its lines (see [EditorChangeBar]).
+  final EditorChangeBar? changeBar;
+
   /// Whether the layout must know of this decoration: it changes how the
   /// text is shaped (style, opacity) or adds text to it.
   bool get affectsLayout =>
@@ -462,6 +539,7 @@ class EditorDecoration {
           underlineStyle: underlineStyle,
           overlayColor: overlayColor,
           marginColor: marginColor,
+          gutterBarColor: gutterBarColor,
           lineDecorationIcon: lineDecorationIcon,
           lineDecorationColor: lineDecorationColor,
           fillsLineOnLineBreak: fillsLineOnLineBreak,
@@ -483,6 +561,7 @@ class EditorDecoration {
           after: after,
           hoverMessage: hoverMessage,
           showIfCollapsed: showIfCollapsed,
+          changeBar: changeBar,
         );
 
   EditorUnderlineStyle get resolvedUnderlineStyle =>
@@ -558,6 +637,7 @@ class EditorDecoration {
       other.underlineStyle == underlineStyle &&
       other.overlayColor == overlayColor &&
       other.marginColor == marginColor &&
+      other.gutterBarColor == gutterBarColor &&
       other.lineDecorationIcon == lineDecorationIcon &&
       other.lineDecorationColor == lineDecorationColor &&
       other.fillsLineOnLineBreak == fillsLineOnLineBreak &&
@@ -578,7 +658,8 @@ class EditorDecoration {
       other.before == before &&
       other.after == after &&
       other.hoverMessage == hoverMessage &&
-      other.showIfCollapsed == showIfCollapsed;
+      other.showIfCollapsed == showIfCollapsed &&
+      other.changeBar == changeBar;
 
   @override
   int get hashCode => Object.hashAll([
@@ -594,6 +675,7 @@ class EditorDecoration {
     underlineStyle,
     overlayColor,
     marginColor,
+    gutterBarColor,
     lineDecorationIcon,
     lineDecorationColor,
     fillsLineOnLineBreak,
@@ -615,6 +697,7 @@ class EditorDecoration {
     after,
     hoverMessage,
     showIfCollapsed,
+    changeBar,
   ]);
 }
 

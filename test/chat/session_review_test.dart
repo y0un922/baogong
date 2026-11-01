@@ -4,22 +4,15 @@ import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/review/change_review.dart';
-import 'package:baocode/chat/review/change_reviews.dart';
 import 'package:baocode/chat/review/review_store.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _NoStore implements ReviewStore {
-  _NoStore([this.root = '/p']);
-
-  @override
-  final String root;
-
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
@@ -27,11 +20,10 @@ class _NoStore implements ReviewStore {
 
 /// A review that records what the session asks of it.
 class _Review extends ChangeReview {
-  _Review([String root = '/p']) : super(_NoStore(root));
+  _Review() : super(_NoStore(), root: '/p');
 
   final calls = <String>[];
-  final reported = <String>[];
-  Completer<void>? holdRefresh;
+  Completer<void>? holdBefore;
   List<FileChange> listed = const [];
 
   @override
@@ -43,14 +35,20 @@ class _Review extends ChangeReview {
   }
 
   @override
-  Future<void> refresh() async {
-    calls.add('refresh');
-    await holdRefresh?.future;
+  Future<void> before(String path) async {
+    calls.add('before $path');
+    await holdBefore?.future;
   }
 
   @override
+  Future<void> after(String path) async => calls.add('after $path');
+
+  @override
   void report(FileChange change, {FileOriginal? original}) =>
-      reported.add(change.path);
+      calls.add('report ${change.path}');
+
+  @override
+  Future<void> look() async => calls.add('look');
 
   @override
   Future<void> keep(Iterable<String> paths) async =>
@@ -82,7 +80,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: ChatScreen(session: session),
       ),
     );
@@ -91,6 +88,7 @@ void main() {
   }
 
   Future<void> finish(WidgetTester tester, ChatSession session) async {
+    // The message goes once the snapshot before it is taken.
     await tester.pump(const Duration(milliseconds: 100));
     for (var i = 0; i < 400 && session.isStreaming; i++) {
       switch (session.pendingInteraction) {
@@ -105,23 +103,43 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
   }
 
-  testWidgets('the edits go to the review, its files looked at again around '
-      'a turn, which does not wait for it', (tester) async {
+  testWidgets('each edit waits on the review keeping what its file was, '
+      'and is told it once made', (tester) async {
     final session = await pump(tester);
-    expect(review.calls, ['refresh']);
-
-    review.holdRefresh = Completer();
+    review.holdBefore = Completer();
     session.send(const ComposerMessage(text: '把输入框改成随内容增高'));
-    // Shown at once.
-    expect(review.calls, ['refresh', 'refresh']);
-    expect(session.itemCount, greaterThan(0));
+    for (var i = 0; i < 400 && review.calls.isEmpty; i++) {
+      switch (session.pendingInteraction) {
+        case QuestionRequest():
+          session.answer(const QuestionAnswer([], skipped: true));
+        case ApprovalRequest():
+          session.answer(const ApprovalAnswer(ApprovalDecision.allowOnce));
+        default:
+      }
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // As the CLI tells it (the mock's, relative).
+    const first = 'lib/chat/composer/composer.dart';
+    expect(review.calls, ['before $first']);
+    // The edit waits.
+    await tester.pump(const Duration(seconds: 1));
+    expect(review.calls, ['before $first']);
+    expect(session.fileChanges, isEmpty);
 
-    review.holdRefresh!.complete();
+    review.holdBefore!.complete();
     await finish(tester, session);
-
-    expect(review.reported, isNotEmpty);
-    // And again at the turn's end.
-    expect(review.calls.last, 'refresh');
+    expect(
+      review.calls,
+      containsAllInOrder([
+        'before $first',
+        'after $first',
+        'report $first',
+        'before lib/chat/chat_screen.dart',
+        'after lib/chat/chat_screen.dart',
+      ]),
+    );
+    // Its files looked at again as the turn ended.
+    expect(review.calls.last, 'look');
     // Its background tests settle.
     await tester.pump(const Duration(seconds: 5));
   });
@@ -159,55 +177,5 @@ void main() {
     expect(session.fileChanges, isNot([change]));
     expect(session.undoChanges, isNull);
     await tester.pump(const Duration(seconds: 5));
-  });
-
-  test('in a workspace, each folder\'s files are its review\'s', () async {
-    final reviews = <String, _Review>{};
-    final opened = <String>[];
-    final session = ChatSession(
-      kernel: MockKernels.claudeCode,
-      kernelContext: KernelContext(
-        cwd: '/w',
-        workspace: () =>
-            const KernelWorkspace(folders: ['/a', '/b', '/a/inner']),
-      ),
-      historyCount: 0,
-      openReview: (root, {session}) async {
-        opened.add(root);
-        return reviews[root] = _Review(root);
-      },
-    );
-    addTearDown(session.dispose);
-    session.attach();
-    await pumpEventQueue();
-    // A folder inside another is the other's.
-    expect(opened, ['/w', '/a', '/b']);
-
-    const inA = FileChange(path: '/a/lib/x.dart', added: 1, removed: 0);
-    const inB = FileChange(path: '/b/y.dart', added: 1, removed: 0);
-    reviews['/a']!.list(const [inA]);
-    reviews['/b']!.list(const [inB]);
-    expect(session.fileChanges, [inA, inB]);
-
-    session.keepChanges(const [inA]);
-    session.undoChanges!(const [inB]);
-    await pumpEventQueue();
-    expect(reviews['/a']!.calls, contains('keep /a/lib/x.dart'));
-    expect(reviews['/b']!.calls, contains('undo /b/y.dart'));
-    expect(reviews['/w']!.calls, isNot(contains(startsWith('keep'))));
-
-    // A file in none of them is the agent's directory's.
-    final parts = <String, _Review>{};
-    final both = await ChangeReviews.open([
-      '/w',
-      '/a',
-    ], open: (root, {session}) async => parts[root] = _Review(root));
-    addTearDown(both!.dispose);
-    both
-      ..report(const FileChange(path: 'notes.md', added: 1, removed: 0))
-      ..report(const FileChange(path: '/a/z.dart', added: 1, removed: 0))
-      ..report(const FileChange(path: '/elsewhere.txt', added: 1, removed: 0));
-    expect(parts['/w']!.reported, ['notes.md', '/elsewhere.txt']);
-    expect(parts['/a']!.reported, ['/a/z.dart']);
   });
 }

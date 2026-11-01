@@ -13,11 +13,17 @@ import 'heuristics.dart';
 class LinesDiffComputerOptions {
   const LinesDiffComputerOptions({
     this.ignoreTrimWhitespace = false,
+    this.ignoreAllWhitespace = false,
     this.maxComputationTimeMs = 0,
     this.computeMoves = false,
     this.extendToSubwords = false,
   });
   final bool ignoreTrimWhitespace;
+
+  /// Not upstream's: whitespace anywhere ignored, as JetBrains IDEs' Ignore
+  /// Whitespaces does; lines equal but for it are not changed, and a change
+  /// that is only that is no change.
+  final bool ignoreAllWhitespace;
 
   /// Zero disables the timeout, as in VS Code.
   final int maxComputationTimeMs;
@@ -85,10 +91,13 @@ class DefaultLinesDiffComputer {
       );
     }
     final timeout = DiffTimeout(options.maxComputationTimeMs);
-    final considerWhitespace = !options.ignoreTrimWhitespace;
+    final ignoreAll = options.ignoreAllWhitespace;
+    final considerWhitespace = !options.ignoreTrimWhitespace && !ignoreAll;
     final hashes = <String, int>{};
-    int hash(String line) =>
-        hashes.putIfAbsent(line.trim(), () => hashes.length);
+    int hash(String line) => hashes.putIfAbsent(
+      ignoreAll ? _withoutWhitespace(line) : line.trim(),
+      () => hashes.length,
+    );
     final originalHashes = originalLines.map(hash).toList();
     final modifiedHashes = modifiedLines.map(hash).toList();
     final first = LineSequence(originalHashes, originalLines);
@@ -152,11 +161,36 @@ class DefaultLinesDiffComputer {
       hitTimeout |= refined.hitTimeout;
     }
     scanEqualLines(originalLines.length - previousOriginal);
-    final changes = lineRangeMappingFromRangeMappings(
+    var changes = lineRangeMappingFromRangeMappings(
       alignments,
       originalLines,
       modifiedLines,
     );
+    if (ignoreAll) {
+      // Whole line changes only whitespace apart dropped, not character
+      // edits one by one: those left would no longer line the two sides up
+      // (lines joined, say, by edits of their breaks alone).
+      bool same(String a, String b) =>
+          _withoutWhitespace(a) == _withoutWhitespace(b);
+      String lines(List<String> text, LineRange range) => text
+          .sublist(range.startLineNumber - 1, range.endLineNumberExclusive - 1)
+          .join('\n');
+      changes = [
+        for (final change in changes)
+          if (!same(
+            lines(originalLines, change.original),
+            lines(modifiedLines, change.modified),
+          ))
+            DetailedLineRangeMapping(change.original, change.modified, [
+              for (final inner in change.innerChanges!)
+                if (!same(
+                  _text(originalLines, inner.originalRange),
+                  _text(modifiedLines, inner.modifiedRange),
+                ))
+                  inner,
+            ]),
+      ];
+    }
     final moves = options.computeMoves && timeout.isValid
         ? _computeMoves(
             changes,
@@ -318,6 +352,30 @@ class DefaultLinesDiffComputer {
     }
     return moves;
   }
+}
+
+final RegExp _whitespace = RegExp(r'\s+');
+
+String _withoutWhitespace(String text) => text.replaceAll(_whitespace, '');
+
+/// The text of [lines] in [range].
+String _text(List<String> lines, Range range) {
+  if (range.startLineNumber == range.endLineNumber) {
+    return lines[range.startLineNumber - 1].substring(
+      range.startColumn - 1,
+      range.endColumn - 1,
+    );
+  }
+  return [
+    lines[range.startLineNumber - 1].substring(range.startColumn - 1),
+    for (
+      var line = range.startLineNumber + 1;
+      line < range.endLineNumber;
+      line++
+    )
+      lines[line - 1],
+    lines[range.endLineNumber - 1].substring(0, range.endColumn - 1),
+  ].join('\n');
 }
 
 bool _equalLines(List<String> first, List<String> second) {

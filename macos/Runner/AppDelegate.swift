@@ -8,6 +8,16 @@ class AppDelegate: FlutterAppDelegate {
   override init() {
     AppDelegate.raiseOpenFileLimit()
     super.init()
+    #if DEBUG
+    // The Dock finds an app's icon by its bundle identifier: a debug build
+    // run beside the installed BaoCode, the same identifier, would show the
+    // installed one's. Set on the app itself, the DEV BUILD one shows.
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
+    ) { _ in
+      if let icon = NSImage(named: "AppIcon-Dev") { NSApp.applicationIconImage = icon }
+    }
+    #endif
   }
 
   /// An app launched from the Dock or Finder may hold 256 descriptors at
@@ -265,14 +275,18 @@ final class OpenRequests {
   /// opens them (the `code` command's marker, a folder to start from, `-n`,
   /// then them). A site's (baocode.dev/import): `provider/import`, an
   /// upstream to add, the link as it came after its marker, which Flutter
-  /// reads (upstream_import.dart). Nil for any other URL, or one without
-  /// absolute paths.
+  /// reads (upstream_import.dart); so too baocode.dev/activate's,
+  /// `activate`, the channel build's setup (channel_setup.dart). Nil for
+  /// any other URL, or one without absolute paths.
   static func request(from url: URL) -> [String]? {
     guard url.scheme == "baocode",
       let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
     else { return nil }
     if components.host == "provider" {
       return components.path == "/import" ? [importMarker, url.absoluteString] : nil
+    }
+    if components.host == "activate" {
+      return [importMarker, url.absoluteString]
     }
     let paths = (components.queryItems ?? [])
       .filter { $0.name == "path" }

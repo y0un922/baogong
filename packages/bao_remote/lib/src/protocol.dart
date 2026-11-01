@@ -15,7 +15,7 @@ import 'search/text_query.dart';
 abstract final class RemoteProtocol {
   /// Raise it whenever a method or a shape changes: an app and a server of
   /// another version do not talk, and the app puts its own server in place.
-  static const version = 7;
+  static const version = 9;
 
   static const initialize = 'initialize';
   static const shutdown = 'shutdown';
@@ -213,7 +213,13 @@ Map<String, Object?> searchItemToJson(Object item) => switch (item) {
     'path': path,
     'matches': [
       for (final match in matches)
-        [match.line, match.start, match.end, match.text],
+        [
+          match.line,
+          match.start,
+          match.end,
+          match.text,
+          if (match.isMultiline) match.endLine,
+        ],
     ],
   },
   IdeTextSearchComplete(:final limitHit) => {'complete': limitHit},
@@ -231,7 +237,14 @@ Object searchItemFromJson(Map<String, Object?> json) {
         final int start,
         final int end,
         final String text,
+        ...final rest,
       ])
-        IdeTextMatch(line, start, end, text),
+        IdeTextMatch(
+          line,
+          start,
+          end,
+          text,
+          endLine: rest.firstOrNull is int ? rest.first as int : null,
+        ),
   ]);
 }

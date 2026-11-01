@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../kernel/claude_code/claude_environment.dart';
 import 'mcp_probe.dart';
@@ -18,6 +19,24 @@ final String _initialize = jsonEncode({
     'clientInfo': {'name': 'BaoCode', 'version': '1.0.0'},
   },
 });
+
+/// What a client says once `initialize` is answered.
+final String _initialized = jsonEncode({
+  'jsonrpc': '2.0',
+  'method': 'notifications/initialized',
+});
+
+const _toolsId = 2;
+
+/// Asks for the server's tools.
+final String _listTools = jsonEncode({
+  'jsonrpc': '2.0',
+  'id': _toolsId,
+  'method': 'tools/list',
+});
+
+/// How long a server connected has to list its tools.
+const _toolsTimeout = Duration(seconds: 10);
 
 /// Asks the server [config] describes, in the login shell's environment
 /// (the PATH a terminal has, where `npx` and `uvx` are).
@@ -83,16 +102,27 @@ Future<McpProbeResult> _probeCommand(
   }
   final stderr = McpLogTail();
   final answered = Completer<McpProbeResult>();
+  final listed = Completer<List<McpProbeTool>?>();
   final subscriptions = [
-    process.stderr
-        .transform(const Utf8Decoder(allowMalformed: true))
-        .listen(stderr.add),
+    process.stderr.transform(_consoleText).listen(stderr.add),
     process.stdout
         .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
         .listen((line) {
-          if (answered.isCompleted) return;
-          if (_answer(line) case final result?) answered.complete(result);
+          if (!answered.isCompleted) {
+            if (_answer(line) case final result?) answered.complete(result);
+            return;
+          }
+          if (listed.isCompleted) return;
+          final Object? message;
+          try {
+            message = jsonDecode(line);
+          } on FormatException {
+            return;
+          }
+          if (mcpToolsOf(message, id: _toolsId) case final tools?) {
+            listed.complete(tools);
+          }
         }),
   ];
   unawaited(
@@ -114,7 +144,7 @@ Future<McpProbeResult> _probeCommand(
   // A server that is gone takes no more: its exit says why.
   unawaited(process.stdin.flush().catchError((Object _) {}));
   unawaited(process.stdin.done.catchError((Object _) {}));
-  final result = await answered.future.timeout(
+  var result = await answered.future.timeout(
     timeout,
     onTimeout: () => McpProbeResult(
       McpProbeStatus.failed,
@@ -122,6 +152,20 @@ Future<McpProbeResult> _probeCommand(
       log: stderr.toString(),
     ),
   );
+  // Connected: its tools, for their switches; a server that does not say
+  // is connected all the same.
+  if (result.status == McpProbeStatus.connected) {
+    try {
+      process.stdin
+        ..writeln(_initialized)
+        ..writeln(_listTools);
+      result = result.withTools(
+        await listed.future.timeout(_toolsTimeout, onTimeout: () => null),
+      );
+    } on Object {
+      // Gone already.
+    }
+  }
   await _stop(process);
   for (final subscription in subscriptions) {
     unawaited(subscription.cancel());
@@ -138,6 +182,35 @@ Future<McpProbeResult> _probeCommand(
     _ => result,
   };
 }
+
+/// A program's console output, a line at a time: UTF-8 if it is, else in
+/// the system's code page (cmd.exe's and npm's errors on a Chinese Windows
+/// come in GBK), so that why it failed reads as it was said.
+final StreamTransformer<List<int>, String> _consoleText =
+    StreamTransformer.fromBind((bytes) async* {
+      final line = BytesBuilder(copy: false);
+      String text(List<int> bytes) {
+        try {
+          return utf8.decode(bytes);
+        } on FormatException {
+          return Platform.isWindows
+              ? systemEncoding.decode(bytes)
+              : utf8.decode(bytes, allowMalformed: true);
+        }
+      }
+
+      await for (final chunk in bytes) {
+        var start = 0;
+        for (var i = 0; i < chunk.length; i++) {
+          if (chunk[i] != 0x0A) continue;
+          line.add(chunk.sublist(start, i + 1));
+          start = i + 1;
+          yield text(line.takeBytes());
+        }
+        if (start < chunk.length) line.add(chunk.sublist(start));
+      }
+      if (line.isNotEmpty) yield text(line.takeBytes());
+    });
 
 /// What a line of a server's says of `initialize`, if it is the answer.
 McpProbeResult? _answer(String line) {
@@ -229,11 +302,24 @@ Future<McpProbeResult> _probeRemote(
     }
     if (sse) return const McpProbeResult(McpProbeStatus.connected);
     // The answer, as JSON or an event's data.
-    for (final line in body.split('\n')) {
-      final data = line.startsWith('data:') ? line.substring(5).trim() : line;
-      if (_answer(data) case final result?) return result;
+    var result = const McpProbeResult(McpProbeStatus.connected);
+    for (final data in _dataLines(body)) {
+      if (_answer(data) case final answer?) {
+        result = answer;
+        break;
+      }
     }
-    return const McpProbeResult(McpProbeStatus.connected);
+    if (result.status != McpProbeStatus.connected) return result;
+    return result.withTools(
+      await _remoteTools(
+        client,
+        url,
+        headers: {
+          ...headers,
+          'mcp-session-id': ?response.headers.value('mcp-session-id'),
+        },
+      ).timeout(_toolsTimeout, onTimeout: () => null),
+    );
   } on Object catch (error) {
     return McpProbeResult(
       McpProbeStatus.failed,
@@ -245,8 +331,60 @@ Future<McpProbeResult> _probeRemote(
   }
 }
 
+/// Each JSON message of a body: its lines, an event's `data:` unwrapped.
+Iterable<String> _dataLines(String body) => [
+  for (final line in body.split('\n'))
+    line.startsWith('data:') ? line.substring(5).trim() : line,
+];
+
+/// A remote server's tools, once it is greeted: `initialized` told it,
+/// then `tools/list` asked, in the session it opened. Null where it does
+/// not say.
+Future<List<McpProbeTool>?> _remoteTools(
+  HttpClient client,
+  Uri url, {
+  required Map<String, String> headers,
+}) async {
+  Future<String?> post(String message) async {
+    final request = await client.postUrl(url);
+    headers.forEach(request.headers.set);
+    request.headers
+      ..set(HttpHeaders.acceptHeader, 'application/json, text/event-stream')
+      ..set(HttpHeaders.contentTypeHeader, 'application/json');
+    request.add(utf8.encode(message));
+    final response = await request.close();
+    if (response.statusCode >= 300) {
+      await response.drain<void>().catchError((Object _) {});
+      return null;
+    }
+    return _start(response, until: '"id":$_toolsId');
+  }
+
+  try {
+    await post(_initialized);
+    final body = await post(_listTools);
+    if (body == null) return null;
+    for (final data in _dataLines(body)) {
+      try {
+        if (mcpToolsOf(jsonDecode(data), id: _toolsId) case final tools?) {
+          return tools;
+        }
+      } on FormatException {
+        continue;
+      }
+    }
+  } on Object {
+    // Not listed: the switches of its tools are not shown.
+  }
+  return null;
+}
+
 /// The start of [response]'s body: an event stream may never end.
-Future<String> _start(HttpClientResponse response) async {
+Future<String> _start(
+  HttpClientResponse response, {
+  String until = '"id":1',
+  int most = 16000,
+}) async {
   final body = StringBuffer();
   try {
     await for (final chunk
@@ -254,7 +392,7 @@ Future<String> _start(HttpClientResponse response) async {
             .transform(const Utf8Decoder(allowMalformed: true))
             .timeout(const Duration(seconds: 5))) {
       body.write(chunk);
-      if (body.length > 16000 || chunk.contains('"id":1')) break;
+      if (body.length > most || chunk.contains(until)) break;
     }
   } on TimeoutException {
     // What came is enough.

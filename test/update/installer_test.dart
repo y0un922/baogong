@@ -195,6 +195,19 @@ void main() {
     expect(macUpdatePlatform(arm64: false, translated: true), 'macos-arm64');
   });
 
+  test('Windows updates to the build for its processor (#165)', () {
+    expect(windowsUpdatePlatform(arm64: false), 'windows-x64');
+    expect(windowsUpdatePlatform(arm64: true), 'windows-arm64');
+  });
+
+  test('the channel build updates to the channel build', () {
+    expect(editionUpdatePlatform('macos-arm64', channel: false), 'macos-arm64');
+    expect(
+      editionUpdatePlatform('windows-x64', channel: true),
+      'windows-x64-channel',
+    );
+  });
+
   group('macOS', () {
     late Directory applications;
     late String app;
@@ -316,6 +329,11 @@ void main() {
       );
       await installerOf(tools(signed: {'app', 'update'}))
           .prepare(zip, _release());
+      // Ad hoc, as every release was before the Developer ID (1.5.0 and
+      // earlier): takes the first one signed by a team.
+      await installerOf(
+        tools(signed: {'app', 'update'}, teams: {'update': 'TEAM1'}),
+      ).prepare(zip, _release());
       // By the same team.
       await expectLater(
         installerOf(

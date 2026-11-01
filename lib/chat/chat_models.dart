@@ -15,12 +15,16 @@ class UserMessageItem extends ChatItem {
     this.worked,
     this.usage,
     this.endedAt,
+    this.sentAt,
   });
 
   final String text;
 
   /// Pictures sent with it (screenshots, mockups…).
   final List<ImageAttachment> images;
+
+  /// When it was sent, where known: a chat app's times between messages.
+  final DateTime? sentAt;
 
   /// Sent while the agent was busy: waits for its turn, and can be taken
   /// back until then.
@@ -48,6 +52,7 @@ class UserMessageItem extends ChatItem {
     worked: worked ?? this.worked,
     usage: usage ?? this.usage,
     endedAt: endedAt ?? this.endedAt,
+    sentAt: sentAt,
   );
 }
 
@@ -377,7 +382,7 @@ class PlanItem extends ChatItem {
     this.feedback,
   });
 
-  /// The plan's file.
+  /// The plan's file; empty when the plan was sent rather than written.
   final String path;
 
   /// Which round of the conversation's planning it is, from 1.
@@ -686,6 +691,28 @@ final class OriginalByPatch extends FileOriginal {
   final String diff;
 }
 
+/// The edits made, in order, each a text put in place of another once (an
+/// Edit's, a MultiEdit's, as their input tells them): taken back out of the
+/// file as they left it, the last first, where each text put in is there
+/// once (else what it was is not known).
+final class OriginalByEdits extends FileOriginal {
+  const OriginalByEdits(this.edits);
+
+  final List<({String before, String after})> edits;
+
+  /// The text before them, from [text] as they left it; null where it
+  /// cannot be told.
+  String? undo(String text) {
+    for (final edit in edits.reversed) {
+      if (edit.after.isEmpty) return null;
+      final at = text.indexOf(edit.after);
+      if (at < 0 || text.indexOf(edit.after, at + 1) >= 0) return null;
+      text = text.replaceRange(at, at + edit.after.length, edit.before);
+    }
+    return text;
+  }
+}
+
 /// A file an agent changed, with its line counts.
 class FileChange {
   const FileChange({
@@ -706,8 +733,8 @@ class FileChange {
   /// No line counts: a binary file.
   final bool binary;
 
-  /// Whether what it was before is known, to be undone; not when the
-  /// agent did not tell, or it is too large or outside the project.
+  /// Whether what it was before is known, to be undone; not when it was
+  /// too large to keep and the agent did not tell.
   final bool tracked;
 
   /// It changed again since the agent left it, and Undo could not carry

@@ -6,7 +6,23 @@
 # VERSION and servers.json, when built into build/remote/, go beside the
 # executable (lib/remote/remote_binaries.dart); the app downloads the
 # builds they name.
+#
+#   sh tool/package_linux_deb.sh            the standard build
+#   sh tool/package_linux_deb.sh --channel  the channel build (built with
+#                                           BAOCODE_CHANNEL=true in the
+#                                           environment and as a dart-define):
+#                                           its files end in -channel, and it
+#                                           depends on WebKitGTK, for its
+#                                           login window
 set -eu
+
+edition=
+webkit=
+case "${1:-}" in
+  --channel) edition=-channel; webkit=", libwebkit2gtk-4.1-0" ;;
+  "") ;;
+  *) echo "Unknown argument: $1" >&2; exit 1 ;;
+esac
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 version=$(sed -n 's/^version:[[:space:]]*//p' "$root/pubspec.yaml")
@@ -69,7 +85,7 @@ Version: ${marketing}
 Section: devel
 Priority: optional
 Architecture: ${package_arch}
-Depends: libgtk-3-0, libblkid1, liblzma5
+Depends: libgtk-3-0, libblkid1, liblzma5${webkit}
 Maintainer: y0un922 <y0un92@linux.do>
 Homepage: https://github.com/y0un922/baogong
 Description: Baogong (包工头), an unofficial fork of BaoCode
@@ -78,8 +94,8 @@ EOF
 
 out="$root/build/installers"
 mkdir -p "$out"
-dpkg-deb --build --root-owner-group "$stage" \
-  "$out/Baogong-${marketing}-linux-${package_arch}.deb"
-tar -C "$bundle" -czf "$out/Baogong-${marketing}-linux-${package_arch}.tar.gz" .
-echo "Wrote $out/Baogong-${marketing}-linux-${package_arch}.deb"
-echo "Wrote $out/Baogong-${marketing}-linux-${package_arch}.tar.gz"
+name="Baogong-${marketing}-linux-${package_arch}${edition}"
+dpkg-deb --build --root-owner-group "$stage" "$out/$name.deb"
+tar -C "$bundle" -czf "$out/$name.tar.gz" .
+echo "Wrote $out/$name.deb"
+echo "Wrote $out/$name.tar.gz"

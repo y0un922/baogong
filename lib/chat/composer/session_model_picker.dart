@@ -2,10 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../channel/channel_setup.dart' show ChannelSetup;
 import '../../ide/ide_dialog.dart';
 import '../../kernel/agent_kernel.dart';
 import '../../kernel/kernel_types.dart';
 import '../../l10n/l10n.dart';
+import '../../models/model_provider.dart' show parseModelRef;
+import '../../models/model_providers.dart';
+import '../../models/model_runtime.dart' show codexService;
 import '../../models/model_welcome.dart';
 import '../../settings/settings_dialog.dart'
     show SettingsOpener, SettingsSection;
@@ -99,16 +103,46 @@ class SessionModelPicker extends StatelessWidget {
     );
   }
 
+  /// Beside a model of ChatGPT accounts, last: whether an account out of
+  /// quota uses up a reset credit of its own by itself.
+  ModelSettingChoice? _autoResetCredits(BuildContext context, String model) {
+    final providers = ModelProviders.current;
+    final provider = providers.provider(parseModelRef(model)?.provider);
+    if (provider == null || !provider.protocol.usesAccounts) return null;
+    final on = KernelOption(
+      'on',
+      context.l10n.autoResetCreditsToggle,
+      Icons.restart_alt_rounded,
+      '',
+    );
+    final enabled = provider.autoResetCredits;
+    return ModelSettingChoice(
+      kind: null,
+      options: [on],
+      selected: enabled ? on : null,
+      toggle: true,
+      onSelected: (_) => unawaited(() async {
+        final now = providers.provider(provider.id) ?? provider;
+        await providers.save(now.copyWith(autoResetCredits: !enabled));
+        // Turned on: one out of quota already uses its credit now.
+        if (!enabled) {
+          await codexService.refreshUsage(
+            providers.provider(provider.id) ?? now,
+          );
+        }
+      }()),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) =>
-      switch (ResumeAfterResetSetting.changes) {
-        // Its switch turned, as settings.json says.
-        final changes? => ListenableBuilder(
-          listenable: changes,
-          builder: (context, _) => _build(context),
-        ),
-        null => _build(context),
-      };
+  Widget build(BuildContext context) => ListenableBuilder(
+    // Its switches turned, as settings.json says.
+    listenable: Listenable.merge([
+      ?ResumeAfterResetSetting.changes,
+      ModelProviders.current,
+    ]),
+    builder: (context, _) => _build(context),
+  );
 
   Widget _build(BuildContext context) {
     final model = session.models;
@@ -140,18 +174,21 @@ class SessionModelPicker extends StatelessWidget {
             ),
           ),
         ?_resumeAfterLimit(context, option.id),
+        ?_autoResetCredits(context, option.id),
       ],
       tooltip: tooltip,
       menuWidth: 260,
       searchPlaceholder: l10n.modelsSearch,
-      footer: switch (SettingsOpener.maybeOf(context)) {
-        final open? => (
-          label: l10n.modelsManage,
-          icon: Icons.tune_rounded,
-          onTap: () => open(SettingsSection.models),
-        ),
-        null => null,
-      },
+      footers: [
+        if (SettingsOpener.maybeOf(context) case final open?)
+          (
+            label: ChannelSetup.channelBuild
+                ? l10n.channelAccountTitle
+                : l10n.modelsManage,
+            icon: Icons.tune_rounded,
+            onTap: () => open(SettingsSection.models),
+          ),
+      ],
       tapRegionGroupId: tapRegionGroupId,
       focusNode: focusNode,
       onSelected: (option) =>

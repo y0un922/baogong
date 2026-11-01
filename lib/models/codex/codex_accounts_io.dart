@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
 import '../model_provider.dart';
 import '../model_providers.dart';
 import '../model_runtime.dart' show UpstreamException;
+import '../proxy/prompt_cache_key.dart';
 import '../secret_store.dart';
 import '../upstream.dart';
 import 'codex_api.dart';
@@ -38,10 +40,15 @@ class CodexAccounts extends CodexService {
 
   final CodexBalancer _balancer = CodexBalancer();
   final Map<String, ({String access, DateTime expiresAt})> _tokens = {};
-  final Map<String, Future<String>> _refreshing = {};
+  final Map<String, _AccountRequests> _requests = {};
   final Map<String, CodexUsage> _usage = {};
   final Map<String, String> _errors = {};
   final Map<String, DateTime> _limited = {};
+  final Map<String, List<CodexResetCredit>> _resetCredits = {};
+
+  /// How long after a reset credit of an account's was used, or tried,
+  /// another is not by itself: its quota may not show started over yet.
+  static const autoResetBackoff = Duration(minutes: 10);
 
   /// Those whose refresh token no longer works: until signed in again.
   final Set<String> _signedOut = {};
@@ -85,9 +92,17 @@ class CodexAccounts extends CodexService {
     return until;
   }
 
-  /// Whether account [accountId] is signed out: to be signed in again.
+  @override
   bool signedOut(String providerId, String accountId) =>
       _signedOut.contains(_key(providerId, accountId));
+
+  @override
+  List<CodexResetCredit>? resetCredits(String providerId, String accountId) =>
+      _resetCredits[_key(providerId, accountId)];
+
+  @override
+  bool resetting(String providerId, String accountId) =>
+      _requests[_key(providerId, accountId)]?.reset != null;
 
   // --- Which account ---------------------------------------------------------
 
@@ -118,6 +133,28 @@ class CodexAccounts extends CodexService {
     used: (account) => usage(provider.id, account.id)?.mostUsed,
   );
 
+  @override
+  ProviderAccount? accountFor(ModelProvider provider, {String? session}) =>
+      _balancer.peek(
+        provider.id,
+        available(provider),
+        provider.balance,
+        session: session == null ? null : promptCacheKeyOf(session),
+        used: (account) => usage(provider.id, account.id)?.mostUsed,
+      );
+
+  @override
+  DateTime? backAt(ModelProvider provider) {
+    DateTime? first;
+    for (final account in provider.accounts) {
+      if (!account.enabled || signedOut(provider.id, account.id)) continue;
+      final until = limitedUntil(provider.id, account.id);
+      if (until == null) return null;
+      if (first == null || until.isBefore(first)) first = until;
+    }
+    return first;
+  }
+
   /// Account [account] out of quota until [until].
   void markLimited(
     ModelProvider provider,
@@ -127,6 +164,10 @@ class CodexAccounts extends CodexService {
     _limited[_key(provider.id, account.id)] = until;
     _balancer.forget(provider.id, account.id);
     notifyListeners();
+    // Its quota asked again: a reset credit used, if it is to be.
+    if (_providers().provider(provider.id)?.autoResetCredits ?? false) {
+      unawaited(_fetchUsage(provider.id, account));
+    }
   }
 
   /// What went wrong with [account]; null as it works again.
@@ -172,25 +213,45 @@ class CodexAccounts extends CodexService {
         held.expiresAt.isAfter(_now().add(const Duration(minutes: 1)))) {
       return held.access;
     }
-    if (_refreshing[key] case final running?) return running;
-    // Not `=> remove(key)`: that is this future, which would wait on itself.
-    final refresh = _refresh(provider.id, account).whenComplete(() {
-      _refreshing.remove(key);
+    final requests = _requests.putIfAbsent(key, _AccountRequests.new);
+    if (requests.token case final running?) return running;
+    final refresh = _refresh(provider.id, account, requests).whenComplete(() {
+      requests.token = null;
     });
-    _refreshing[key] = refresh;
+    requests.token = refresh;
     return refresh;
   }
 
-  Future<String> _refresh(String providerId, ProviderAccount account) async {
+  bool _current(
+    String providerId,
+    String accountId,
+    _AccountRequests requests,
+  ) =>
+      identical(_requests[_key(providerId, accountId)], requests) &&
+      _providers().provider(providerId)?.account(accountId) != null;
+
+  Future<String> _refresh(
+    String providerId,
+    ProviderAccount account,
+    _AccountRequests requests,
+  ) async {
     final key = _key(providerId, account.id);
     final ref = ModelProvider.accountRefFor(providerId, account.id);
     final secrets = _providers().secrets;
+    void checkCurrent() {
+      if (!_current(providerId, account.id, requests)) {
+        throw const CodexException('The account changed.');
+      }
+    }
+
     String? refreshToken;
     try {
       refreshToken = await secrets.read(ref);
     } on SecretStoreException catch (error) {
+      checkCurrent();
       throw _fail(key, 'The token could not be read: $error');
     }
+    checkCurrent();
     if (refreshToken == null || refreshToken.isEmpty) {
       throw _fail(key, 'Signed out: sign in again.', signedOut: true);
     }
@@ -198,6 +259,7 @@ class CodexAccounts extends CodexService {
       endpoints.token,
       codexRefreshForm(refreshToken),
     );
+    checkCurrent();
     if (status >= 400) {
       final message = upstreamErrorMessage(status, text);
       // The refresh token refused (used, expired, revoked): only signing
@@ -221,6 +283,7 @@ class CodexAccounts extends CodexService {
       } on SecretStoreException catch (error) {
         debugPrint('Refresh token of ${account.id} not kept: $error');
       }
+      checkCurrent();
     }
     _tokens[key] = (access: tokens.access, expiresAt: tokens.expiresAt);
     _signedOut.remove(key);
@@ -324,6 +387,9 @@ class CodexAccounts extends CodexService {
         accountId: identity.accountId,
       ),
     };
+    final key = _key(providerId, account.id);
+    // Requests from before this sign-in must not change its token or quota.
+    _requests.remove(key);
     try {
       await providers.secrets.write(
         ModelProvider.accountRefFor(providerId, account.id),
@@ -332,11 +398,12 @@ class CodexAccounts extends CodexService {
     } on SecretStoreException catch (error) {
       throw CodexException('The token could not be kept: $error');
     }
-    final key = _key(providerId, account.id);
+    _requests.remove(key);
     _tokens[key] = (access: tokens.access, expiresAt: tokens.expiresAt);
     _signedOut.remove(key);
     _errors.remove(key);
     _limited.remove(key);
+    _resetCredits.remove(key);
     await providers.save(
       (providers.provider(providerId) ?? provider).withAccount(account),
     );
@@ -347,6 +414,8 @@ class CodexAccounts extends CodexService {
 
   @override
   Future<void> removeAccount(String providerId, String accountId) async {
+    final key = _key(providerId, accountId);
+    _requests.remove(key);
     final providers = _providers();
     if (providers.provider(providerId) case final provider?) {
       await providers.save(
@@ -365,11 +434,12 @@ class CodexAccounts extends CodexService {
     } on SecretStoreException catch (error) {
       debugPrint('Token of $accountId not removed: $error');
     }
-    final key = _key(providerId, accountId);
+    _requests.remove(key);
     _tokens.remove(key);
     _usage.remove(key);
     _errors.remove(key);
     _limited.remove(key);
+    _resetCredits.remove(key);
     _signedOut.remove(key);
     _balancer.forget(providerId, accountId);
     notifyListeners();
@@ -378,29 +448,260 @@ class CodexAccounts extends CodexService {
   // --- Quota and models ------------------------------------------------------
 
   @override
-  Future<void> refreshUsage(ModelProvider provider) => Future.wait([
-    for (final account in provider.accounts) _fetchUsage(provider.id, account),
-  ]);
+  Future<void> refreshUsage(ModelProvider provider, {bool force = true}) =>
+      Future.wait([
+        for (final account in provider.accounts)
+          _fetchUsage(provider.id, account, force: force),
+      ]);
 
-  Future<void> _fetchUsage(String providerId, ProviderAccount account) async {
+  Future<void> _fetchUsage(
+    String providerId,
+    ProviderAccount account, {
+    bool force = true,
+  }) {
     final key = _key(providerId, account.id);
     final provider = _providers().provider(providerId);
-    if (provider == null) return;
+    if (provider?.account(account.id) == null) return Future.value();
+    final requests = _requests.putIfAbsent(key, _AccountRequests.new);
+    if (requests.usage case final running?) return running;
+    final previous = _usage[key];
+    if (!force && !_stale(previous, requests.usageAttemptedAt)) {
+      return Future.value();
+    }
+    requests.usageAttemptedAt = _now();
+    final fetch = _queryUsage(provider!, account, requests, previous)
+        .whenComplete(() {
+          requests.usage = null;
+        });
+    requests.usage = fetch;
+    return fetch;
+  }
+
+  /// Whether [usage] is to be asked again: not known, learned (or [tried])
+  /// [CodexService.usageMaxAge] ago, or a window of it started over since
+  /// (and not tried since).
+  bool _stale(CodexUsage? usage, DateTime? tried) {
+    final now = _now();
+    if (usage != null &&
+        usage.windows.any(
+          (window) => switch (window.resetsAt) {
+            final at? =>
+              at.isAfter(usage.at) &&
+                  !at.isAfter(now) &&
+                  (tried == null || tried.isBefore(at)),
+            null => false,
+          },
+        )) {
+      return true;
+    }
+    final last = [?usage?.at, ?tried].fold<DateTime?>(
+      null,
+      (latest, at) => latest == null || at.isAfter(latest) ? at : latest,
+    );
+    return last == null || now.difference(last) >= CodexService.usageMaxAge;
+  }
+
+  Future<void> _queryUsage(
+    ModelProvider provider,
+    ProviderAccount account,
+    _AccountRequests requests,
+    CodexUsage? previous,
+  ) async {
+    final key = _key(provider.id, account.id);
+    // Headers learned while this query ran are newer, even at the same clock
+    // time. Neither its answer nor an error should replace that snapshot.
+    bool current() =>
+        _current(provider.id, account.id, requests) &&
+        identical(_usage[key], previous);
     try {
       final (status, text) = await _get(provider, account, endpoints.usage);
+      if (!current()) return;
       if (status >= 400) {
         _errors[key] = upstreamErrorMessage(status, text);
       } else {
-        _usage[key] = CodexUsage.fromJson(_decode(text), _now());
+        final usage = CodexUsage.fromJson(_decode(text), _now());
+        _usage[key] = usage;
         _errors.remove(key);
-        if (_usage[key]?.limitReached == false) _limited.remove(key);
+        if (!usage.limitReached) _limited.remove(key);
+        switch (usage.resetCredits) {
+          case 0:
+            _resetCredits[key] = const [];
+          // Listed again as their count changes.
+          case final count? when _resetCredits[key]?.length != count:
+            unawaited(_listResetCredits(provider, account, requests));
+        }
+        unawaited(_autoReset(provider.id, account));
       }
     } on CodexException catch (error) {
+      if (!current()) return;
       _errors[key] = error.message;
     } on Object catch (error) {
+      if (!current()) return;
       _errors[key] = '$error';
     }
     notifyListeners();
+  }
+
+  Future<void> _listResetCredits(
+    ModelProvider provider,
+    ProviderAccount account,
+    _AccountRequests requests,
+  ) async {
+    final key = _key(provider.id, account.id);
+    try {
+      final (status, text) = await _get(
+        provider,
+        account,
+        endpoints.resetCredits,
+      );
+      if (status >= 400 || !_current(provider.id, account.id, requests)) {
+        return;
+      }
+      final json = _decode(text);
+      final credits = CodexResetCredit.listFromJson(json, _now());
+      _resetCredits[key] = credits;
+      // The list's count is the backend's own: the usage's kept with it.
+      final count = switch (json) {
+        {'available_count': final num count} when count > 0 => count.toInt(),
+        _ => credits.length,
+      };
+      if (_usage[key] case final usage? when usage.resetCredits != count) {
+        _usage[key] = usage.withResetCredits(count);
+      }
+      notifyListeners();
+    } on Object catch (error) {
+      debugPrint('Reset credits of ${account.id} not listed: $error');
+    }
+  }
+
+  @override
+  Future<void> useResetCredit(ModelProvider provider, String accountId) async {
+    final account = _providers().provider(provider.id)?.account(accountId);
+    if (account == null) throw const CodexException('The account was removed.');
+    await _reset(provider.id, account);
+  }
+
+  /// Uses up a reset credit of [account]'s, if [providerId] is to by itself
+  /// and its quota is used up (for longer than five hours, unless its
+  /// five hours are to be reset too); whether one was.
+  /// After one, the next waits [autoResetBackoff].
+  Future<bool> _autoReset(String providerId, ProviderAccount account) async {
+    final key = _key(providerId, account.id);
+    final requests = _requests[key];
+    if (requests?.reset case final running?) {
+      try {
+        await running;
+        return true;
+      } on Object {
+        return false;
+      }
+    }
+    final provider = _providers().provider(providerId);
+    final usage = _usage[key];
+    final now = _now();
+    if (provider == null ||
+        !provider.autoResetCredits ||
+        !account.enabled ||
+        signedOut(providerId, account.id) ||
+        usage == null ||
+        (usage.resetCredits ?? 0) <= 0 ||
+        !usage.usedUp(now, fiveHours: provider.resetCreditsFiveHours)) {
+      return false;
+    }
+    if (requests?.resetTriedAt case final tried?
+        when now.difference(tried) < autoResetBackoff) {
+      return false;
+    }
+    try {
+      await _reset(providerId, account);
+      return true;
+    } on Object catch (error) {
+      debugPrint('Reset credit of ${account.id} not used: $error');
+      return false;
+    }
+  }
+
+  /// Uses up a reset credit of [account]'s: one at a time. Throws
+  /// [CodexException].
+  Future<void> _reset(String providerId, ProviderAccount account) {
+    final key = _key(providerId, account.id);
+    final requests = _requests.putIfAbsent(key, _AccountRequests.new);
+    if (requests.reset case final running?) return running;
+    requests.resetTriedAt = _now();
+    final reset = _redeem(providerId, account, requests).whenComplete(() {
+      requests.reset = null;
+      notifyListeners();
+    });
+    requests.reset = reset;
+    notifyListeners();
+    return reset;
+  }
+
+  Future<void> _redeem(
+    String providerId,
+    ProviderAccount account,
+    _AccountRequests requests,
+  ) async {
+    final provider = _providers().provider(providerId);
+    if (provider == null) {
+      throw const CodexException('The provider was removed.');
+    }
+    final key = _key(providerId, account.id);
+    final int status;
+    final String text;
+    try {
+      // Retried with the same id, the backend uses up one credit for both.
+      (status, text) = await _send(
+        provider,
+        account,
+        endpoints.consumeResetCredit,
+        body: utf8.encode(jsonEncode({'redeem_request_id': _requestId()})),
+      );
+    } on CodexException {
+      rethrow;
+    } on Object catch (error) {
+      throw CodexException('The reset credit could not be used: $error');
+    }
+    if (!_current(providerId, account.id, requests)) {
+      throw const CodexException('The account changed.');
+    }
+    if (status >= 400) {
+      final message =
+          'The reset credit could not be used: '
+          '${upstreamErrorMessage(status, text)}';
+      _errors[key] = message;
+      notifyListeners();
+      throw CodexException(message);
+    }
+    _limited.remove(key);
+    _errors.remove(key);
+    if (_usage[key] case final usage? when (usage.resetCredits ?? 0) > 0) {
+      _usage[key] = usage.withResetCredits(usage.resetCredits! - 1);
+    }
+    final credits = _resetCredits[key];
+    if (credits != null && credits.isNotEmpty) {
+      _resetCredits[key] = credits.sublist(1);
+    }
+    notifyListeners();
+    // Asked again after one under way, which was asked before the reset.
+    await requests.usage;
+    await _fetchUsage(providerId, account);
+  }
+
+  /// A version 4 UUID, which the backend knows a request by.
+  static String _requestId() {
+    final random = Random.secure();
+    final bytes = [for (var i = 0; i < 16; i++) random.nextInt(256)];
+    bytes[6] = bytes[6] & 0x0f | 0x40;
+    bytes[8] = bytes[8] & 0x3f | 0x80;
+    final hex = [for (final b in bytes) b.toRadixString(16).padLeft(2, '0')];
+    return [
+      hex.sublist(0, 4),
+      hex.sublist(4, 6),
+      hex.sublist(6, 8),
+      hex.sublist(8, 10),
+      hex.sublist(10),
+    ].map((part) => part.join()).join('-');
   }
 
   /// The models [provider]'s backend lists, asked as one of its accounts.
@@ -450,6 +751,7 @@ class CodexAccounts extends CodexService {
     Duration timeout = const Duration(minutes: 5),
   }) async {
     final tried = <String>{};
+    final reset = <String>{};
     while (true) {
       final account = pick(provider, session: session, exclude: tried);
       if (account == null) {
@@ -489,6 +791,11 @@ class CodexAccounts extends CodexService {
           if (codexLimitReset(response.statusCode, text, _now())
               case final until?) {
             markLimited(provider, account, until);
+            // A reset credit used up for it: it goes on, once.
+            if (reset.add(account.id) &&
+                await _resetAfterLimit(provider, account)) {
+              tried.remove(account.id);
+            }
             break;
           }
           return (response.statusCode, text);
@@ -505,21 +812,52 @@ class CodexAccounts extends CodexService {
     }
   }
 
+  /// Whether [account], out of quota, can take a request again: a reset
+  /// credit of its own used up, if [provider] is to.
+  Future<bool> _resetAfterLimit(
+    ModelProvider provider,
+    ProviderAccount account,
+  ) async {
+    if (!(_providers().provider(provider.id)?.autoResetCredits ?? false)) {
+      return false;
+    }
+    // Its quota as it is now (asked by [markLimited]), then the credit.
+    await _fetchUsage(provider.id, account);
+    await _autoReset(provider.id, account);
+    return limitedUntil(provider.id, account.id) == null &&
+        !signedOut(provider.id, account.id);
+  }
+
   /// GETs [url] as [account], its token refreshed once if refused.
   Future<(int, String)> _get(
     ModelProvider provider,
     ProviderAccount account,
     Uri url,
-  ) async {
+  ) => _send(provider, account, url);
+
+  /// GETs [url] as [account], or POSTs [body] (JSON) when given; its token
+  /// refreshed once if refused.
+  Future<(int, String)> _send(
+    ModelProvider provider,
+    ProviderAccount account,
+    Uri url, {
+    List<int>? body,
+  }) async {
     String? rejected;
     for (var attempt = 0; ; attempt++) {
       final token = await accessToken(provider, account, rejected: rejected);
-      final request = await _http.getUrl(url);
+      final request = body == null
+          ? await _http.getUrl(url)
+          : await _http.postUrl(url);
       codexHeaders(
         token,
         accountId: account.accountId,
         version: codexVersionOf(provider),
       ).forEach(request.headers.set);
+      if (body != null) {
+        request.headers.contentType = ContentType.json;
+        request.add(body);
+      }
       final response = await request.close().timeout(
         const Duration(seconds: 30),
       );
@@ -563,6 +901,17 @@ class CodexAccounts extends CodexService {
       return null;
     }
   }
+}
+
+/// Requests belong to one sign-in, not a later account with the same id.
+class _AccountRequests {
+  Future<String>? token;
+  Future<void>? usage;
+  DateTime? usageAttemptedAt;
+
+  /// A reset credit being used; when one last was tried.
+  Future<void>? reset;
+  DateTime? resetTriedAt;
 }
 
 /// A sign-in waiting for the browser to come back to this machine.

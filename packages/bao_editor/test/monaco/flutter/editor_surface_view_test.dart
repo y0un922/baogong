@@ -36,6 +36,10 @@ Future<FocusNode> _mount(
   List<EditorDecoration> decorations = const [],
   bool wrap = false,
   FoldingRules? foldingRules,
+  void Function(int lineNumber, Offset globalPosition)? onChangeBarTap,
+  EditorLineAnnotations? lineAnnotations,
+  bool alwaysConsumeMouseWheel = true,
+  bool scrollBeyondLastLine = true,
 }) async {
   final focus = FocusNode();
   addTearDown(focus.dispose);
@@ -51,6 +55,10 @@ Future<FocusNode> _mount(
             decorations: decorations,
             wrap: wrap,
             foldingRules: foldingRules,
+            onChangeBarTap: onChangeBarTap,
+            lineAnnotations: lineAnnotations,
+            alwaysConsumeMouseWheel: alwaysConsumeMouseWheel,
+            scrollBeyondLastLine: scrollBeyondLastLine,
           ),
         ),
       ),
@@ -406,6 +414,141 @@ void main() {
     expect(EditorCaretStyle.fromApi(9), isNull);
   });
 
+  testWidgets('change marks: a bar or a wedge right of the chevrons, '
+      'pressed apart from the line', (tester) async {
+    final controller = _controller('one\ntwo\nthree\nfour\nfive');
+    final snapshot = controller.document.snapshot;
+    const added = Color(0xff00ff00);
+    const deleted = Color(0xffff0000);
+    final pressed = <int>[];
+    await _mount(
+      tester,
+      controller,
+      decorations: [
+        EditorDecoration(
+          start: snapshot.lineStarts[1],
+          end: snapshot.contentEnds[2],
+          changeBar: const EditorChangeBar(added),
+        ),
+        EditorDecoration(
+          start: snapshot.lineStarts[4],
+          end: snapshot.lineStarts[4],
+          changeBar: const EditorChangeBar(deleted, deleted: true),
+        ),
+      ],
+      onChangeBarTap: (line, _) => pressed.add(line),
+    );
+    final gutter = _gutter(tester);
+    final geometry = gutter.geometry;
+    final layout = gutter.layout;
+    final lineHeight = layout.lineHeight;
+    expect(
+      geometry.changeBarLeft,
+      geometry.foldingLeft + geometry.foldingWidth + 1,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is CustomPaint && widget.painter is EditorGutterPainter,
+      ),
+      paints
+        // The gutter's background, then the marks.
+        ..rect()
+        ..rect(
+          rect: Rect.fromLTWH(
+            geometry.changeBarLeft,
+            layout.lineTop(2),
+            EditorViewGeometry.changeBarWidth,
+            lineHeight,
+          ),
+          color: added,
+        )
+        ..rect(color: added)
+        ..path(color: deleted),
+    );
+
+    Offset bar(int line) =>
+        _origin(tester) +
+        Offset(
+          geometry.changeBarLeft + 1,
+          layout.lineTop(line) + lineHeight / 2,
+        );
+    await _click(tester, bar(3), at: const Duration(seconds: 1));
+    await _click(tester, bar(5), at: const Duration(seconds: 2));
+    // No mark there: the line selected, as a press in the gutter does.
+    await _click(tester, bar(1), at: const Duration(seconds: 3));
+    expect(pressed, [3, 5]);
+    expect(
+      controller.value.selection,
+      const TextSelection(baseOffset: 0, extentOffset: 4),
+    );
+  });
+
+  testWidgets('annotations: a column right of the line numbers, its lines '
+      'pressed and hovered', (tester) async {
+    final controller = _controller('one\ntwo\nthree');
+    final pressed = <int>[];
+    final hovered = <int?>[];
+    const background = Color(0xff123456);
+    await _mount(
+      tester,
+      controller,
+      lineAnnotations: EditorLineAnnotations(
+        width: 80,
+        of: (line) => line == 3
+            ? null
+            : EditorLineAnnotation('Ada $line', background: background),
+        onTap: (line, _) => pressed.add(line),
+        onHover: (line, _) => hovered.add(line),
+      ),
+    );
+    final gutter = _gutter(tester);
+    final geometry = gutter.geometry;
+    final layout = gutter.layout;
+    expect(geometry.annotationsWidth, 80);
+    expect(
+      geometry.decorationsLeft,
+      geometry.lineNumbersLeft + geometry.lineNumbersWidth + 80,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is CustomPaint && widget.painter is EditorGutterPainter,
+      ),
+      paints
+        ..rect()
+        ..rect(
+          rect: Rect.fromLTWH(
+            geometry.annotationsLeft,
+            layout.lineTop(1),
+            80,
+            layout.lineHeight,
+          ),
+          color: background,
+        ),
+    );
+
+    Offset at(int line) =>
+        _origin(tester) +
+        Offset(
+          geometry.annotationsLeft + 20,
+          layout.lineTop(line) + layout.lineHeight / 2,
+        );
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: at(2));
+    await mouse.moveTo(at(2));
+    await tester.pump();
+    await mouse.moveTo(at(3));
+    await tester.pump();
+    expect(hovered, [2, null]);
+    await _click(tester, at(2), at: const Duration(seconds: 1));
+    // None there: the line selected.
+    await _click(tester, at(3), at: const Duration(seconds: 2));
+    expect(pressed, [2]);
+    expect(controller.value.selection.baseOffset, 8);
+  });
+
   testWidgets('indent folding hides lines and unfolds for selections', (
     tester,
   ) async {
@@ -656,6 +799,28 @@ void main() {
     await tester.pump();
     expect(_gutter(tester).scrollTop, closeTo(end - 40, 0.01));
     await trackpad.panZoomEnd();
+  });
+
+  testWidgets('one that gives the wheel up where it cannot move still takes '
+      'shift+wheel across', (tester) async {
+    // All of its lines in view: it cannot move down, only across.
+    final controller = _controller('line 0\n${'x' * 400}');
+    controller.select(0, 0);
+    await _mount(
+      tester,
+      controller,
+      alwaysConsumeMouseWheel: false,
+      scrollBeyondLastLine: false,
+    );
+    final center = tester.getCenter(find.byType(EditorSurface));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(position: center, scrollDelta: const Offset(0, 120)),
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    await tester.pump(WheelGlide.duration);
+    expect(_painter<EditorTextPainter>(tester).scrollLeft, 120);
   });
 
   testWidgets('a wheel notch taken up mid-way goes on from where the view '
@@ -932,6 +1097,38 @@ void main() {
     await _mount(tester, controller);
     expect(text(), isNot(paints..something(afterText)));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('wrapped: a long line takes rows, the caret moves down them; '
+      'a document too long is not wrapped (#203)', (tester) async {
+    final long = List.filled(60, 'word').join(' ');
+    final controller = _controller('$long\nshort');
+    final focus = await _mount(tester, controller, wrap: true);
+    var layout = _gutter(tester).layout;
+    expect(layout.wrap, isTrue);
+    expect(
+      layout.rows.where((row) => row.lineNumber == 1).length,
+      greaterThan(1),
+    );
+    controller.value = controller.value.copyWith(
+      selection: const TextSelection.collapsed(offset: 0),
+    );
+    focus.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    final offset = controller.value.selection.extentOffset;
+    expect(offset, inExclusiveRange(0, long.length));
+
+    final big = _controller(
+      [
+        long,
+        for (var i = 0; i < EditorSurface.maxWrappedLines; i++) 'x',
+      ].join('\n'),
+    );
+    await _mount(tester, big, wrap: true);
+    layout = _gutter(tester).layout;
+    expect(layout.wrap, isFalse);
   });
 
   testWidgets('50k-line typing reshapes only visible lines', (tester) async {

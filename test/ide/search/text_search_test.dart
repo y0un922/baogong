@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:bao_remote/local.dart' show GitIgnore;
 import 'package:baocode/ide/search/text_search.dart';
 import 'package:path/path.dart' as p;
 
@@ -109,6 +110,98 @@ void main() {
     });
   });
 
+  group('across lines', () {
+    List<IdeTextMatch> find(String text, IdeTextQuery query) =>
+        ideMatchLines(text, query.toRegExp(), multiline: query.isMultiline);
+
+    test('text pasted with its line breaks matches across lines, LF or '
+        'CRLF either way', () {
+      const pasted = '  b();\r\n  return true;';
+      final query = const IdeTextQuery(pasted);
+      expect(query.isMultiline, isTrue);
+      for (final text in [
+        'a {\n  b();\n  return true;\n}',
+        'a {\r\n  b();\r\n  return true;\r\n}',
+      ]) {
+        final match = find(text, query).single;
+        expect(match.line, 1);
+        expect(match.endLine, 2);
+        expect(match.start, 0);
+        expect(match.endColumn, '  return true;'.length);
+        expect(match.matched.replaceAll('\r', ''), '  b();\n  return true;');
+        // Its lines, the end's line break not.
+        expect(match.text.endsWith('return true;'), isTrue);
+        final preview = ideMatchPreview(match);
+        expect(preview.inside, '  b();⏎  return true;');
+        expect(preview.after, '');
+      }
+      // Within a line, as before.
+      expect(const IdeTextQuery('b();').isMultiline, isFalse);
+    });
+
+    test('an expression with \\n matches across lines; one in a class '
+        'or after \\r as it is', () {
+      final query = const IdeTextQuery(r'one\n\s*two', isRegExp: true);
+      expect(query.isMultiline, isTrue);
+      final match = find('x one\r\n  two y', query).single;
+      expect((match.line, match.start), (0, 2));
+      expect((match.endLine, match.endColumn), (1, 5));
+      expect(
+        find('one\r\ntwo', const IdeTextQuery(r'one\r\ntwo', isRegExp: true)),
+        hasLength(1),
+      );
+      expect(
+        find('ab', const IdeTextQuery(r'a[^\n]', isRegExp: true)),
+        hasLength(1),
+      );
+      expect(const IdeTextQuery(r'a\\n', isRegExp: true).isMultiline, isFalse);
+    });
+
+    test('ending on a line break: at the next line\'s start', () {
+      final match = find('one\ntwo', const IdeTextQuery('one\n')).single;
+      expect((match.endLine, match.endColumn), (1, 0));
+    });
+
+    test('replaced across lines', () {
+      final query = const IdeTextQuery(r'(\w+)\n(\w+)', isRegExp: true);
+      final regExp = query.toRegExp();
+      final match = find('x\none\ntwo', query).first;
+      expect(
+        ideReplaceString(match, r'$2 $1', regExp: regExp, isRegExp: true),
+        'one x',
+      );
+    });
+  });
+
+  group('ignore rules', () {
+    bool? ignored(String rules, String path, {bool directory = false}) =>
+        GitIgnore.parse(rules)
+            .decide(path, path.split('/').last, isDirectory: directory);
+
+    test('names, paths, folders and re-included ones', () {
+      expect(ignored('build', 'a/b/build'), isTrue);
+      expect(ignored('/build', 'a/build'), isNull);
+      expect(ignored('/build', 'build'), isTrue);
+      expect(ignored('build/', 'build'), isNull);
+      expect(ignored('build/', 'build', directory: true), isTrue);
+      expect(ignored('*.log\n!keep.log', 'x/keep.log'), isFalse);
+      expect(ignored('*.log\n!keep.log', 'x/a.log'), isTrue);
+      expect(ignored('a/*.js', 'a/b.js'), isTrue);
+      expect(ignored('a/*.js', 'a/c/b.js'), isNull);
+      expect(ignored('a/**/b.js', 'a/b.js'), isTrue);
+      expect(ignored('a/**/b.js', 'a/x/y/b.js'), isTrue);
+      expect(ignored('**/cache', 'x/cache', directory: true), isTrue);
+      expect(ignored('out/**', 'out/x/y'), isTrue);
+      expect(ignored('*.py[co]', 'm.pyc'), isTrue);
+      expect(ignored('*.py[co]', 'm.py'), isNull);
+      expect(ignored('file[!0-9]', 'file3'), isNull);
+      expect(ignored('# comment\n\n  \n\\#hash', '#hash'), isTrue);
+      expect(ignored('trailing   ', 'trailing'), isTrue);
+      expect(ignored('a?c', 'abc'), isTrue);
+      expect(ignored('a?c', 'a/c'), isNull);
+    });
+  });
+
   group('engine', () {
     late Directory root;
     setUp(() {
@@ -143,9 +236,10 @@ void main() {
       return (files, limitHit);
     }
 
-    test('outside Git: skips binaries and the default excludes', () async {
+    test('outside Git: skips binaries, the default excludes and what '
+        '.gitignore ignores', () async {
       final (files, limitHit) = await run(const IdeTextQuery('needle'));
-      expect(files, {'lib/a.dart': 2, 'ignored/c.dart': 1});
+      expect(files, {'lib/a.dart': 2});
       expect(limitHit, isFalse);
 
       final (all, _) = await run(
@@ -179,6 +273,103 @@ void main() {
       if (init.exitCode != 0) return;
       final (files, _) = await run(const IdeTextQuery('needle'));
       expect(files, {'lib/a.dart': 2});
+    });
+
+    void write(String path, String text) {
+      final file = File(p.joinAll([root.path, ...path.split('/')]));
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync(text);
+    }
+
+    test('.gitignore files at every level, with or without Git', () async {
+      write('.gitignore', 'ignored/\r\n*.log\r\n/top.txt\r\n!keep.log\r\n');
+      write('app/.gitignore', 'dist/\ngen/**/*.g.dart\n!/important.log\n');
+      write('app/dist/bundle.js', 'needle');
+      write('app/gen/x/y.g.dart', 'needle');
+      write('app/gen/x/y.dart', 'needle');
+      write('app/src/dist', 'needle');
+      write('app/debug.log', 'needle');
+      write('app/important.log', 'needle');
+      write('app/keep.log', 'needle');
+      write('top.txt', 'needle');
+      write('app/top.txt', 'needle');
+      const expected = {
+        'lib/a.dart': 2,
+        'app/gen/x/y.dart': 1,
+        // `dist/` is for folders.
+        'app/src/dist': 1,
+        'app/important.log': 1,
+        'app/keep.log': 1,
+        // `/top.txt` is the root's.
+        'app/top.txt': 1,
+      };
+      expect((await run(const IdeTextQuery('needle'))).$1, expected);
+      final init = Process.runSync('git', [
+        'init',
+        '-q',
+      ], workingDirectory: root.path);
+      if (init.exitCode != 0) return;
+      expect((await run(const IdeTextQuery('needle'))).$1, expected);
+      final (all, _) = await run(
+        const IdeTextQuery('needle', useExcludesAndIgnoreFiles: false),
+      );
+      expect(all.keys, containsAll(['app/dist/bundle.js', 'ignored/c.dart']));
+    });
+
+    test('a repository inside goes by its own ignore files', () async {
+      ProcessResult git(String folder, List<String> arguments) =>
+          Process.runSync(
+            'git',
+            arguments,
+            workingDirectory: p.join(root.path, folder),
+          );
+      write('.gitignore', 'ignored/\nout/\n');
+      write('nested/.gitignore', 'target/\n');
+      write('nested/src/a.rs', 'needle');
+      write('nested/target/b.rs', 'needle');
+      // The outer `out/` is not the nested repository's.
+      write('nested/out/c.rs', 'needle');
+      write('nested/private.rs', 'needle');
+      write('ignored/inner/d.rs', 'needle');
+      if (git('', ['init', '-q']).exitCode != 0) return;
+      git('nested', ['init', '-q']);
+      git('ignored/inner', ['init', '-q']);
+      File(p.join(root.path, 'nested', '.git', 'info', 'exclude'))
+          .writeAsStringSync('private.rs\n');
+      final (files, _) = await run(const IdeTextQuery('needle'));
+      expect(files, {
+        'lib/a.dart': 2,
+        'nested/src/a.rs': 1,
+        'nested/out/c.rs': 1,
+      });
+    });
+
+    test(
+      'a folder inside a repository: the .gitignore files above apply',
+      () async {
+        write('.gitignore', 'ignored/\npackages/app/generated/\n');
+        write('packages/app/generated/x.dart', 'needle');
+        write('packages/app/ignored/y.dart', 'needle');
+        write('packages/app/src/z.dart', 'needle');
+        final init = Process.runSync('git', [
+          'init',
+          '-q',
+        ], workingDirectory: root.path);
+        if (init.exitCode != 0) return;
+        final files = <String>{};
+        await for (final event in ideSearchText(
+          p.join(root.path, 'packages', 'app'),
+          const IdeTextQuery('needle'),
+        )) {
+          if (event is IdeFileMatches) files.add(p.basename(event.path));
+        }
+        expect(files, {'z.dart'});
+      },
+    );
+
+    test('across lines', () async {
+      final (files, _) = await run(const IdeTextQuery('one\nno'));
+      expect(files, {'lib/a.dart': 1});
     });
 
     test('an invalid expression is an error', () async {

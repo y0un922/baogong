@@ -1,6 +1,8 @@
 // Command titles in the display language, by command id, as VS Code's
 // `localize2` titles: the palette lists the localized `Category: Title` and
 // also matches the English one (upstream `commandAlias`).
+import '../ide/editor_minimap_setting.dart';
+import '../ide/editor_word_wrap.dart';
 import '../ide/explorer_history.dart'
     show explorerRedoCommandId, explorerUndoCommandId;
 import '../ide/ide_commands.dart';
@@ -28,6 +30,8 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     'workbench.action.files.saveAll' => l10n.cmdSaveAll,
     'workbench.action.files.saveAs' => l10n.cmdSaveAs,
     toggleAutoSaveCommandId => l10n.cmdToggleAutoSave,
+    EditorWordWrap.commandId => l10n.cmdToggleWordWrap,
+    EditorMinimap.commandId => l10n.cmdToggleMinimap,
     'markdown.showPreview' => l10n.cmdMarkdownShowPreview,
     'markdown.showSource' => l10n.cmdMarkdownShowSource,
     'workbench.action.files.newUntitledFile' => l10n.cmdNewUntitledFile,
@@ -59,6 +63,9 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     'workbench.action.toggleSidebarVisibility' => l10n.cmdToggleSidebar,
     'workbench.action.toggleAuxiliaryBar' => l10n.cmdToggleChat,
     'workbench.action.toggleFullScreen' => l10n.cmdToggleFullScreen,
+    'workbench.action.zoomIn' => l10n.cmdZoomIn,
+    'workbench.action.zoomOut' => l10n.cmdZoomOut,
+    'workbench.action.zoomReset' => l10n.cmdZoomReset,
     'workbench.action.togglePanel' => l10n.cmdTogglePanel,
     'workbench.action.terminal.toggleTerminal' => l10n.cmdToggleTerminal,
     'workbench.action.terminal.new' => l10n.cmdNewTerminal,
@@ -102,6 +109,13 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
           ? l10n.cmdTurnOnFormatOnSave
           : l10n.cmdToggleFormatOnSave,
     'baocode.ide.retryLanguageServices' => l10n.cmdRetryLanguageServices,
+    'baocode.git.toggleAnnotations' =>
+      english.startsWith('Close') ? l10n.gitCloseAnnotations : l10n.gitAnnotate,
+    'baocode.git.branches' => l10n.gitBranchesTitle,
+    'baocode.git.pushDialog' => l10n.gitPushEllipsis,
+    'baocode.git.updateProject' => '${l10n.gitUpdateProject}…',
+    'baocode.git.showFileHistory' => l10n.gitShowHistory,
+    'baocode.git.showSelectionHistory' => l10n.gitShowHistoryForSelection,
     'baocode.ide.backToChat' => l10n.cmdBackToChat,
     WindowCommandIds.newWindow => l10n.cmdNewWindow,
     WindowCommandIds.closeWindow => l10n.cmdCloseWindow,
@@ -130,6 +144,13 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
       ),
     ChatCommandIds.focusNextPane => l10n.cmdChatFocusNextPane,
     ChatCommandIds.focusPreviousPane => l10n.cmdChatFocusPreviousPane,
+    ChatCommandIds.focusPaneLeft => l10n.cmdChatFocusPaneLeft,
+    ChatCommandIds.focusPaneRight => l10n.cmdChatFocusPaneRight,
+    ChatCommandIds.focusPaneUp => l10n.cmdChatFocusPaneUp,
+    ChatCommandIds.focusPaneDown => l10n.cmdChatFocusPaneDown,
+    ChatCommandIds.nextPaneTab => l10n.cmdChatNextPaneTab,
+    ChatCommandIds.previousPaneTab => l10n.cmdChatPreviousPaneTab,
+    ChatCommandIds.togglePaneTabs => l10n.cmdChatTogglePaneTabs,
     ChatCommandIds.search => l10n.cmdChatSearch,
     ChatCommandIds.searchAgents => l10n.cmdChatSearchAgents,
     ChatCommandIds.openIde => l10n.cmdChatOpenIde,
@@ -140,6 +161,7 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     ChatCommandIds.sidePanelTerminal => l10n.cmdSidePanelTerminal,
     ChatCommandIds.sidePanelNewTerminal => l10n.cmdSidePanelNewTerminal,
     ChatCommandIds.sidePanelToggleList => l10n.cmdSidePanelToggleList,
+    ChatCommandIds.sidePanelUsage => l10n.cmdSidePanelUsage,
     ChatCommandIds.sidePanelCloseTab => l10n.cmdSidePanelCloseTab,
     ChatCommandIds.closeTab => l10n.cmdChatCloseTab,
     ChatCommandIds.focusInput => l10n.cmdChatFocusInput,
@@ -160,6 +182,7 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     ChatCommandIds.nextMode => l10n.cmdChatNextMode,
     ChatCommandIds.openModelPicker => l10n.cmdChatOpenModelPicker,
     ChatCommandIds.attachContext => l10n.cmdChatAttachContext,
+    ChatCommandIds.attachSelection => l10n.cmdChatAttachSelection,
     ChatCommandIds.pasteRaw => l10n.cmdChatPasteRaw,
     ChatCommandIds.selectNextSuggestion => l10n.cmdChatSelectNextSuggestion,
     ChatCommandIds.selectPrevSuggestion => l10n.cmdChatSelectPrevSuggestion,
@@ -192,6 +215,7 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     'git.commit' => l10n.scmCommit,
     'git.checkout' => l10n.cmdGitCheckout,
     'git.fetch' => l10n.scmFetch,
+    'git.clone' => l10n.gitCloneCommand,
     'git.fetchAll' => l10n.scmFetchFromAllRemotes,
     'git.pull' => l10n.scmPull,
     'git.push' => l10n.scmPush,
@@ -452,6 +476,10 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     'editor.action.marker.next' => l10n.cmdEditorMarkerNext,
     'editor.action.marker.prev' => l10n.cmdEditorMarkerPrev,
     'editor.action.showContextMenu' => l10n.cmdEditorShowContextMenu,
+    'workbench.action.editor.nextChange' => l10n.cmdNextChange,
+    'workbench.action.editor.previousChange' => l10n.cmdPreviousChange,
+    'editor.action.dirtydiff.next' => l10n.cmdShowNextChange,
+    'editor.action.dirtydiff.previous' => l10n.cmdShowPreviousChange,
     'acceptSelectedSuggestion' => l10n.cmdEditorAcceptSelectedSuggestion,
     'acceptAlternativeSelectedSuggestion' =>
       l10n.cmdEditorAcceptAlternativeSelectedSuggestion,

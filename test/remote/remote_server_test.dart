@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bao_remote/claude.dart' show ClaudeHistoryPage;
 import 'package:bao_remote/client.dart';
@@ -256,6 +257,16 @@ void main() {
         [(0, 0), (1, 6)],
       );
       expect(items.last, isA<IdeTextSearchComplete>());
+    });
+
+    test('across lines: where the match ends comes too', () async {
+      File(at('a.txt')).writeAsStringSync('one\r\n  two\n');
+      final items = await client()
+          .searchText(root, const IdeTextQuery('one\n  two'))
+          .toList();
+      final match = items.whereType<IdeFileMatches>().single.matches.single;
+      expect((match.line, match.start), (0, 0));
+      expect((match.endLine, match.endColumn), (1, 5));
     });
 
     test('an invalid pattern fails the stream', () async {
@@ -857,40 +868,44 @@ printf '%s\n' "$line"
   });
 
   group('review', () {
-    test('keeps, counts and restores what a session kept there', () async {
-      File(at('a.txt')).writeAsStringSync('one\n');
-      final store = (await client().openReview(root))!;
-      expect(store.root, root);
-      final old = (await store.take('s1', 'a.txt'))!;
-      File(at('a.txt')).writeAsStringSync('one\ntwo\n');
-      File(at('b.txt')).writeAsStringSync('new\n');
-      expect(await store.current('a.txt'), isNot(old));
-      final counts = await store.lineCounts('s1', {
-        'a.txt': old,
-        'b.txt': null,
-      });
-      expect(counts['a.txt'], (added: 1, removed: 0));
-      expect(counts['b.txt'], (added: 1, removed: 0));
-      expect(utf8.decode(await store.read('s1', old)), 'one\n');
-      await store.restore('s1', 'a.txt', old);
-      expect(File(at('a.txt')).readAsStringSync(), 'one\n');
-      await store.restore('s1', 'b.txt', null);
-      expect(File(at('b.txt')).existsSync(), isFalse);
-      expect(await store.exists('a.txt'), isTrue);
+    test('keeps, merges and restores the files there', () async {
+      File(at('a.txt')).writeAsStringSync('1\n2\n3\n');
+      final store = (await client().openReview())!;
+      final old = (await store.take(at('a.txt')))!;
+      expect(utf8.decode(await store.read(old)), '1\n2\n3\n');
+      expect(await store.take(at('missing.txt')), isNull);
+      File(at('a.txt')).writeAsStringSync('1\ntwo\n3\n');
+      final agent = (await store.take(at('a.txt')))!;
+      expect((await store.current(at('a.txt')))!.oid, agent.oid);
+      expect(await store.lineCounts(old, agent), (added: 1, removed: 1));
+      expect(await store.lineCounts(null, agent), (added: 3, removed: 0));
+      // Changed since, by someone else: the agent's change taken out.
+      File(at('a.txt')).writeAsStringSync('1\ntwo\nTHREE\n');
+      final now = (await store.take(at('a.txt')))!;
+      final merged = (await store.merge(now, agent, old))!;
+      expect(utf8.decode(merged), '1\n2\nTHREE\n');
+      await store.write(at('a.txt'), merged);
+      expect(File(at('a.txt')).readAsStringSync(), '1\n2\nTHREE\n');
+      await store.restore(at('a.txt'), old);
+      expect(File(at('a.txt')).readAsStringSync(), '1\n2\n3\n');
+      final added = await store.store(
+        Uint8List.fromList(utf8.encode('new\n')),
+        mode: '100644',
+      );
+      await store.restore(at('sub/b.txt'), added);
+      expect(File(at('sub/b.txt')).readAsStringSync(), 'new\n');
+      await store.restore(at('sub/b.txt'), null, root: root);
+      expect(Directory(at('sub')).existsSync(), isFalse);
       await store.save('s1', 'data', blobs: [old]);
       expect(await store.load('s1'), 'data');
       await store.forget('s1');
       expect(await store.load('s1'), isNull);
-      // Kept in the server's data folder, not the project.
+      // Kept in the server's folder, not the project's.
       expect(Directory(at('.git')).existsSync(), isFalse);
       expect(
         Directory(p.join(remote.dataDir.path, 'checkpoints')).existsSync(),
         isTrue,
       );
-    });
-
-    test('no store for a folder that is not there', () async {
-      expect(await client().openReview(at('missing')), isNull);
     });
   });
 

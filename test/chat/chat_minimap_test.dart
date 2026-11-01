@@ -10,6 +10,7 @@ import 'package:baocode/chat/composer/composer_files.dart';
 import 'package:baocode/chat/widgets/assistant_text.dart';
 import 'package:baocode/chat/widgets/chat_minimap.dart';
 import 'package:baocode/chat/widgets/hover_scrollbar.dart';
+import 'package:baocode/chat/widgets/user_message_bubble.dart';
 import 'package:baocode/theme/app_theme.dart';
 
 class _Feed extends ChangeNotifier implements ChatFeed {
@@ -191,6 +192,83 @@ void main() {
     expect(_opacity(tester), 0);
   });
 
+  testWidgets('its room kept only once the history scrolls: until then the '
+      'column is where it is without one', (tester) async {
+    double textLeft() => tester.getRect(find.byType(AssistantText).first).left;
+    await _pump(tester, _Feed(_conversation(1)), width: 790, maxWidth: 1200);
+    final short = textLeft();
+    await _pump(
+      tester,
+      _Feed(_conversation(1)),
+      width: 790,
+      maxWidth: 1200,
+      minimap: false,
+    );
+    expect(short, textLeft());
+    expect(short, lessThan(ChatMinimap.room));
+    await _pump(tester, _Feed(_conversation(30)), width: 790, maxWidth: 1200);
+    expect(_opacity(tester), 1);
+    expect(textLeft(), greaterThanOrEqualTo(ChatMinimap.room));
+  });
+
+  testWidgets('not while the conversation is short, though it scrolls; once '
+      'long, it stays as the history grows shorter (its steps folded)', (
+    tester,
+  ) async {
+    // The fewest turns that scroll at all.
+    var turns = 1;
+    while (true) {
+      await _pump(tester, _Feed(_conversation(turns)));
+      if (_position(tester).maxScrollExtent > 0) break;
+      turns++;
+    }
+    final position = _position(tester);
+    expect(
+      position.maxScrollExtent,
+      lessThan(position.viewportDimension * ChatMinimap.longAfter),
+    );
+    expect(_opacity(tester), 0);
+
+    final items = _conversation(30);
+    final feed = _Feed(items);
+    await _pump(tester, feed);
+    expect(_opacity(tester), 1);
+    items.removeRange(2 * turns, items.length);
+    feed.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(_position(tester).maxScrollExtent, greaterThan(0));
+    expect(
+      _position(tester).maxScrollExtent,
+      lessThan(position.viewportDimension * ChatMinimap.longAfter),
+    );
+    expect(_opacity(tester), 1);
+  });
+
+  testWidgets('a long conversation shown again has it, and its room, from '
+      'its first frame', (tester) async {
+    double textLeft() => tester.getRect(find.byType(AssistantText).first).left;
+    final first = _Feed(_conversation(30));
+    final second = _Feed(_conversation(30));
+    await _pump(tester, first, width: 790, maxWidth: 1200);
+    await _pump(tester, second, width: 790, maxWidth: 1200);
+    expect(_opacity(tester), 1);
+    // Back to the first: one frame, not laid out and found long again.
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: Scaffold(
+          body: ChatHistoryView(
+            feed: first,
+            maxContentWidth: 1200,
+            minimap: true,
+          ),
+        ),
+      ),
+    );
+    expect(_opacity(tester), 1);
+    expect(textLeft(), greaterThanOrEqualTo(ChatMinimap.room));
+  });
+
   testWidgets('not where it is not asked for (the IDE)', (tester) async {
     await _pump(tester, _Feed(_conversation(30)), minimap: false);
     expect(find.byType(ChatMinimap), findsNothing);
@@ -237,6 +315,57 @@ void main() {
     final three = height('one\ntwo\nthree');
     expect(height('one\ntwo\nthree\nfour'), greaterThan(three));
     expect(height([for (var i = 0; i < 40; i++) 'line $i'].join('\n')), three);
+  });
+
+  testWidgets('the pointer is drawn to a message of the user\'s, peeks at it '
+      'and what answered it, and a press goes there', (tester) async {
+    await _pump(tester, _Feed(_conversation(30)));
+    final strip = tester.getRect(_strip);
+    final pointer = TestPointer(1, PointerDeviceKind.mouse);
+    final peek = find.descendant(
+      of: find.byType(ChatMinimap),
+      matching: find.textContaining('问题'),
+    );
+    expect(peek, findsNothing);
+
+    // Down the minimap, until near one.
+    Offset? at;
+    for (var y = strip.top + 2; y < strip.bottom; y += 3) {
+      // Beside it, not on it: near enough.
+      at = Offset(strip.left - 6, y);
+      await tester.sendEventToBinding(pointer.hover(at));
+      await tester.pump(const Duration(milliseconds: 100));
+      if (peek.evaluate().isNotEmpty) break;
+    }
+    expect(peek, findsOneWidget);
+    final shown = tester.widget<Text>(peek);
+    final asked = shown.data ?? shown.textSpan!.toPlainText();
+    expect(
+      find.descendant(
+        of: find.byType(ChatMinimap),
+        matching: find.textContaining('The column keeps its width'),
+      ),
+      findsWidgets,
+    );
+
+    await tester.sendEventToBinding(pointer.down(at!));
+    await tester.sendEventToBinding(pointer.up());
+    await tester.pumpAndSettle();
+    // The message at the top of the history.
+    final bubble = find.byWidgetPredicate(
+      (widget) => widget is UserMessageBubble && widget.text == asked,
+    );
+    expect(bubble, findsWidgets);
+    final history = tester.getRect(find.byType(Scrollable).first);
+    expect(
+      tester.getRect(bubble.first).top - history.top,
+      inInclusiveRange(0, 40),
+    );
+
+    // Away from the minimap, gone.
+    await tester.sendEventToBinding(pointer.hover(history.center));
+    await tester.pumpAndSettle();
+    expect(peek, findsNothing);
   });
 
   testWidgets('the wheel over it scrolls the history', (tester) async {

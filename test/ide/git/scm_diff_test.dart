@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bao_editor/monaco/flutter/diff_editor.dart';
 import 'package:bao_editor/monaco/flutter/editor_surface.dart';
+import 'package:baocode/ide/git/ide_git_commit_panel.dart';
 import 'package:baocode/ide/git/git_repository.dart';
 import 'package:baocode/ide/ide_list.dart';
 import 'package:baocode/ide/ide_workspace.dart';
@@ -10,8 +11,9 @@ import 'package:baocode/ide/ide_workspace.dart';
 import '../workbench/fake_files.dart';
 import 'fake_git.dart';
 
-/// A Source Control change opens as VS Code's Git extension opens it: a
-/// diff editor of its two sides, or its one side, against a fake Git.
+/// A local change opened in the editor (Show Diff) opens as VS Code's Git
+/// extension opens it: a diff editor of its two sides, or its
+/// one side, against a fake Git.
 void main() {
   late FakeGit git;
   late IdeGitRepository repository;
@@ -69,12 +71,16 @@ void main() {
     matching: find.byType(IdeListRow),
   );
 
-  Future<void> open(WidgetTester tester, String name) async {
-    await tester.tap(rowOf(name));
+  /// Source Control, shown again where an editor opened from it took its
+  /// place.
+  Future<void> showScm(WidgetTester tester) async {
+    if (find.byType(IdeGitCommitPanel).evaluate().isNotEmpty) return;
+    await chord(tester, LogicalKeyboardKey.keyG, control: true, shift: true);
     await settle(tester);
   }
 
   Future<void> menu(WidgetTester tester, String name, String action) async {
+    await showScm(tester);
     await tester.tapAt(
       tester.getCenter(rowOf(name)),
       buttons: kSecondaryMouseButton,
@@ -84,6 +90,11 @@ void main() {
     await tester.tap(find.text(action));
     await settle(tester);
   }
+
+  /// Opens [name]'s change in the editor (Show Diff): a click shows it in
+  /// the Git log's place.
+  Future<void> open(WidgetTester tester, String name) =>
+      menu(tester, name, 'Show Diff');
 
   EditorSurface surface(WidgetTester tester, {required bool original}) => tester
       .widgetList<EditorSurface>(find.byType(EditorSurface))
@@ -104,29 +115,30 @@ void main() {
       contains('show --textconv HEAD:lib/a.dart'),
     );
     expect(find.byType(DiffEditor), findsOneWidget);
-    expect(find.byType(EditorSurface), findsNWidgets(2));
+    // Unified: the file's editor alone.
+    expect(find.byType(EditorSurface), findsOneWidget);
 
     // `two` became `TWO`: the deleted line shows above it in the file's
-    // editor; beside the inserted lines, the original makes room.
-    final modified = surface(tester, original: false);
+    // editor, numbered as HEAD numbers it.
+    final modified = tester.widget<EditorSurface>(find.byType(EditorSurface));
     expect(modified.viewZones, hasLength(1));
     expect(modified.viewZones.single.afterLineNumber, 1);
     expect(modified.viewZones.single.heightInLines, 1);
-    final original = surface(tester, original: true);
-    expect(original.glyphMargin, isFalse);
-    expect(original.viewZones.map((zone) => zone.afterLineNumber), [2, 3]);
+    expect(modified.viewZones.single.firstLineNumber, 2);
+    expect(modified.verticalScrollbar, isFalse);
   });
 
   testWidgets('side by side in a wide editor', (tester) async {
     await pumpScm(tester, size: const Size(2400, 800));
     await open(tester, 'a.dart');
     expect(find.byType(DiffEditor), findsOneWidget);
+    // Not aligned with zones: each scrolls on its own, the original's line
+    // numbers at the split.
     expect(surface(tester, original: false).viewZones, isEmpty);
     final original = surface(tester, original: true);
-    expect(original.glyphMargin, isTrue);
-    // `four`, which the original has not, is filled in after `three`.
-    expect(original.viewZones.single.afterLineNumber, 3);
-    expect(original.viewZones.single.heightInLines, 1);
+    expect(original.viewZones, isEmpty);
+    expect(original.lineNumbers, isFalse);
+    expect(original.glyphMargin, isFalse);
   });
 
   testWidgets('the diff tab and the file\'s share the text; the diff tab '
@@ -178,25 +190,11 @@ void main() {
     expect(workspace.active!.label, isNull);
   });
 
-  testWidgets('Open File (HEAD), or why it cannot', (tester) async {
+  testWidgets('Jump to Source and Show Diff from the menu', (tester) async {
     final workspace = await pumpScm(tester);
-    await menu(tester, 'a.dart', 'Open File (HEAD)');
-    expect(workspace.active!.title, 'a.dart (HEAD)');
-    expect(workspace.active!.text, 'one\ntwo\nthree\n');
-
-    await menu(tester, 'notes.md', 'Open File (HEAD)');
-    expect(
-      find.text('HEAD version of "notes.md" is not available.'),
-      findsOneWidget,
-    );
-    expect(workspace.active!.title, 'a.dart (HEAD)');
-  });
-
-  testWidgets('Open Changes and Open File from the menu', (tester) async {
-    final workspace = await pumpScm(tester);
-    await menu(tester, 'a.dart', 'Open File');
+    await menu(tester, 'a.dart', 'Jump to Source');
     expect(workspace.active!.title, 'a.dart');
-    await menu(tester, 'a.dart', 'Open Changes');
+    await menu(tester, 'a.dart', 'Show Diff');
     expect(workspace.active!.title, 'a.dart (Working Tree)');
   });
 

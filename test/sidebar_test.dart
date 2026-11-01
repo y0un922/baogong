@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/widgets/pixel_loader.dart';
 import 'package:baocode/chat/chat_screen.dart';
-import 'package:baocode/chat/composer/composer.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
@@ -207,6 +206,86 @@ void main() {
       findsNothing,
     );
     expect(inSidebar(find.text('3')), findsOneWidget);
+  });
+
+  testWidgets('typed in the focused list, speed search finds a project; '
+      "typed in the chat, the pointer over the list, it is the chat's", (
+    tester,
+  ) async {
+    final workspace = await pumpApp(tester);
+    Text header() => tester.widget<Text>(inSidebar(find.text('api-gateway')));
+    bool highlighted() => (header().textSpan! as TextSpan).children != null;
+    Future<void> type(String keys) async {
+      for (final key in keys.split('')) {
+        await tester.sendKeyEvent(switch (key) {
+          'g' => LogicalKeyboardKey.keyG,
+          'w' => LogicalKeyboardKey.keyW,
+          _ => throw ArgumentError(key),
+        });
+        await tester.pump();
+      }
+    }
+
+    // The chat's input has the keys: the pointer moved over the sidebar,
+    // what is typed is still the chat's.
+    final input = FocusManager.instance.primaryFocus;
+    expect(input?.debugLabel, 'Composer');
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: const Offset(900, 450));
+    await tester.pump();
+    await mouse.moveTo(tester.getCenter(inSidebar(find.text('baocode'))));
+    await tester.pump();
+    await type('g');
+    expect(inSidebar(find.text('g')), findsNothing);
+    expect(FocusManager.instance.primaryFocus, input);
+
+    // A project clicked (folded, to be unfolded once found): the list has
+    // the keys, and what is typed searches.
+    await tester.tap(inSidebar(find.text('api-gateway')));
+    await tester.pump();
+    expect(
+      inSidebar(find.textContaining('Rate limit per API key')),
+      findsNothing,
+    );
+    await type('gw');
+    expect(inSidebar(find.text('gw')), findsOneWidget);
+    expect(highlighted(), isTrue);
+    // Only the projects it matches are listed.
+    expect(inSidebar(find.text('baocode')), findsNothing);
+    expect(inSidebar(find.text('cursor-docs')), findsNothing);
+    expect(inSidebar(find.text('Pinned')), findsNothing);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(inSidebar(find.text('gw')), findsNothing);
+    expect(highlighted(), isFalse);
+    expect(inSidebar(find.text('baocode')), findsOneWidget);
+    expect(inSidebar(find.text('Pinned')), findsOneWidget);
+
+    // Deleted back to nothing, the list is as it was.
+    await type('gw');
+    for (var i = 0; i < 2; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+    }
+    expect(inSidebar(find.text('baocode')), findsOneWidget);
+    expect(inSidebar(find.text('g')), findsNothing);
+    await type('gw');
+    expect(inSidebar(find.text('baocode')), findsNothing);
+
+    // Enter goes into it, unfolded, its first agent focused; Enter again
+    // opens that one.
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(inSidebar(find.text('gw')), findsNothing);
+    expect(
+      inSidebar(find.textContaining('Rate limit per API key')),
+      findsOneWidget,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(workspace.selected.project.name, 'api-gateway');
   });
 
   testWidgets('a new agent is named by its first message', (tester) async {
@@ -969,14 +1048,14 @@ void main() {
     await tester.pump();
     expect(thread.title, 'Quota');
 
-    // The title bar, left-aligned with the conversation's column.
+    // The title bar's title at its left, not the conversation's column.
     final title = find.descendant(
       of: find.byType(ChatScreen),
       matching: find.text('Quota'),
     );
     expect(
       tester.getTopLeft(title).dx,
-      tester.getTopLeft(find.byType(ChatComposer)).dx,
+      tester.getTopLeft(find.byType(ChatScreen)).dx + 12,
     );
     await tester.tap(title);
     await tester.pump(const Duration(milliseconds: 50));
@@ -1375,6 +1454,32 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     expect(find.text('Chat b1'), findsNWidgets(2));
     expect(find.text('/tmp/b'), findsOneWidget);
+  });
+
+  testWidgets('Collapse All folds every project, Expand All unfolds them '
+      '(#300)', (tester) async {
+    await pumpKept(
+      tester,
+      KeptCatalog([kept('a1', '/tmp/a', 1), kept('b1', '/tmp/b', 2)]),
+    );
+    final collapse = inSidebar(
+      find.widgetWithIcon(SidebarIconButton, Codicons.collapseAll),
+    );
+    expect(collapse, findsOneWidget);
+    expect(inSidebar(find.text('Chat a1')), findsOneWidget);
+
+    await tester.tap(collapse);
+    await tester.pump();
+    expect(inSidebar(find.text('Chat a1')), findsNothing);
+    expect(inSidebar(find.text('Chat b1')), findsNothing);
+
+    final expand = inSidebar(
+      find.widgetWithIcon(SidebarIconButton, Codicons.expandAll),
+    );
+    await tester.tap(expand);
+    await tester.pump();
+    expect(inSidebar(find.text('Chat a1')), findsOneWidget);
+    expect(inSidebar(find.text('Chat b1')), findsOneWidget);
   });
 
   testWidgets('an agent\'s hover says the model it runs on (#245)', (

@@ -6,7 +6,6 @@
 // loses, doubles or makes up one is not taken.
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_quill/quill_delta.dart';
 
 import '../../kernel/claude_code/claude_haiku.dart';
 import '../../models/model_providers.dart';
@@ -53,7 +52,7 @@ String _system(String language) =>
 /// the composer's new content. Throws [ComposerPolishException] when there
 /// is none, or the reply lost what it was to keep, or was not a
 /// translation (written on, not translated).
-Future<Delta> translateComposerText(
+Future<String> translateComposerText(
   ComposerPolishText asked, {
   String? model,
   String? location,

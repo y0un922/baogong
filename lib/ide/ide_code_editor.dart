@@ -21,9 +21,9 @@ import '../keybindings/keybinding_service.dart';
 import '../l10n/command_titles.dart';
 import '../l10n/l10n.dart';
 import '../theme/app_theme.dart';
-import '../theme/code_font.dart';
 import '../theme/workbench_theme.dart' hide ColorScheme;
 import 'builtin_formatting.dart';
+import 'editor_word_wrap.dart';
 import 'ide_agent_edits.dart';
 import 'ide_code_find.dart';
 import 'ide_find_widget.dart';
@@ -120,6 +120,8 @@ class IdeCodeEditor extends StatefulWidget {
     this.interfaceSized = false,
     this.formatter,
     this.agent,
+    this.background,
+    this.glyphMargin = true,
   });
 
   final EditorSurfaceController controller;
@@ -154,8 +156,8 @@ class IdeCodeEditor extends StatefulWidget {
   /// null.
   final IdeCodeHighlights? highlights;
 
-  /// Sized as the window's text is ([AppFonts.uiCodeStyle]), not by the
-  /// code size: for a file shown beside the chat.
+  /// Sized as the window's code among its text is ([AppFonts.uiCodeStyle]),
+  /// not by the code size: for a file shown beside the chat.
   final bool interfaceSized;
 
   /// Formats its text with the project's language servers, shared with
@@ -166,6 +168,14 @@ class IdeCodeEditor extends StatefulWidget {
   /// An agent's change pending in the text, shown in it with Undo and Keep
   /// by each part (as the IDE's editor shows one).
   final IdeAgentDiff? agent;
+
+  /// Behind its text; the editor's when null (a page's own, where it is
+  /// laid on one).
+  final Color? background;
+
+  /// The margin left of the line numbers (breakpoints, decorations'
+  /// icons); none where nothing goes there.
+  final bool glyphMargin;
 
   @override
   State<IdeCodeEditor> createState() => IdeCodeEditorState();
@@ -407,8 +417,8 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
     'editor.action.replaceAll',
   };
 
-  /// Find and replace, Format Document and Format Selection by their
-  /// keybindings.
+  /// Find and replace, Format Document, Format Selection and Toggle Word
+  /// Wrap by their keybindings.
   KeyEventResult _onKey(KeyEvent event) {
     final found = KeybindingService.instance.resolveEvent(
       event,
@@ -425,9 +435,14 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
       },
       canRun: (item) =>
           _findCommands.contains(item.command) ||
+          item.command == EditorWordWrap.commandId ||
           _formats && _formatCommands.contains(item.command),
     );
     if (found is! KeybindingFound) return KeyEventResult.ignored;
+    if (found.command == EditorWordWrap.commandId) {
+      EditorWordWrap.toggle();
+      return KeyEventResult.handled;
+    }
     if (_findCommands.contains(found.command)) {
       return _find.runCommand(found.command)
           ? KeyEventResult.handled
@@ -589,6 +604,7 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
             editorItem('editor.action.clipboardCopyAction'),
             editorItem('editor.action.clipboardPasteAction', enabled: editable),
           ],
+          [wordWrapMenuAction(l10n)],
         ]),
       ),
     );
@@ -655,43 +671,51 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
         style: style,
         textScaler: MediaQuery.textScalerOf(context),
       );
-      return EditorSurface(
-        key: _surfaceKey,
-        controller: widget.controller,
-        focusNode: _focusNode,
-        readOnly: widget.readOnly,
-        lineNumbers: !widget.bare,
-        glyphMargin: !widget.bare,
-        folding: !widget.bare,
-        indentGuides: !widget.bare,
-        scrollBeyondLastLine: !widget.bare,
-        backgroundColor: colors['editor.background'],
-        selectionColor: colors['editor.selectionBackground'],
-        caretColor: colors['editorCursor.foreground'],
-        theme: EditorViewTheme.fromColors(colors.get),
-        styledLines: _highlight?.styledLines,
-        showMinimap: false,
-        decorations: [
-          ...widget.decorations,
-          ...?parts?.decorations,
-          ..._find.decorations,
-        ],
-        viewZones: parts?.zones ?? const [],
-        decorationProviders: widget.decorationProviders,
-        inlineSuggest: widget.inlineSuggest,
-        codeLens: widget.codeLens,
-        codeLensColors: EditorCodeLensColors.from(colors.get),
-        gutterIconBuilder: widget.gutterIconBuilder,
-        onViewChanged: _viewChanged,
-        onKeyEvent: widget.bare ? null : _onKey,
-        onContextMenu: widget.bare ? null : _showContextMenu,
-        style: style,
+      return ValueListenableBuilder(
+        valueListenable: EditorWordWrap.on,
+        builder: (context, wrap, _) => EditorSurface(
+          key: _surfaceKey,
+          controller: widget.controller,
+          focusNode: _focusNode,
+          readOnly: widget.readOnly,
+          // The font's sample shows its lines as they are.
+          wrap: wrap && !widget.bare,
+          lineNumbers: !widget.bare,
+          glyphMargin: widget.glyphMargin && !widget.bare,
+          folding: !widget.bare,
+          indentGuides: !widget.bare,
+          scrollBeyondLastLine: !widget.bare,
+          backgroundColor: widget.background ?? colors['editor.background'],
+          selectionColor: colors['editor.selectionBackground'],
+          caretColor: colors['editorCursor.foreground'],
+          // The gutter on its background too, where it lies on a page.
+          theme: EditorViewTheme.fromColors(
+            (id) => id == 'editorGutter.background' && widget.background != null
+                ? widget.background
+                : colors.get(id),
+          ),
+          styledLines: _highlight?.styledLines,
+          showMinimap: false,
+          decorations: [
+            ...widget.decorations,
+            ...?parts?.decorations,
+            ..._find.decorations,
+          ],
+          viewZones: parts?.zones ?? const [],
+          decorationProviders: widget.decorationProviders,
+          inlineSuggest: widget.inlineSuggest,
+          codeLens: widget.codeLens,
+          codeLensColors: EditorCodeLensColors.from(colors.get),
+          gutterIconBuilder: widget.gutterIconBuilder,
+          onViewChanged: _viewChanged,
+          onKeyEvent: widget.bare ? null : _onKey,
+          onContextMenu: widget.bare ? null : _showContextMenu,
+          style: style,
+        ),
       );
     }
 
-    final text = widget.interfaceSized
-        ? Builder(builder: surface)
-        : CodeTextScale(child: Builder(builder: surface));
+    final text = Builder(builder: surface);
     if (widget.bare) return text;
     return Stack(
       children: [

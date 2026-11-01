@@ -1,13 +1,24 @@
-# Builds BaoCode for macOS, Windows and Linux and publishes it to dl.baocode.dev
+# Builds BaoCode for macOS, Windows (x64, arm64) and Linux and publishes it to dl.baocode.dev
 # (Cloudflare R2), where installed apps find their updates. docs/release.md
 # has the whole of it: versions, secrets, what goes where.
 #
-#   git tag v1.2.0 && git push origin v1.2.0   build and publish 1.2.0
+#   git tag v1.2.0 && git push origin v1.2.0   build and publish 1.2.0, the
+#                                              standard build and the channel
+#                                              build (lib/channel/), each
+#                                              updating to its own
 #   git tag test-foo && git push origin test-foo
 #                                              build, and put the installers
 #                                              at dl.baocode.dev/test/…, to
 #                                              send to testers (no update)
+#   git tag test-channel-foo && git push origin test-channel-foo
+#                                              the same, of the channel build
+#                                              alone
+#   git tag v1.2.0-channel && git push origin v1.2.0-channel
+#                                              the channel build alone, signed
+#                                              into 1.2.0 as published; the
+#                                              standard build left as it is
 #   Actions → Release → Run workflow           build only, to try the build
+#                                              (the editions asked for)
 #
 # The remote server alone: a server-* tag (remote.yml, which this calls).
 #
@@ -21,6 +32,12 @@ on:
     # Not this fork's v*-fork.* tags: fork-release.yml builds those.
     tags: ['v*', 'test-*', '!v*-fork.*']
   workflow_dispatch:
+    inputs:
+      editions:
+        description: The builds to make
+        type: choice
+        default: both
+        options: [both, standard, channel]
 
 permissions:
   contents: read
@@ -44,10 +61,14 @@ jobs:
       marketing: ${{ steps.version.outputs.marketing }}
       publish: ${{ steps.version.outputs.publish }}
       share: ${{ steps.version.outputs.share }}
+      editions: ${{ steps.version.outputs.editions }}
+      channel_only: ${{ steps.version.outputs.channel_only }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: version
         name: Read pubspec.yaml's version, and match the tag against it
+        env:
+          EDITIONS: ${{ inputs.editions }}
         run: |
           version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml)
           marketing=${version%%+*}
@@ -63,8 +84,35 @@ jobs:
           fi
           publish=false
           share=false
-          if [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" == test-* ]]; then
+          channel_only=false
+          # A release has both: each edition's installs update to its own.
+          editions='["standard","channel"]'
+          if [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" == test-channel-* ]]; then
             share=true
+            editions='["channel"]'
+          elif [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" == test-* ]]; then
+            share=true
+            editions='["standard"]'
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            case "$EDITIONS" in
+              standard) editions='["standard"]' ;;
+              channel) editions='["channel"]' ;;
+            esac
+          elif [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" == *-channel ]]; then
+            # The channel build alone, signed into the version published,
+            # whose standard build is left as it is.
+            if [ "$GITHUB_REF_NAME" != "v$marketing-channel" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME, but pubspec.yaml is $version: the tag has to be v$marketing-channel"
+              exit 1
+            fi
+            published=$(curl -fsS https://dl.baocode.dev/releases/latest.json | jq -r .version)
+            if [ "$published" != "$version" ]; then
+              echo "::error::$published is published, pubspec.yaml is $version: the channel build alone goes beside the version published"
+              exit 1
+            fi
+            publish=true
+            channel_only=true
+            editions='["channel"]'
           elif [ "$GITHUB_REF_TYPE" = tag ]; then
             if [ "$GITHUB_REF_NAME" != "v$marketing" ]; then
               echo "::error::Tag $GITHUB_REF_NAME, but pubspec.yaml is $version: the tag has to be v$marketing"
@@ -77,9 +125,12 @@ jobs:
             echo "marketing=$marketing"
             echo "publish=$publish"
             echo "share=$share"
+            echo "editions=$editions"
+            echo "channel_only=$channel_only"
           } >> "$GITHUB_OUTPUT"
+          echo "Builds: $editions"
       - name: Be no older than the version published
-        if: steps.version.outputs.publish == 'true'
+        if: steps.version.outputs.publish == 'true' && steps.version.outputs.channel_only != 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -107,10 +158,17 @@ jobs:
     needs: check
     uses: ./.github/workflows/remote.yml
 
+  # Each build once per edition (check's editions): the channel build's
+  # files and artifacts end in -channel.
   macos:
-    name: Build for macOS
+    name: Build for macOS (${{ matrix.edition }})
     needs: [check, remote]
     runs-on: macos-15
+    strategy:
+      # One edition failing leaves the other building, to be re-run alone.
+      fail-fast: false
+      matrix:
+        edition: ${{ fromJSON(needs.check.outputs.editions) }}
     # The Developer ID certificate and the notary key are the release
     # environment's secrets, for its tags only (v*, and test-* for testers).
     # Without them (a build only, or before they are set) the app is signed
@@ -121,8 +179,9 @@ jobs:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+      SUFFIX: ${{ matrix.edition == 'channel' && '-channel' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -147,18 +206,20 @@ jobs:
         run: |
           echo "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
           echo "BAOCODE_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: remote
           path: build/remote
       - name: Install create-dmg
         run: brew install create-dmg
+      # bao_iroh's Rust (the phones' link), built by its build hook.
+      - uses: ./.github/actions/setup-rust
       - name: Build, sign and notarise
         env:
           BAOCODE_MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           BAOCODE_NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           BAOCODE_NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
-        run: dart run tool/build_macos.dart --remote-built
+        run: dart run tool/build_macos.dart --remote-built ${{ matrix.edition == 'channel' && '--channel' || '' }}
       - name: Launch each app, as an update installs it
         run: |
           # A valid signature is not enough: dyld can still refuse to load
@@ -168,7 +229,7 @@ jobs:
           for arch in arm64 x64; do
             dir="$RUNNER_TEMP/launch-$arch"
             mkdir "$dir"
-            ditto -x -k build/installers/BaoCode-*-mac-$arch.zip "$dir"
+            ditto -x -k build/installers/BaoCode-*-mac-$arch$SUFFIX.zip "$dir"
             BAOCODE_DATA_DIR="$dir-data" \
               "$dir/BaoCode.app/Contents/MacOS/BaoCode" > "$dir.log" 2>&1 &
             pid=$!
@@ -181,59 +242,126 @@ jobs:
             echo "BaoCode ($arch) is running after 15 seconds"
             kill $pid
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
-          name: macos
+          name: macos${{ env.SUFFIX }}
           if-no-files-found: error
           path: |
             build/installers/BaoCode-*.dmg
             build/installers/BaoCode-*-mac-*.zip
+      # The Dart code's symbols, for a jank sample's `??? (in App)` frames
+      # (tool/build_macos.dart). Not released: kept with the run.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: symbols-macos${{ env.SUFFIX }}
+          if-no-files-found: error
+          retention-days: 90
+          path: build/symbols/App.macos.symbols
       - name: Forget the certificate and the key
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/notary.p8"
 
+  # x64, and arm64 on an Arm runner: flutter builds for the machine it
+  # runs on alone.
   windows:
-    name: Build for Windows
+    name: Build for Windows (${{ matrix.arch }}, ${{ matrix.edition }})
     needs: [check, remote]
-    runs-on: windows-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One edition failing leaves the other building, to be re-run alone.
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        edition: ${{ fromJSON(needs.check.outputs.editions) }}
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    env:
+      SUFFIX: ${{ matrix.edition == 'channel' && '-channel' || '' }}
+      # The x64 installer's name has no arch, as it always had.
+      ARCH_SUFFIX: ${{ matrix.arch == 'arm64' && '-arm64' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
+        if: matrix.arch == 'x64'
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      # Flutter's Windows SDK archive carries an x64 Dart; cloned at the
+      # release's tag, it downloads the Arm one for this machine.
+      - name: Clone Flutter
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch "$env:FLUTTER_VERSION" https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+          "$env:RUNNER_TEMP\flutter\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$env:RUNNER_TEMP\flutter\bin\flutter.bat" --version
+          # The engine's artifacts and packages (sky_engine), for pub.
+          & "$env:RUNNER_TEMP\flutter\bin\flutter.bat" precache --windows
       - name: Install Inno Setup
+        if: matrix.arch == 'x64'
         run: choco install innosetup --no-progress -y
-      - uses: actions/download-artifact@v4
+      # Its installer itself, where Chocolatey may not be (the Arm image).
+      - name: Install Inno Setup
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $is = "$env:RUNNER_TEMP\innosetup.exe"
+          Invoke-WebRequest https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe -OutFile $is
+          if ((Get-FileHash $is -Algorithm SHA256).Hash -ne '9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732') { throw 'innosetup-6.7.3.exe: wrong SHA-256' }
+          $setup = Start-Process $is -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/ALLUSERS' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Inno Setup's installer exited with $($setup.ExitCode)" }
+      - uses: actions/download-artifact@v7
         with:
           name: remote
           path: build/remote
+      # bao_iroh's Rust (the phones' link), built by its build hook.
+      - uses: ./.github/actions/setup-rust
       - name: Build
-        run: dart run tool/build_windows.dart --remote-built
-      - uses: actions/upload-artifact@v4
+        run: dart run tool/build_windows.dart --remote-built --arch ${{ matrix.arch }} ${{ matrix.edition == 'channel' && '--channel' || '' }}
+      - uses: actions/upload-artifact@v6
         with:
-          name: windows
+          name: windows-${{ matrix.arch }}${{ env.SUFFIX }}
           if-no-files-found: error
-          path: build/installers/BaoCode-*-setup.exe
+          path: build/installers/BaoCode-*-setup${{ env.ARCH_SUFFIX }}${{ env.SUFFIX }}.exe
+      # The Dart code's symbols, for a hang report's app.so+0x… frames
+      # (tool/build_windows.dart). Not released: kept with the run.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: symbols-windows-${{ matrix.arch }}${{ env.SUFFIX }}
+          if-no-files-found: error
+          retention-days: 90
+          path: build/symbols/app.windows-${{ matrix.arch }}.symbols
 
   linux:
-    name: Build for Linux (${{ matrix.arch }})
+    name: Build for Linux (${{ matrix.arch }}, ${{ matrix.edition }})
     needs: [check, remote]
     # The oldest Ubuntu built on: its glibc and GTK are what the package
     # runs on from there up.
     runs-on: ${{ matrix.runner }}
     strategy:
+      # One edition failing leaves the other building, to be re-run alone.
+      fail-fast: false
       matrix:
+        arch: [x64, arm64]
+        edition: ${{ fromJSON(needs.check.outputs.editions) }}
         include:
           - arch: x64
             runner: ubuntu-22.04
           - arch: arm64
             runner: ubuntu-22.04-arm
+    env:
+      SUFFIX: ${{ matrix.edition == 'channel' && '-channel' || '' }}
+      # The channel build's login window is WebKitGTK's
+      # (linux/runner/CMakeLists.txt).
+      BAOCODE_CHANNEL: ${{ matrix.edition == 'channel' && 'true' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         if: matrix.arch == 'x64'
         with:
@@ -254,20 +382,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
             liblzma-dev libstdc++-12-dev xvfb dbus-x11
-      - uses: actions/download-artifact@v4
+          if [ "$BAOCODE_CHANNEL" = true ]; then
+            sudo apt-get install -y libwebkit2gtk-4.1-dev
+          fi
+      - uses: actions/download-artifact@v7
         with:
           name: remote
           path: build/remote
+      # bao_iroh's Rust (the phones' link), built by its build hook.
+      - uses: ./.github/actions/setup-rust
+      # The Dart code's symbols are saved beside it, for a jank sample's
+      # libapp.so+0x… frames (tool/symbolize_jank_sample.dart). Only saved:
+      # libapp.so stays as it was.
       - name: Build
-        run: flutter build linux --release
+        run: |
+          mkdir -p build/symbols
+          flutter build linux --release \
+            "--extra-gen-snapshot-options=--save-debugging-info=$PWD/build/symbols/app.linux-${{ matrix.arch }}.symbols" \
+            ${{ matrix.edition == 'channel' && '--dart-define=BAOCODE_CHANNEL=true' || '' }}
       - name: Package the .deb and the tarball
         run: |
-          sh tool/package_linux_deb.sh
+          sh tool/package_linux_deb.sh ${{ matrix.edition == 'channel' && '--channel' || '' }}
           dpkg-deb --info build/installers/BaoCode-*.deb
+          # The phones' link (bao_iroh's Rust) is in it.
+          dpkg-deb --contents build/installers/BaoCode-*.deb | grep -q 'lib/libbao_iroh.so$'
       - name: Install the package and launch it
         run: |
           sudo apt-get install -y ./build/installers/BaoCode-*.deb
           log="$RUNNER_TEMP/launch.log"
+          # A browser's folder, for the host's manifest to be written in; the
+          # socket in a runtime folder of the user's alone, as on a desktop.
+          mkdir -p "$HOME/.config/google-chrome"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime"
+          mkdir -m 700 "$XDG_RUNTIME_DIR"
+          # One that does not exist is asked about, and the app waits there.
+          mkdir "$RUNNER_TEMP/launch-data"
           BAOCODE_DATA_DIR="$RUNNER_TEMP/launch-data" \
             dbus-run-session -- xvfb-run -a /opt/baocode/baocode > "$log" 2>&1 &
           sleep 15
@@ -277,14 +426,42 @@ jobs:
             exit 1
           fi
           echo "BaoCode is running after 15 seconds"
+          # The browser extension's host: where the manifest says, and
+          # reaching the BaoCode running.
+          manifest="$HOME/.config/google-chrome/NativeMessagingHosts/dev.baocode.browser.json"
+          cat "$manifest"
+          grep -q '"path": "/opt/baocode/baocode-browser-host"' "$manifest"
+          python3 - << 'EOF'
+          import json, signal, struct, subprocess
+          signal.alarm(10)
+          host = subprocess.Popen(
+              ["/opt/baocode/baocode-browser-host",
+               "chrome-extension://jfjagocghaaheooicmdnhcholmgdkngk/"],
+              stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+          while True:
+              n = struct.unpack("<I", host.stdout.read(4))[0]
+              said = json.loads(host.stdout.read(n))
+              print("host said", said)
+              if said == {"type": "bridge", "connected": True}:
+                  break
+          host.stdin.close()
+          host.wait()
+          EOF
           pkill -x baocode || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
-          name: linux-${{ matrix.arch }}
+          name: linux-${{ matrix.arch }}${{ env.SUFFIX }}
           if-no-files-found: error
           path: |
             build/installers/BaoCode-*.deb
             build/installers/BaoCode-*.tar.gz
+      # Not released: kept with the run.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: symbols-linux-${{ matrix.arch }}${{ env.SUFFIX }}
+          if-no-files-found: error
+          retention-days: 90
+          path: build/symbols/app.linux-${{ matrix.arch }}.symbols
 
   share:
     name: Put it at dl.baocode.dev/test/ for testers
@@ -305,20 +482,23 @@ jobs:
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
       AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
     steps:
-      - uses: actions/download-artifact@v4
+      # Each edition built (macos, macos-channel…).
+      - uses: actions/download-artifact@v7
         with:
-          name: macos
+          pattern: macos*
           path: dist/macos
-      - uses: actions/download-artifact@v4
+          merge-multiple: true
+      - uses: actions/download-artifact@v7
         with:
-          name: windows
+          pattern: windows*
           path: dist/windows
-      - uses: actions/download-artifact@v4
+          merge-multiple: true
+      - uses: actions/download-artifact@v7
         with:
           pattern: linux-*
           path: dist/linux
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: remote
           path: dist/remote
@@ -336,7 +516,7 @@ jobs:
             echo "## For testers: $MARKETING, \`$GITHUB_REF_NAME\` (${GITHUB_SHA::7})"
             echo
           } >> "$GITHUB_STEP_SUMMARY"
-          for file in dist/macos/BaoCode-*.dmg dist/windows/BaoCode-*-setup.exe dist/linux/BaoCode-*.deb; do
+          for file in dist/macos/BaoCode-*.dmg dist/windows/BaoCode-*-setup*.exe dist/linux/BaoCode-*.deb; do
             name=$(basename "$file")
             aws s3 cp "$file" "s3://$R2_BUCKET/$dir/$name" --cache-control 'public, max-age=86400'
             url="https://dl.baocode.dev/$dir/$name"
@@ -359,6 +539,9 @@ jobs:
     env:
       VERSION: ${{ needs.check.outputs.version }}
       MARKETING: ${{ needs.check.outputs.marketing }}
+      # v<version>-channel: the channel build alone, into the version
+      # published.
+      CHANNEL_ONLY: ${{ needs.check.outputs.channel_only }}
       R2_BUCKET: ${{ vars.R2_BUCKET }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -368,24 +551,32 @@ jobs:
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
       AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
       - name: Gather the files
         run: |
           mkdir -p out
-          for arch in arm64 x64; do
-            cp dist/macos/BaoCode-$MARKETING-$arch.dmg dist/macos/BaoCode-$MARKETING-mac-$arch.zip out/
-          done
-          cp dist/windows/BaoCode-$MARKETING-setup.exe out/
-          for arch in x64 arm64; do
-            cp dist/linux-$arch/BaoCode-$MARKETING-linux-*.deb dist/linux-$arch/BaoCode-$MARKETING-linux-*.tar.gz out/
+          # The standard build, then the channel build's, ending in -channel.
+          editions=('' -channel)
+          [ "$CHANNEL_ONLY" = true ] && editions=(-channel)
+          for edition in "${editions[@]}"; do
+            for arch in arm64 x64; do
+              cp dist/macos$edition/BaoCode-$MARKETING-$arch$edition.dmg \
+                dist/macos$edition/BaoCode-$MARKETING-mac-$arch$edition.zip out/
+            done
+            cp dist/windows-x64$edition/BaoCode-$MARKETING-setup$edition.exe \
+              dist/windows-arm64$edition/BaoCode-$MARKETING-setup-arm64$edition.exe out/
+            for arch in x64 arm64; do
+              cp dist/linux-$arch$edition/BaoCode-$MARKETING-linux-*.deb \
+                dist/linux-$arch$edition/BaoCode-$MARKETING-linux-*.tar.gz out/
+            done
           done
           # The remote server, under the name both apps' servers.json give it;
           # servers.json too, for an app packaged with --remote-release.
@@ -401,7 +592,17 @@ jobs:
           key="$RUNNER_TEMP/update-signing.key"
           echo "$SIGNING_KEY" > "$key"
           notes=()
+          editions=('' -channel)
+          if [ "$CHANNEL_ONLY" = true ]; then
+            # The manifest published, which the channel build's entries join:
+            # the standard build's, its notes and its downloads kept as they
+            # are (release_manifest.dart keeps a manifest of the same version).
+            editions=(-channel)
+            curl -fsS https://dl.baocode.dev/releases/latest.json -o out/latest.json
+            [ "$(jq -r .version out/latest.json)" = "$VERSION" ] || { echo "::error::latest.json is not $VERSION"; exit 1; }
+          fi
           for language in en zh; do
+            [ "$CHANNEL_ONLY" = true ] && break
             file="release-notes/$MARKETING.$language.md"
             if [ -f "$file" ]; then
               notes+=(--notes-$language "$file")
@@ -409,15 +610,22 @@ jobs:
               echo "::warning::No $file: the update notification and the changelog say nothing of $MARKETING"
             fi
           done
+          files=()
+          for edition in "${editions[@]}"; do
+            files+=(
+              --windows$edition out/BaoCode-$MARKETING-setup$edition.exe
+              --windows-arm64$edition out/BaoCode-$MARKETING-setup-arm64$edition.exe
+              --macos-arm64$edition out/BaoCode-$MARKETING-mac-arm64$edition.zip
+              --macos-x64$edition out/BaoCode-$MARKETING-mac-x64$edition.zip
+              --dmg-arm64$edition out/BaoCode-$MARKETING-arm64$edition.dmg
+              --dmg-x64$edition out/BaoCode-$MARKETING-x64$edition.dmg
+              --linux-x64$edition out/BaoCode-$MARKETING-linux-amd64$edition.deb
+              --linux-arm64$edition out/BaoCode-$MARKETING-linux-arm64$edition.deb
+            )
+          done
           BAOCODE_UPDATE_SIGNING_KEY="$key" dart run tool/release_manifest.dart \
             --version "$VERSION" \
-            --windows out/BaoCode-$MARKETING-setup.exe \
-            --macos-arm64 out/BaoCode-$MARKETING-mac-arm64.zip \
-            --macos-x64 out/BaoCode-$MARKETING-mac-x64.zip \
-            --dmg-arm64 out/BaoCode-$MARKETING-arm64.dmg \
-            --dmg-x64 out/BaoCode-$MARKETING-x64.dmg \
-            --linux-x64 out/BaoCode-$MARKETING-linux-amd64.deb \
-            --linux-arm64 out/BaoCode-$MARKETING-linux-arm64.deb \
+            "${files[@]}" \
             --manifest out/latest.json \
             "${notes[@]}"
           rm "$key"
@@ -426,11 +634,14 @@ jobs:
           immutable='public, max-age=31536000, immutable'
           aws s3 cp out/remote "s3://$R2_BUCKET/releases/remote/" --recursive \
             --cache-control "$immutable"
-          # The newest server, for --remote-release latest (remote.yml).
-          jq -n --arg version "$(cat dist/remote/VERSION)" --arg tag "$GITHUB_REF_NAME" --arg commit "$GITHUB_SHA" \
-            '{version: $version, tag: $tag, commit: $commit}' > remote-latest.json
-          aws s3 cp remote-latest.json "s3://$R2_BUCKET/releases/remote/latest.json" \
-            --cache-control 'public, max-age=60' --content-type application/json
+          # The newest server, for --remote-release latest (remote.yml): a
+          # release's, not the channel build's alone.
+          if [ "$CHANNEL_ONLY" != true ]; then
+            jq -n --arg version "$(cat dist/remote/VERSION)" --arg tag "$GITHUB_REF_NAME" --arg commit "$GITHUB_SHA" \
+              '{version: $version, tag: $tag, commit: $commit}' > remote-latest.json
+            aws s3 cp remote-latest.json "s3://$R2_BUCKET/releases/remote/latest.json" \
+              --cache-control 'public, max-age=60' --content-type application/json
+          fi
           for file in $(cd out && ls BaoCode-*); do
             aws s3 cp "out/$file" "s3://$R2_BUCKET/releases/$MARKETING/$file" \
               --cache-control "$immutable"
@@ -440,7 +651,7 @@ jobs:
           # At the manifest's links, which end in each file's hash: what
           # users will be given, not what the CDN may have kept of a
           # release published before under the same names.
-          jq -r '(.downloads[], .platforms[]) | "\(.url) \(.size)"' out/latest.json | sort -u |
+          jq -r '(.downloads[], (.downloads[].channel // empty), .platforms[]) | "\(.url) \(.size)"' out/latest.json | sort -u |
           while read -r url expected; do
             served=$(curl -fsSI "$url" | tr -d '\r' | awk 'tolower($1) == "content-length:" { print $2 }')
             echo "$url: $served bytes (expected $expected)"
@@ -453,7 +664,9 @@ jobs:
           aws s3 cp out/latest.json "s3://$R2_BUCKET/releases/latest.json" \
             --cache-control 'public, max-age=300' --content-type application/json
           curl -fsS "https://dl.baocode.dev/releases/latest.json?$GITHUB_RUN_ID" | jq .
+      # The standard build's alone; the channel build alone makes none.
       - name: Make the GitHub release
+        if: env.CHANNEL_ONLY != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -462,6 +675,7 @@ jobs:
           # Published again: the release is made anew, on the tag's commit.
           gh release delete "v$MARKETING" --yes 2>/dev/null || true
           gh release create "v$MARKETING" --title "BaoCode $MARKETING" "${notes[@]}" \
-            out/BaoCode-$MARKETING-arm64.dmg out/BaoCode-$MARKETING-x64.dmg out/BaoCode-$MARKETING-setup.exe \
+            out/BaoCode-$MARKETING-arm64.dmg out/BaoCode-$MARKETING-x64.dmg \
+            out/BaoCode-$MARKETING-setup.exe out/BaoCode-$MARKETING-setup-arm64.exe \
             out/BaoCode-$MARKETING-linux-amd64.deb out/BaoCode-$MARKETING-linux-arm64.deb \
             out/BaoCode-$MARKETING-linux-amd64.tar.gz out/BaoCode-$MARKETING-linux-arm64.tar.gz

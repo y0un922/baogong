@@ -11,6 +11,7 @@ import 'package:baocode/chat/side_panel/file_open.dart';
 import 'package:baocode/chat/side_panel/side_panel_controller.dart';
 import 'package:baocode/chat/side_panel/side_panel_view.dart';
 import 'package:baocode/ide/file_service.dart';
+import 'package:baocode/ide/git/ide_git_commit_panel.dart';
 import 'package:baocode/ide/git/git_repository.dart';
 import 'package:baocode/ide/git/repository_scan.dart';
 import 'package:baocode/ide/ide_explorer.dart';
@@ -21,8 +22,6 @@ import 'package:baocode/theme/codicons.dart';
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart'
-    show FlutterQuillLocalizations;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -92,7 +91,6 @@ Future<({AgentSidePanel panel, ChatSession session})> _pump(
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       builder: uiScale == null
           ? null
           : (context, child) {
@@ -143,8 +141,18 @@ Finder get _list => find.byKey(const ValueKey('side-panel-list'));
 Finder _inList(String text) =>
     find.descendant(of: _list, matching: find.text(text));
 
+/// [text] in the changes page's local changes (the Source Control view's
+/// CHANGES, under the Git log's first row).
+/// A repository's header on the changes page.
+Finder _header(String root) => find.byKey(ValueKey('r:$root'));
+
+Finder _inChanges(String text) => find.descendant(
+  of: find.byType(IdeGitCommitPanel),
+  matching: find.text(text),
+);
+
 void main() {
-  testWidgets('the file tree preview responds to code size, not interface '
+  testWidgets('the file tree preview responds to code size and interface '
       'size', (tester) async {
     final scale = ValueNotifier(1.0);
     final originalSize = CodeFont.size.value;
@@ -161,14 +169,15 @@ void main() {
     scale.value = 1.5;
     await tester.pumpAndSettle();
     expect(tester.state(surface), same(state));
-    expect(view.lineHeight, closeTo(height, 1e-9));
+    expect(view.lineHeight, greaterThan(height * 1.4));
     expect(
       view.caretRectAt(7)!.left - view.caretRectAt(0)!.left,
-      closeTo(width, 1e-9),
+      closeTo(width * 1.5, 1),
     );
+    final zoomed = view.lineHeight;
     CodeFont.size.value = CodeFont.defaultSize + 6;
     await tester.pumpAndSettle();
-    expect(view.lineHeight, greaterThan(height * 1.4));
+    expect(view.lineHeight, greaterThan(zoomed * 1.4));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(milliseconds: 20));
   });
@@ -276,14 +285,19 @@ void main() {
       section: SidePanelSection.changes,
       repositories: repositories,
     );
-    // Each under its header, with its branch, and all their changes (the
-    // graph's description names the one shown too).
-    expect(_inList('site'), findsNWidgets(2));
-    expect(_inList('api'), findsOneWidget);
-    expect(_inList('main*'), findsOneWidget);
-    expect(_inList('dev*'), findsOneWidget);
+    // Each under its header, with its branch, and all their changes, as
+    // the local changes' details of the Git log.
+    for (final (root, label) in [(_site, 'site  main'), (_api, 'api  dev')]) {
+      expect(
+        find.descendant(
+          of: _header(root),
+          matching: find.text(label, findRichText: true),
+        ),
+        findsOneWidget,
+      );
+    }
     for (final name in ['index.html', 'main.go', 'new.go']) {
-      expect(_inList(name), findsOneWidget, reason: name);
+      expect(_inChanges(name), findsOneWidget, reason: name);
     }
     // The page's tab counts every repository's.
     expect(
@@ -295,8 +309,8 @@ void main() {
       ),
       findsOneWidget,
     );
-    // A header clicked: its repository the one shown (the graph's).
-    await tester.tap(_inList('api'));
+    // A header clicked: its repository the one shown (the log's).
+    await tester.tap(_header(_api));
     await tester.pumpAndSettle();
     expect(panel.repositoryOf(session.root!), _api);
   });
@@ -331,11 +345,11 @@ void main() {
       ),
     );
     Future<void> menuOf(String name) async {
-      await tester.tap(_inList(name), buttons: kSecondaryButton);
+      await tester.tap(_header(name), buttons: kSecondaryButton);
       await tester.pumpAndSettle();
     }
 
-    await menuOf('api');
+    await menuOf(_api);
     expect(find.text('Reveal in Files'), findsOneWidget);
     expect(find.text('Pull'), findsOneWidget);
     expect(find.text('Push'), findsOneWidget);
@@ -343,13 +357,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(copied, _api);
 
-    await menuOf('api');
-    await tester.tap(find.text('Fetch'));
+    await menuOf(_api);
+    await tester.tap(find.text('Fetch From All Remotes'));
     await tester.pumpAndSettle();
     expect(api.callsTo('fetch'), isNotEmpty);
     expect(site.callsTo('fetch'), isEmpty);
 
-    await menuOf('api');
+    await menuOf(_api);
     await tester.tap(find.text('Reveal in Files'));
     await tester.pumpAndSettle();
     expect(panel.tabsOf(session).section, SidePanelSection.files);
@@ -374,7 +388,7 @@ void main() {
         (_api, nestedGit),
       ]),
     );
-    expect(_inList('new.go'), findsOneWidget);
+    expect(_inChanges('new.go'), findsOneWidget);
     expect(find.textContaining('doesn\'t have a Git repository'), findsNothing);
   });
 

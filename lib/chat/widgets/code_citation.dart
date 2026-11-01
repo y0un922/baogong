@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bao_editor/textmate/textmate_syntax.dart' show TextMateSyntax;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:markdown/markdown.dart' as md;
@@ -14,6 +15,7 @@ import '../../theme/workbench_theme.dart' show themeColors;
 import '../chat_find.dart' show ChatFindMarks;
 import '../side_panel/file_link.dart' show FileLineRange, FileLink;
 import '../side_panel/file_open.dart' show FileOpenScope;
+import 'finite_selection_edges.dart';
 import 'hover_builder.dart';
 import 'will_change_paint.dart';
 
@@ -148,6 +150,7 @@ class CodeCitationScope extends InheritedWidget {
     this.onOpen,
     this.colorize,
     this.colorizeBlock,
+    this.syntax,
     required super.child,
   });
 
@@ -164,6 +167,10 @@ class CodeCitationScope extends InheritedWidget {
   /// Colors a [MarkdownCodeBlock]'s code by its language.
   final CodeBlockColorizer? colorizeBlock;
 
+  /// The TextMate worker [colorize] colors with, started as it is first
+  /// asked for: an edit's diff (an editor's) colored by it too.
+  final TextMateSyntax Function()? syntax;
+
   static CodeCitationScope? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<CodeCitationScope>();
 
@@ -172,7 +179,8 @@ class CodeCitationScope extends InheritedWidget {
       root != oldWidget.root ||
       onOpen != oldWidget.onOpen ||
       colorize != oldWidget.colorize ||
-      colorizeBlock != oldWidget.colorizeBlock;
+      colorizeBlock != oldWidget.colorizeBlock ||
+      syntax != oldWidget.syntax;
 }
 
 /// A [CodeCitation] as a card: the file's icon, name and lines, which open
@@ -665,7 +673,9 @@ class _CodeCardState extends State<_CodeCard> {
                   controller: _horizontal,
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.only(right: 12),
-                  child: WillChangePaint(child: code),
+                  child: FiniteSelectionEdges(
+                    child: WillChangePaint(child: code),
+                  ),
                 ),
               ),
             ],

@@ -7,7 +7,6 @@ import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -159,10 +158,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Scaffold(
           body: StatefulBuilder(
             builder: (context, setState) => TurnFooter(

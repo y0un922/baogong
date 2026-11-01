@@ -33,6 +33,11 @@ enum ProviderProtocol {
   /// a base URL.
   bool get usesAccounts => this == codex;
 
+  /// Those a model may be spoken to at instead of its upstream's
+  /// ([ProviderModel.protocol]): at the same base URL and key, so not
+  /// Codex's, signed in to.
+  static const forModels = [anthropic, openaiChat, openaiResponses];
+
   static ProviderProtocol parse(Object? id) =>
       values.where((value) => value.id == id).firstOrNull ?? anthropic;
 }
@@ -140,6 +145,8 @@ class ProviderModel {
     this.custom = false,
     this.missing = false,
     this._kind,
+    this.protocol,
+    this.endpointUrl,
   });
 
   /// The efforts offered unless the model has its own: `none` turns its
@@ -209,6 +216,16 @@ class ProviderModel {
   /// What it is for, as set; null when it goes by its name.
   ModelKind? get kindSet => _kind;
 
+  /// The endpoint it is spoken to at, one of [ProviderProtocol.forModels]
+  /// (a relay's Claude at its Messages API, its GPT at Responses); null
+  /// for its upstream's ([ModelProvider.protocolOf]).
+  final ProviderProtocol? protocol;
+
+  /// Where it is spoken to, in full, whatever its [protocol]: that says
+  /// how a request is made, this only where it goes. Null for its
+  /// upstream's ([ModelProvider.endpointOf]).
+  final String? endpointUrl;
+
   String get displayName => switch (label?.trim()) {
     final label? when label.isNotEmpty => label,
     _ => id,
@@ -253,6 +270,8 @@ class ProviderModel {
     bool? custom,
     bool? missing,
     ModelKind? Function()? kind,
+    ProviderProtocol? Function()? protocol,
+    String? Function()? endpointUrl,
   }) => ProviderModel(
     id: id ?? this.id,
     label: label == null ? this.label : label(),
@@ -264,6 +283,10 @@ class ProviderModel {
     custom: custom ?? this.custom,
     missing: missing ?? this.missing,
     kind: kind == null ? _kind : kind(),
+    protocol: protocol == null ? this.protocol : protocol(),
+    endpointUrl: endpointUrl == null
+        ? this.endpointUrl
+        : ModelProvider._url(endpointUrl()),
   );
 
   Map<String, Object?> toJson() => {
@@ -277,6 +300,8 @@ class ProviderModel {
     if (custom) 'custom': true,
     if (missing) 'missing': true,
     'kind': ?_kind?.id,
+    'protocol': ?protocol?.id,
+    'endpointUrl': ?endpointUrl,
   };
 
   static ProviderModel? fromJson(Object? json) {
@@ -309,6 +334,10 @@ class ProviderModel {
       custom: json['custom'] == true,
       missing: json['missing'] == true,
       kind: ModelKind.parse(json['kind']),
+      protocol: ProviderProtocol.forModels
+          .where((protocol) => protocol.id == json['protocol'])
+          .firstOrNull,
+      endpointUrl: ModelProvider._url(json['endpointUrl']),
     );
   }
 
@@ -324,7 +353,9 @@ class ProviderModel {
       other.enabled == enabled &&
       other.custom == custom &&
       other.missing == missing &&
-      other._kind == _kind;
+      other._kind == _kind &&
+      other.protocol == protocol &&
+      other.endpointUrl == endpointUrl;
 
   @override
   int get hashCode => Object.hash(
@@ -338,6 +369,8 @@ class ProviderModel {
     custom,
     missing,
     _kind,
+    protocol,
+    endpointUrl,
   );
 
   static bool _sameList<T>(List<T>? a, List<T>? b) {
@@ -359,7 +392,8 @@ String effortLabel(String level) => switch (level) {
 };
 
 /// Which models Claude Code uses for what, by model id: unset, the model
-/// picked stands in.
+/// picked stands in. Each but [main] may be another upstream's model, as
+/// a [modelRef] (`@<id>/<model>`), which the proxy sends there.
 class ProviderRoles {
   const ProviderRoles({
     this.main,
@@ -370,7 +404,8 @@ class ProviderRoles {
   });
 
   /// Used when the model picked of the upstream is gone (removed since):
-  /// a session's, or new sessions' default.
+  /// a session's, or new sessions' default. Always the upstream's own: it
+  /// stands in for its model, on it.
   final String? main;
 
   /// `ANTHROPIC_DEFAULT_OPUS_MODEL`: what "opus" means (e.g. in Plan).
@@ -383,12 +418,37 @@ class ProviderRoles {
   /// the app's (agents' titles).
   final String? haiku;
 
-  /// `CLAUDE_CODE_SUBAGENT_MODEL`: a model of the upstream, or another
-  /// upstream's as a [modelRef] (`@<id>/<model>`), which the proxy sends
-  /// there.
+  /// `CLAUDE_CODE_SUBAGENT_MODEL`.
   final String? subagent;
 
   static const _keys = ['main', 'opus', 'sonnet', 'haiku', 'subagent'];
+
+  /// Every role, as settings.json names it.
+  static const keys = _keys;
+
+  /// The roles that may pick another upstream's model.
+  static const crossUpstream = ['opus', 'sonnet', 'haiku', 'subagent'];
+
+  /// The other upstreams (not [own]) its roles pick models of.
+  Set<String> upstreamsBesides(String own) => {
+    for (final key in crossUpstream)
+      if (parseModelRef(this[key]) case (:final provider, model: _)
+          when provider != own)
+        provider,
+  };
+
+  /// Without the roles that pick a model of [provider] (of its [models]
+  /// only, when given) as a [modelRef]: it, or they, gone.
+  ProviderRoles without(String provider, [Set<String>? models]) {
+    var roles = this;
+    for (final key in _keys) {
+      if (parseModelRef(this[key]) case (provider: final id, :final model)
+          when id == provider && (models == null || models.contains(model))) {
+        roles = roles.copyWith(key, null);
+      }
+    }
+    return roles;
+  }
 
   String? operator [](String role) => switch (role) {
     'main' => main,
@@ -548,6 +608,8 @@ class ModelProvider {
     required this.name,
     this.protocol = ProviderProtocol.anthropic,
     this.baseUrl = '',
+    this.modelsUrl,
+    this.endpointUrl,
     this.auth = ProviderAuth.auto,
     this.enabled = true,
     this.models = const [],
@@ -559,6 +621,8 @@ class ModelProvider {
     this.headers = const {},
     this.accounts = const [],
     this.balance = AccountBalance.roundRobin,
+    this.autoResetCredits = false,
+    this.resetCreditsFiveHours = false,
     this.clientVersion,
     this.icon,
   });
@@ -568,6 +632,20 @@ class ModelProvider {
   final String name;
   final ProviderProtocol protocol;
   final String baseUrl;
+
+  /// Where its models are listed, in full, when not where [baseUrl] says
+  /// ([UpstreamUrls.models]): an upstream not laid out as its protocol's
+  /// API is.
+  final String? modelsUrl;
+
+  /// Where a conversation goes, in full (`…/chat/completions`,
+  /// `…/responses`, `…/v1/messages`), when not where [baseUrl] says. Its
+  /// own protocol's only: a model of another goes by [baseUrl], unless it
+  /// has an address of its own ([endpointOf]). One of Anthropic's goes
+  /// through the proxy, which alone can send Claude Code's requests there
+  /// ([throughProxy]).
+  final String? endpointUrl;
+
   final ProviderAuth auth;
 
   /// Offered in the picker.
@@ -606,6 +684,12 @@ class ModelProvider {
   /// Which of [accounts] a request goes to.
   final AccountBalance balance;
 
+  /// Codex: an account whose quota is used up for longer than five hours
+  /// (or for five, with [resetCreditsFiveHours]) uses up a reset credit
+  /// of its own, if it has one, and goes on.
+  final bool autoResetCredits;
+  final bool resetCreditsFiveHours;
+
   /// Codex: the Codex CLI's version it speaks as (`0.159.0`), for models
   /// the backend offers only to a newer one; the app's when null.
   final String? clientVersion;
@@ -628,10 +712,15 @@ class ModelProvider {
   static String accountRefFor(String id, String accountId) =>
       'provider.$id.$accountId';
 
-  /// The host its base URL names, for the list; ChatGPT's for Codex.
+  /// The host its base URL names (else its endpoint's, or its models'),
+  /// for the list; ChatGPT's for Codex.
   String get host => protocol == ProviderProtocol.codex
       ? 'chatgpt.com'
-      : Uri.tryParse(baseUrl.trim())?.host ?? '';
+      : [baseUrl, ?endpointUrl, ?modelsUrl]
+                .map((url) => Uri.tryParse(url.trim())?.host ?? '')
+                .where((host) => host.isNotEmpty)
+                .firstOrNull ??
+            '';
 
   /// Whether it has what it is reached with: a base URL, or an account.
   bool get connected =>
@@ -670,22 +759,68 @@ class ModelProvider {
   ProviderModel? model(String id) =>
       models.where((model) => model.id == id).firstOrNull;
 
-  /// The other upstream its subagents' role picks a model of, if it does
-  /// (`@<id>/<model>`).
-  String? get subagentUpstream => switch (parseModelRef(roles.subagent)) {
-    (:final provider, model: _) when provider != id => provider,
-    _ => null,
+  /// How [model] is spoken to: at its own endpoint, if it has one, else
+  /// as the upstream is. A ChatGPT (Codex) upstream's all go as it does.
+  ProviderProtocol protocolOf(ProviderModel model) =>
+      protocol.usesAccounts ? protocol : model.protocol ?? protocol;
+
+  /// Where [model] is spoken to in full, when not where [baseUrl] says:
+  /// its own address, else the upstream's [endpointUrl] if it speaks the
+  /// upstream's protocol. A ChatGPT (Codex) upstream's all go as it does.
+  String? endpointOf(ProviderModel model) => protocol.usesAccounts
+      ? null
+      : model.endpointUrl ??
+            (protocolOf(model) == protocol ? endpointUrl : null);
+
+  /// It as a request for its model [modelId] goes to it: of that model's
+  /// protocol ([protocolOf]), at its address ([endpointOf]), the rest as
+  /// it is. As it is for a model it does not have.
+  ModelProvider speakingFor(String modelId) => switch (model(modelId)) {
+    final model?
+        when protocolOf(model) != protocol ||
+            endpointOf(model) != endpointUrl =>
+      copyWith(
+        protocol: protocolOf(model),
+        endpointUrl: () => endpointOf(model),
+      ),
+    _ => this,
   };
 
-  /// Whether its sessions go through the local proxy ([ModelProxy]): it
-  /// is spoken to there, or its subagents run on another upstream, which
-  /// the proxy alone can send a request to.
-  bool get throughProxy => protocol.proxied || subagentUpstream != null;
+  /// The protocols it is spoken to in: its own (a model added follows
+  /// it), and its models' ([protocolOf]).
+  Set<ProviderProtocol> get protocols => {
+    protocol,
+    for (final model in models) protocolOf(model),
+  };
+
+  /// Whether any of it is spoken to at Anthropic's API.
+  bool get speaksAnthropic => protocols.contains(ProviderProtocol.anthropic);
+
+  /// The other upstreams its roles pick models of (`@<id>/<model>`).
+  Set<String> get otherUpstreams => roles.upstreamsBesides(id);
+
+  /// Whether its sessions go through the local proxy ([ModelProxy]): it,
+  /// or one of its models, is spoken to there, or its roles pick another
+  /// upstream's models, which the proxy alone can send a request to.
+  /// An address of Anthropic's API of its own ([endpointUrl], a model's
+  /// [endpointOf]) too: Claude Code is given a base URL, and adds
+  /// `/v1/messages`.
+  bool get throughProxy =>
+      protocols.any((protocol) => protocol.proxied) ||
+      otherUpstreams.isNotEmpty ||
+      (protocol == ProviderProtocol.anthropic && endpointUrl != null) ||
+      models.any(
+        (model) =>
+            protocolOf(model) == ProviderProtocol.anthropic &&
+            endpointOf(model) != null,
+      );
 
   ModelProvider copyWith({
     String? name,
     ProviderProtocol? protocol,
     String? baseUrl,
+    String? Function()? modelsUrl,
+    String? Function()? endpointUrl,
     ProviderAuth? auth,
     bool? enabled,
     List<ProviderModel>? models,
@@ -697,6 +832,8 @@ class ModelProvider {
     Map<String, String>? headers,
     List<ProviderAccount>? accounts,
     AccountBalance? balance,
+    bool? autoResetCredits,
+    bool? resetCreditsFiveHours,
     String? Function()? clientVersion,
     ProjectIcon? Function()? icon,
   }) => ModelProvider(
@@ -704,6 +841,8 @@ class ModelProvider {
     name: name ?? this.name,
     protocol: protocol ?? this.protocol,
     baseUrl: baseUrl ?? this.baseUrl,
+    modelsUrl: modelsUrl == null ? this.modelsUrl : _url(modelsUrl()),
+    endpointUrl: endpointUrl == null ? this.endpointUrl : _url(endpointUrl()),
     auth: auth ?? this.auth,
     enabled: enabled ?? this.enabled,
     models: models ?? this.models,
@@ -716,6 +855,8 @@ class ModelProvider {
     headers: headers ?? this.headers,
     accounts: accounts ?? this.accounts,
     balance: balance ?? this.balance,
+    autoResetCredits: autoResetCredits ?? this.autoResetCredits,
+    resetCreditsFiveHours: resetCreditsFiveHours ?? this.resetCreditsFiveHours,
     clientVersion: clientVersion == null ? this.clientVersion : clientVersion(),
     icon: icon == null ? this.icon : icon(),
   );
@@ -745,6 +886,8 @@ class ModelProvider {
     'name': name,
     'protocol': protocol.id,
     'baseUrl': baseUrl,
+    'modelsUrl': ?modelsUrl,
+    'endpointUrl': ?endpointUrl,
     if (auth != ProviderAuth.auto) 'auth': auth.id,
     if (!enabled) 'enabled': false,
     'models': [for (final model in models) model.toJson()],
@@ -757,6 +900,8 @@ class ModelProvider {
     if (accounts.isNotEmpty)
       'accounts': [for (final account in accounts) account.toJson()],
     if (balance != AccountBalance.roundRobin) 'balance': balance.id,
+    if (autoResetCredits) 'autoResetCredits': true,
+    if (resetCreditsFiveHours) 'resetCreditsFiveHours': true,
     'clientVersion': ?clientVersion,
     'icon': ?icon?.toJson(),
   };
@@ -773,6 +918,8 @@ class ModelProvider {
       },
       protocol: ProviderProtocol.parse(json['protocol']),
       baseUrl: json['baseUrl'] is String ? json['baseUrl'] as String : '',
+      modelsUrl: _url(json['modelsUrl']),
+      endpointUrl: _url(json['endpointUrl']),
       auth: ProviderAuth.parse(json['auth']),
       enabled: json['enabled'] != false,
       models: [
@@ -798,6 +945,8 @@ class ModelProvider {
           ?ProviderAccount.fromJson(account),
       ],
       balance: AccountBalance.parse(json['balance']),
+      autoResetCredits: json['autoResetCredits'] == true,
+      resetCreditsFiveHours: json['resetCreditsFiveHours'] == true,
       clientVersion: switch (json['clientVersion']) {
         final String version when isClientVersion(version.trim()) =>
           version.trim(),
@@ -807,13 +956,26 @@ class ModelProvider {
     );
   }
 
+  /// [value] as a [modelsUrl] or [endpointUrl]: trimmed, null for none.
+  static String? _url(Object? value) => switch (value) {
+    final String url when url.trim().isNotEmpty => url.trim(),
+    _ => null,
+  };
+
   /// What a session started on it depends on, other than its model: a
   /// session goes on the one it started with until it restarts.
   String get launchFingerprint => [
     protocol.id,
     baseUrl.trim(),
+    ?endpointUrl,
     auth.id,
     roles.toJson().toString(),
+    [
+      for (final model in models) ...[
+        if (model.protocol case final protocol?) '${model.id}=${protocol.id}',
+        if (model.endpointUrl case final url?) '${model.id}@$url',
+      ],
+    ].join(','),
     disableNonessentialTraffic,
     preserveThinking,
     env.toString(),
@@ -846,7 +1008,9 @@ bool isHeaderName(String name) =>
 
 /// The custom headers' names a [ModelProvider.headers] may not set: a key
 /// must not go from settings, and none of the headers the app sets itself
-/// (or the auth) may be overwritten.
+/// (or the auth) may be overwritten. The user agent may: an upstream may
+/// want a client of its own, and unset it stays Claude Code's
+/// (`claudeCodeUserAgent`).
 const reservedHeaderNames = {
   'authorization',
   'x-api-key',
@@ -855,7 +1019,6 @@ const reservedHeaderNames = {
   'set-cookie',
   'host',
   'content-length',
-  'user-agent',
   'accept',
   'accept-encoding',
   'anthropic-version',
@@ -863,11 +1026,12 @@ const reservedHeaderNames = {
 
 /// Beside [reservedHeaderNames], on a ChatGPT (Codex) upstream: the
 /// headers the app sets for each account and conversation, as the Codex
-/// CLI does.
+/// CLI does, and its user agent, which goes with the CLI's version.
 const codexReservedHeaderNames = {
   'chatgpt-account-id',
   'originator',
   'session-id',
+  'user-agent',
 };
 
 /// Whether a [ModelProvider.headers] may set [name]: a valid name that is

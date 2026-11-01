@@ -65,3 +65,18 @@
 未纳入：渠道版、官网、iOS/CI 与 `5c0a0d8c` 发版元数据；`49114ec2` 关于页（含 Star 入口）；`347d331b` Linux 浏览器扩展；`2aa92317` 更新测试（本 fork 不启用安装包更新）；`f13369ae` 性能测试工具（需要时再取）。
 
 `packages/bao_remote` 仍与官方 `v1.5.0` 一致，打包须用远程清单 `1.5.0.15-4f805e192790`，不要用 `1.4.0.14`。`test/settings/settings_entry_test.dart` 的两项快捷键测试在合并前已失败，与本次无关。
+
+## 2026-11-01 整批合并（上游 `upstream/main` 的 `f59e5cc5`，官方 1.7.3）
+
+此前一直挑选提交（共 65 个），两边的共同祖先仍停在 2026-10-19，试合并有 103 个文件冲突。改为在 `fork/upstream-merge-20261101` 上整批 merge，版本随上游升到 1.7.3+23。
+
+- 55 个只被挑选提交改过的文件直接用上游版本；其余 47 个逐块合并，保留本 fork 定制。
+- 上游的终端改为 `TerminalDeck`（面板与侧栏共用、两处同时显示）：本 fork 的分屏移到 `lib/workspace/terminal_splits.dart`，在 deck 中按标签显示；⌘D/⇧⌘D、⌘1…、⌥⌘B、⇧⌥⌘B、⌥⌘T/⇧⌥⌘T 改接上游的分窗侧栏。
+- 上游的输入框改用 `MarkdownEditor`（不再用 Quill）：翻译按钮改为字符串接口，与上游的“提示词增强”同路。
+- 上游去掉了对话里的待办面板（`e15b1d46`）：pi 与 Codex 的待办上报一并去掉。
+- 关于页（上游 `49114ec2`）保留，改为本 fork 的仓库、Releases 与 issue，去掉 Star。非渠道版不再向 `stats.baocode.dev` 查询渠道归因。
+- 上游 `tool/live/bots_*` 脚本在上游本身就无法编译，未改。
+
+远程核心：上游在 v1.7.3 之后改写了 `packages/bao_remote` 的审查存储，已发布的远程核心都比本次合并旧，SSH 远程项目的审查可能不一致。`REMOTE_RELEASE` 需等上游下一次发布后再对齐。
+
+上游 `f59e5cc5` 本身就有 8 项测试失败（`composer_test` 两项、`ide_standalone_test`、`kernel_ui_test` 计划一项、侧栏“lists agents”、`window_header_test`、`chat_terminal_test` 两项），合并后仍失败的 7 项都在其中。

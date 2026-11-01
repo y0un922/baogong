@@ -11,6 +11,7 @@ import '../theme/codicons.dart';
 import '../theme/material_file_icons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import '../workspace/window_controls.dart';
+import 'editor_minimap_setting.dart';
 import 'ide_hover.dart';
 import 'ide_menu.dart';
 import 'ide_workspace.dart';
@@ -270,6 +271,10 @@ class _IdeTabBarState extends State<IdeTabBar> {
             item(IdeTabAction.openInDefaultApp, l10n.openInDefaultApp),
           item(IdeTabAction.revealInExplorer, l10n.tabRevealInExplorerView),
         ],
+        // A code tab's: one choice for every editor (EditorMinimap). Not a
+        // diff's, whose editors have none.
+        if (!doc.isMedia && doc.openError == null && doc.diff == null)
+          [minimapMenuAction(l10n)],
       ]),
     );
   }
@@ -326,7 +331,7 @@ class _IdeTabBarState extends State<IdeTabBar> {
             final preview?,
             final onChanged?,
           ))
-            _MarkdownSwitch(preview: preview, onChanged: onChanged),
+            MarkdownSwitch(preview: preview, onChanged: onChanged),
           if (widget.active case final active?)
             Builder(
               builder: (context) => _TabBarAction(
@@ -347,12 +352,18 @@ class _IdeTabBarState extends State<IdeTabBar> {
   }
 }
 
-/// A markdown tab's Preview | Markdown switch.
-class _MarkdownSwitch extends StatelessWidget {
-  const _MarkdownSwitch({required this.preview, required this.onChanged});
+/// A markdown tab's Preview | Markdown switch (a customization's too).
+class MarkdownSwitch extends StatelessWidget {
+  const MarkdownSwitch({
+    super.key,
+    required this.preview,
+    required this.onChanged,
+    this.padding = const EdgeInsets.only(left: 6, right: 2),
+  });
 
   final bool preview;
   final ValueChanged<bool> onChanged;
+  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) {
@@ -391,7 +402,7 @@ class _MarkdownSwitch extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.only(left: 6, right: 2),
+      padding: padding,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -487,21 +498,30 @@ class _Tab extends StatelessWidget {
 /// it over themselves, so the active one's `tab.activeBorder` is on top,
 /// as upstream's `.tabs-border-bottom::after`).
 class IdeTabStrip extends StatelessWidget {
-  const IdeTabStrip({super.key, required this.child, this.line});
+  const IdeTabStrip({
+    super.key,
+    required this.child,
+    this.line,
+    this.small = false,
+  });
 
   final Widget child;
 
   /// The line under the tabs where the theme has none ([border]).
   final Color? line;
 
+  /// [smallHeight] high, for [IdeEditorTab.small] tabs.
+  final bool small;
+
   static const height = 35.0;
+  static const smallHeight = 28.0;
 
   /// `editorGroupHeader.tabsBorder`, none by default.
   static Color? get border => themeColors.get('editorGroupHeader.tabsBorder');
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    height: height,
+    height: small ? smallHeight : height,
     // Not a Container: its border would inset the tabs.
     child: DecoratedBox(
       decoration: BoxDecoration(
@@ -541,6 +561,7 @@ class IdeEditorTab extends StatefulWidget {
     this.tooltip,
     this.minWidth = 80,
     this.borderTop = true,
+    this.small = false,
   });
 
   /// A double click (pins a preview tab); none: a click selects at once.
@@ -586,6 +607,10 @@ class IdeEditorTab extends StatefulWidget {
   /// Whether the active one has `tab.activeBorderTop` above it.
   final bool borderTop;
 
+  /// A size smaller, in an [IdeTabStrip.small] strip: under another's
+  /// tabs (the side panel's terminals).
+  final bool small;
+
   /// Its padding at the left, and at the right without a close button.
   static const padding = 10.0;
   static const iconSize = 16.0;
@@ -623,6 +648,14 @@ class _IdeEditorTabState extends State<IdeEditorTab> {
         ? colors.get('contrastActiveBorder')
         : null;
     final label = widget.label;
+    final small = widget.small;
+    final padding = small ? 8.0 : IdeEditorTab.padding;
+    final iconSize = small ? 14.0 : IdeEditorTab.iconSize;
+    final gap = small ? 5.0 : IdeEditorTab.gap;
+    final labelStyle = small
+        ? IdeEditorTab.labelStyleBase.copyWith(fontSize: 12)
+        : IdeEditorTab.labelStyleBase;
+    final closeSize = small ? 18.0 : 22.0;
     Widget tab = MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
@@ -645,8 +678,8 @@ class _IdeEditorTabState extends State<IdeEditorTab> {
               maxWidth: 260,
             ),
             padding: EdgeInsets.only(
-              left: IdeEditorTab.padding,
-              right: onClose == null ? IdeEditorTab.padding : 5,
+              left: padding,
+              right: onClose == null ? padding : (small ? 3 : 5),
             ),
             decoration: BoxDecoration(
               // The active tab in the editor's own color (by default),
@@ -678,24 +711,19 @@ class _IdeEditorTabState extends State<IdeEditorTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconTheme.merge(
-                  data: IconThemeData(
-                    size: IdeEditorTab.iconSize,
-                    color: foreground,
-                  ),
+                  data: IconThemeData(size: iconSize, color: foreground),
                   child: SizedBox.square(
-                    dimension: IdeEditorTab.iconSize,
+                    dimension: iconSize,
                     child: Center(child: widget.icon),
                   ),
                 ),
                 if (label != null) ...[
-                  const SizedBox(width: IdeEditorTab.gap),
+                  SizedBox(width: gap),
                   Flexible(
                     child: widget.renaming && widget.onRenamed != null
                         ? InlineRenameField(
                             initial: label,
-                            style: IdeEditorTab.labelStyleBase.copyWith(
-                              color: foreground,
-                            ),
+                            style: labelStyle.copyWith(color: foreground),
                             onDone: widget.onRenamed!,
                           )
                         : Text.rich(
@@ -703,8 +731,7 @@ class _IdeEditorTabState extends State<IdeEditorTab> {
                               text: label,
                               style: widget.labelStyle,
                               children: [
-                                if (widget.description
-                                    case final description?)
+                                if (widget.description case final description?)
                                   TextSpan(
                                     text: '  $description',
                                     // `.label-description`: 70% opaque.
@@ -720,21 +747,19 @@ class _IdeEditorTabState extends State<IdeEditorTab> {
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: IdeEditorTab.labelStyleBase.copyWith(
-                              color: foreground,
-                            ),
+                            style: labelStyle.copyWith(color: foreground),
                           ),
                   ),
                 ],
                 if (widget.trailing case final trailing?) ...[
-                  const SizedBox(width: IdeEditorTab.gap),
+                  SizedBox(width: gap),
                   trailing,
                 ],
                 if (onClose != null) ...[
-                  const SizedBox(width: 4),
+                  SizedBox(width: small ? 2 : 4),
                   SizedBox(
-                    width: 22,
-                    height: 22,
+                    width: closeSize,
+                    height: closeSize,
                     child: showClose
                         ? MouseRegion(
                             cursor: SystemMouseCursors.click,
@@ -755,7 +780,7 @@ class _IdeEditorTabState extends State<IdeEditorTab> {
                                   // The tab's color (`inherit`).
                                   child: Icon(
                                     Codicons.close,
-                                    size: 14,
+                                    size: small ? 12 : 14,
                                     color: foreground,
                                   ),
                                 ),

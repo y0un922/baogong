@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bao_agent/testing.dart';
+import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_core_setting.dart';
@@ -210,8 +211,9 @@ void main() {
       expect(lines.first, 'user: Ask me for a color and write it down');
       expect(lines, contains('diff: color.txt +2'));
       expect(lines, contains('terminal: cat color.txt'));
+      // The list written: a step of the turn, nothing kept beside it.
+      expect(lines, contains('tool: todo '));
       expect(lines.last, 'text: done');
-      expect(transcript.todos.single.content, 'Pick a color');
       expect(written, isNotEmpty);
       expect(written.last, greaterThan(0));
       // Its thinking asked for summarized, for the chat to show.
@@ -338,6 +340,42 @@ void main() {
     timeout: const Timeout(Duration(minutes: 2)),
   );
 
+  for (final approval in ['bypassPermissions', 'acceptEdits', 'default']) {
+    test('in Agent ($approval), a plan the model enters plan mode for '
+        'awaits the user, to start', () async {
+      // Sent to the user rather than written, as some models do.
+      api.model.script.addAll([
+        Reply.tool('EnterPlanMode', {}),
+        Reply.tool('ExitPlanMode', {'plan': '# Plan\n\nStep one.\n'}),
+        Reply.text('Waiting on you'),
+      ]);
+      final (:kernel, :transcript, :asked) = open(
+        KernelContext(
+          cwd: cwd,
+          settings: {'mode': 'agent', 'permission': approval},
+        ),
+      );
+      kernel.send(
+        const KernelTurn(
+          id: '33333333-3333-4333-8333-333333333333',
+          text: 'Plan it first',
+        ),
+      );
+      await until(() => transcript.lastTurnEndSeq > 0, what: 'the turn');
+      final plans = [
+        for (var i = 0; i < transcript.length; i++)
+          if (transcript.itemAt(i) case final PlanItem item) item,
+      ];
+      expect(plans.single.status, PlanStatus.awaiting, reason: '$asked');
+      expect(
+        File(plans.single.path).readAsStringSync(),
+        '# Plan\n\nStep one.\n',
+      );
+      kernel.dispose();
+      await kernel.stopped.timeout(const Duration(seconds: 20));
+    });
+  }
+
   test('a subagent: on the upstream, not the one the user\'s settings '
       'name', () async {
     api.model.script.addAll([
@@ -345,6 +383,7 @@ void main() {
         'description': 'Look around',
         'prompt': 'List the files',
         'subagent_type': 'general-purpose',
+        'run_in_background': false,
       }),
       Reply.text('nothing here'),
       Reply.text('it found nothing'),
@@ -360,6 +399,91 @@ void main() {
     );
     await until(() => transcript.lastTurnEndSeq > 0);
     expect(shown(transcript).last, 'text: it found nothing');
+    onTheUpstream();
+    kernel.dispose();
+    await kernel.stopped;
+  });
+
+  test('a subagent on the Haiku tier, set to another upstream\'s model: '
+      'there, with that one\'s key, through the proxy', () async {
+    // The proxy is in this isolate: real sockets, not the test binding's
+    // 400s.
+    final overrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = overrides);
+    final other = await FakeApi.start(
+      script: [Reply.text('nothing here')],
+      errands: (_) => Reply.text('Looking around'),
+    );
+    addTearDown(other.close);
+    await ModelProviders.current.save(
+      ModelProviders.current
+          .provider('up')!
+          .copyWith(roles: const ProviderRoles(haiku: '@other/small')),
+    );
+    await ModelProviders.current.save(
+      ModelProvider(
+        id: 'other',
+        name: 'Other',
+        baseUrl: other.baseUrl,
+        auth: ProviderAuth.apiKey,
+        models: const [ProviderModel(id: 'small')],
+      ),
+    );
+    await ModelProviders.current.setKey('other', 'sk-other');
+    api.model.script.addAll([
+      Reply.tool('Agent', {
+        'description': 'Look around',
+        'prompt': 'List the files',
+        'subagent_type': 'general-purpose',
+        'model': 'haiku',
+        'run_in_background': false,
+      }),
+      Reply.text('it found nothing'),
+    ]);
+    final (:kernel, :transcript, asked: _) = open(
+      KernelContext(cwd: cwd, settings: const {'mode': 'bypassPermissions'}),
+    );
+    kernel.send(
+      const KernelTurn(
+        id: '77777777-7777-4777-8777-777777777777',
+        text: 'look around',
+      ),
+    );
+    await until(() => transcript.lastTurnEndSeq > 0);
+    expect(shown(transcript).last, 'text: it found nothing');
+    // The session's own requests on its upstream, passed through.
+    onTheUpstream();
+    // The subagent's on the other, by that one's own name and key.
+    expect(other.model.requests, isNotEmpty);
+    expect(other.model.requests.map((r) => r.body['model']).toSet(), {'small'});
+    expect(other.headers.map((h) => h['x-api-key']).toSet(), {'sk-other'});
+    kernel.dispose();
+    await kernel.stopped;
+  });
+
+  test('an OpenAI upstream\'s Claude at its Messages API: the session '
+      'there, through the proxy, untranslated', () async {
+    final overrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = overrides);
+    await ModelProviders.current.save(
+      ModelProviders.current
+          .provider('up')!
+          .copyWith(
+            protocol: ProviderProtocol.openaiChat,
+            models: const [
+              ProviderModel(id: _model, protocol: ProviderProtocol.anthropic),
+            ],
+          ),
+    );
+    api.model.script.add(Reply.text('hello from Claude'));
+    final (:kernel, :transcript, asked: _) = open(KernelContext(cwd: cwd));
+    kernel.send(
+      const KernelTurn(id: '88888888-8888-4888-8888-888888888888', text: 'hi'),
+    );
+    await until(() => transcript.lastTurnEndSeq > 0);
+    expect(shown(transcript).last, 'text: hello from Claude');
     onTheUpstream();
     kernel.dispose();
     await kernel.stopped;

@@ -744,8 +744,8 @@ void main() {
             if (method == 'select') 'options': ['An RPC option'],
           });
 
-      test('todo snapshots feed the shared task panel, including clear and '
-          'custom entries from nested calls', () async {
+      test('the todo tool\'s calls show as steps; a failed one with its '
+          'output', () async {
         final pi = FakePi();
         final (:kernel, :transcript, events: _, starts: _) = piKernel([pi]);
         addTearDown(kernel.dispose);
@@ -766,20 +766,8 @@ void main() {
           },
         });
         await pumpEventQueue();
-        expect(transcript.todos.map((todo) => todo.content), [
-          'Read code',
-          'Align UI',
-          'Run tests',
-        ]);
-        expect(transcript.todos.map((todo) => todo.status), [
-          TodoStatus.completed,
-          TodoStatus.inProgress,
-          TodoStatus.pending,
-        ]);
-        expect(transcript.todos[1].activeForm, 'Aligning UI');
         expect((transcript.itemAt(1) as ToolCallItem).kind, ToolKind.todo);
 
-        // A failed tool without a snapshot must not erase the task list.
         startTool(pi, 'todo2', 'todo', {'action': 'update', 'id': 99});
         pi.emit({
           'type': 'tool_execution_end',
@@ -793,21 +781,9 @@ void main() {
           },
         });
         await pumpEventQueue();
-        expect(transcript.todos, hasLength(3));
         final failed = transcript.itemAt(2) as ToolCallItem;
         expect(failed.status, ToolStatus.failed);
         expect(failed.output, 'No such task');
-
-        pi.emit({
-          'type': 'entry_appended',
-          'entry': {
-            'type': 'custom',
-            'customType': 'rpiv-todo-state',
-            'data': {'tasks': const []},
-          },
-        });
-        await pumpEventQueue();
-        expect(transcript.todos, isEmpty);
       });
 
       test(
@@ -1062,146 +1038,6 @@ void main() {
         },
       );
 
-      test('todo history restores the last snapshot outside the visible page '
-          'and loading older calls cannot roll it back', () async {
-        final pi = FakePi(
-          history: [
-            for (var i = 0; i < 25; i++) ...[
-              {'role': 'user', 'content': 'Turn $i'},
-              if (i < 2) ...[
-                {
-                  'role': 'assistant',
-                  'content': [
-                    {
-                      'type': 'toolCall',
-                      'id': 'todo$i',
-                      'name': 'todo',
-                      'arguments': {'action': 'list'},
-                    },
-                  ],
-                },
-                {
-                  'role': 'toolResult',
-                  'toolCallId': 'todo$i',
-                  'toolName': 'todo',
-                  'content': const [],
-                  'details': {'tasks': tasks.take(i + 1).toList()},
-                },
-              ],
-            ],
-            {
-              'role': 'toolResult',
-              'toolCallId': 'invalid',
-              'toolName': 'todo',
-              'isError': true,
-              'content': const [],
-            },
-          ],
-        );
-        final (:kernel, :transcript, events: _, starts: _) = piKernel(
-          [pi],
-          context: KernelContext(
-            resume: SessionRecord(
-              id: 's0',
-              title: 'Old',
-              updatedAt: DateTime(2026),
-              cwd: '/project',
-              path: '/missing/session.jsonl',
-            ),
-          ),
-        );
-        addTearDown(kernel.dispose);
-        kernel.prepare();
-        await pumpEventQueue();
-        expect(transcript.todos.map((t) => t.content), [
-          'Read code',
-          'Align UI',
-        ]);
-        expect(kernel.hasEarlierHistory, isTrue);
-        await kernel.loadEarlier();
-        expect(transcript.todos.map((t) => t.content), [
-          'Read code',
-          'Align UI',
-        ]);
-      });
-
-      test(
-        'custom todo snapshots follow the saved branch and rewind',
-        () async {
-          final dir = Directory.systemTemp.createTempSync('pi_todos_');
-          addTearDown(() => dir.deleteSync(recursive: true));
-          final file = File('${dir.path}/s1.jsonl')
-            ..writeAsStringSync(
-              [
-                {'type': 'session', 'id': 's1', 'cwd': '/project'},
-                {
-                  'type': 'message',
-                  'id': 'u1',
-                  'parentId': null,
-                  'message': {'role': 'user', 'content': 'First'},
-                },
-                {
-                  'type': 'custom',
-                  'id': 's1',
-                  'parentId': 'u1',
-                  'customType': 'rpiv-todo-state',
-                  'data': {
-                    'tasks': [tasks.first],
-                  },
-                },
-                {
-                  'type': 'message',
-                  'id': 'u2',
-                  'parentId': 's1',
-                  'message': {'role': 'user', 'content': 'Second'},
-                },
-                {
-                  'type': 'custom',
-                  'id': 'abandoned',
-                  'parentId': 'u2',
-                  'customType': 'rpiv-todo-state',
-                  'data': {'tasks': const []},
-                },
-                {
-                  'type': 'custom',
-                  'id': 'current',
-                  'parentId': 'u2',
-                  'customType': 'rpiv-todo-state',
-                  'data': {'tasks': tasks},
-                },
-              ].map(jsonEncode).join('\n'),
-            );
-          final (:kernel, :transcript, events: _, :starts) = piKernel(
-            [FakePi(sessionFile: file.path)],
-            context: KernelContext(
-              resume: SessionRecord(
-                id: 's1',
-                title: 'First',
-                updatedAt: DateTime(2026),
-                cwd: '/project',
-                path: file.path,
-              ),
-            ),
-          );
-          addTearDown(kernel.dispose);
-          for (var i = 0; i < 100 && kernel.loadingHistory; i++) {
-            await Future<void>.delayed(const Duration(milliseconds: 10));
-          }
-          expect(starts, isEmpty);
-          expect(transcript.todos, hasLength(3));
-          expect(shown(transcript), ['user: First', 'user: Second']);
-          expect(
-            await kernel.rewind(itemId: 'pi:history:2', index: 1, turns: 1),
-            isTrue,
-          );
-          expect(transcript.todos.map((t) => t.content), ['Read code']);
-          expect(
-            await kernel.rewind(itemId: 'pi:history:0', index: 0, turns: 1),
-            isTrue,
-          );
-          expect(transcript.todos, isEmpty);
-        },
-      );
     });
 
     test('pi gone mid-turn: the turn ends saying why; restarted, it goes '

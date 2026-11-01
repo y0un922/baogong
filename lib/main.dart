@@ -1,23 +1,26 @@
 import 'dart:async';
+import 'dart:convert' show jsonEncode;
 import 'dart:ui' show AppExitResponse, AppExitType;
 
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:path/path.dart' as p;
 import 'package:bao_editor/textmate/textmate_syntax.dart';
+import 'package:bao_markdown/bao_markdown.dart' show MdClipboard;
 
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
 
 import 'base/quiet_view.dart';
 import 'base/smooth_scroll.dart' show BaoScrollBehavior;
+import 'bots/bots.dart';
 import 'browser/browser_bridge.dart';
 import 'browser/browser_tools.dart' show BrowserHistory;
 import 'chat/composer/composer_files.dart' show ComposerFile, pastedAsPicture;
 import 'chat/chat_width.dart';
 import 'chat/reply_scroll.dart';
+import 'chat/edit_detail.dart';
 import 'chat/user_message_style.dart';
 import 'chat/widgets/chat_minimap.dart';
 import 'chat/widgets/pixel_loader.dart';
@@ -25,8 +28,14 @@ import 'chat/resume_after_reset.dart';
 import 'chat/widgets/turn_footer.dart' show LiveTurnStatsSetting;
 import 'customize/customization_store.dart';
 import 'diagnostics/app_event_watch.dart';
+import 'diagnostics/crash_reports.dart';
+import 'diagnostics/exit_watch.dart';
+import 'diagnostics/frame_watch.dart';
+import 'diagnostics/hang_watch.dart';
 import 'diagnostics/diagnostics_upload.dart';
 import 'extensions/theme_extensions.dart';
+import 'ide/editor_minimap_setting.dart';
+import 'ide/editor_word_wrap.dart';
 import 'ide/git/git_repository.dart';
 import 'ide/git/repository_scan.dart';
 import 'ide/language_mode.dart';
@@ -50,6 +59,7 @@ import 'kernel/claude_code/turn_stats_stub.dart'
     if (dart.library.io) 'kernel/claude_code/turn_stats_io.dart'
     show turnStatsIn;
 import 'kernel/commit_attribution.dart';
+import 'kernel/extension_switches.dart';
 import 'kernel/prompt_suggestions.dart';
 import 'chat/composer/composer_polish.dart' show ComposerPolishSetting;
 import 'kernel/queued_messages.dart';
@@ -67,6 +77,7 @@ import 'network/network_proxy.dart';
 import 'notifications/attention_host.dart';
 import 'notifications/attention_settings.dart';
 import 'platform/memory_budget.dart';
+import 'platform/native_md_clipboard.dart';
 import 'platform/app_platform.dart';
 import 'platform/data_dir.dart';
 import 'platform/error_log.dart';
@@ -78,6 +89,11 @@ import 'remote/remote_claude.dart';
 import 'remote/ssh_host.dart';
 import 'search/claude_conversation_search.dart';
 import 'search/conversation_search.dart';
+import 'channel/account/account_send.dart';
+import 'channel/account/channel_account.dart';
+import 'channel/channel_gate.dart';
+import 'channel/channel_setup.dart';
+import 'channel/channel_setup_platform.dart';
 import 'settings/app_locale.dart';
 import 'settings/app_settings.dart';
 import 'settings/data_dir_startup.dart';
@@ -101,6 +117,7 @@ import 'theme/app_theme.dart';
 import 'theme/code_font.dart';
 import 'theme/pixel_snapped_text_scaler.dart';
 import 'theme/ui_zoom.dart';
+import 'theme/window_blur.dart';
 import 'theme/workbench_theme.dart';
 import 'update/update_controller.dart';
 import 'update/update_platform.dart';
@@ -108,6 +125,9 @@ import 'update/update_service.dart';
 import 'update/update_settings.dart';
 import 'update/update_store.dart';
 import 'update/version.dart';
+import 'usage/usage_ledger.dart';
+import 'usage/usage_prices.dart';
+import 'usage/usage_storage.dart';
 import 'window/app_windows.dart';
 import 'window/code_args.dart';
 import 'window/window_host.dart';
@@ -137,17 +157,27 @@ Future<void> main(List<String> arguments) async {
     }
     // What goes wrong unseen from here on, kept for the user to send.
     errors = ErrorLog(DataDirectory.current.logsDir)..install();
-    // And what the app went through, to read what led to it.
-    EventLog.current = EventLog(DataDirectory.current.logsDir);
+    // And what the app went through, to read what led to it; how the run
+    // before ended, if it did not say.
+    final crashFolders = platformCrashReportFolders();
+    EventLog.current = EventLog(
+      DataDirectory.current.logsDir,
+      crashSince: (since) => crashReportSince(crashFolders, since),
+    );
+    watchExit(DataDirectory.current.logsDir);
   }
   unawaited(reapClaudeProcesses());
   unawaited(reapLspProcesses());
   unawaited(reapPtyProcesses());
   WidgetsFlutterBinding.ensureInitialized();
   MemoryBudget.apply();
-  if (!kIsWeb) AppEventWatch.start();
-  // The Windows app's own logs go beside it.
-  if (errors != null) unawaited(errors.shareWithHost());
+  if (!kIsWeb) {
+    AppEventWatch.start();
+    FrameWatch.start();
+  }
+  // The Windows app's own logs and the macOS app's hang reports go beside
+  // them.
+  if (errors != null) unawaited(shareLogsFolder(errors.directory));
   // The editor's language packs are the language servers' (README.md in
   // lib/ide/lsp/packs).
   MonacoLanguageAssets.defaultPacks = () => LanguagePackRegistry.instance;
@@ -165,121 +195,10 @@ Future<void> main(List<String> arguments) async {
       files.settings,
       (key) => files.settings[key],
     ).timeout(const Duration(seconds: 1), onTimeout: () {});
-    // Read as each agent starts.
-    CommitAttribution.current = () =>
-        CommitAttribution.parse(files.settings[CommitAttribution.settingKey]);
-    // Read as each message is sent.
-    QueuedMessages.current = () =>
-        QueuedMessages.parse(files.settings[QueuedMessages.settingKey]);
-    // Read as each agent starts, and as each message is sent.
-    PromptSuggestions.current = () =>
-        PromptSuggestions.enabled(files.settings[PromptSuggestions.settingKey]);
-    // The composer's Polish button, shown or not as it changes.
-    ComposerPolishSetting.current = () => ComposerPolishSetting.enabled(
-      files.settings[ComposerPolishSetting.settingKey],
-    );
-    ComposerPolishSetting.changes = files.settings;
-    // The turn under way's line of figures, shown or not as it changes.
-    LiveTurnStatsSetting.current = () => LiveTurnStatsSetting.enabled(
-      files.settings[LiveTurnStatsSetting.settingKey],
-    );
-    LiveTurnStatsSetting.changes = files.settings;
-    // An agent stopped at the usage limit: whether it goes on once it
-    // resets, set in the model picker.
-    ResumeAfterResetSetting.current = () => ResumeAfterResetSetting.enabled(
-      files.settings[ResumeAfterResetSetting.settingKey],
-    );
-    ResumeAfterResetSetting.changes = files.settings;
-    ResumeAfterResetSetting.write = (on) => unawaited(
-      files.settings
-          .update(
-            ResumeAfterResetSetting.settingKey,
-            on ? ResumeAfterResetSetting.on : null,
-          )
-          .catchError((Object error) {
-            // A settings file that does not parse is left as it is; its
-            // error is shown.
-            debugPrint(
-              '${ResumeAfterResetSetting.settingKey} not kept: $error',
-            );
-          }),
-    );
-    // Settings → General → Claude Code: the build to run, read as each
-    // agent starts.
-    ClaudePathSetting.current = () =>
-        ClaudePathSetting.parse(files.settings[ClaudePathSetting.settingKey]);
-    // Settings → General → Claude Code: the core sessions run on (BaoCode's
-    // own, or the CLI), read as each agent starts. Unset, the CLI where it
-    // is installed: looked for on the app's PATH, then the shell's.
-    ClaudeCore.cliInstalled = localClaudeInstalled;
-    unawaited(lookForLocalClaude());
-    ClaudeCore.current = () =>
-        ClaudeCore.parse(files.settings[ClaudeCore.settingKey]);
-    // Settings → Models: the upstreams, kept in settings.json.
-    ModelProviders.current = ModelProviders.settings(files.settings);
-    // Claude Code's own models as it last listed them: in the picker
-    // before a session on them starts.
-    ClaudeCodeKernel.modelCache = files.storage;
-    // Whether the welcome to setting a model up has shown by itself.
-    ModelWelcome.storage = files.storage;
-    // What each turn took and spent, for its footer when the session is
-    // opened again: in the data folder, a file per session.
-    ClaudeCodeKernel.turnStats = turnStatsIn(
-      p.join(DataDirectory.current.path, 'turn-stats'),
-    );
-    // The upstreams' sites' icons, for those that show no other: in the
-    // cache, fetched as soon as one is added.
-    SiteIcons.current = SiteIcons(
-      library: IconLibrary(
-        storage: IconStorage.directory(
-          p.join(DataDirectory.current.cacheDir, 'site-icons'),
-        ),
-      ),
-    );
-    prefetchProviderIcons(ModelProviders.current, SiteIcons.current);
-    // The logos of the sites listed, for their upstreams' icons, as kept
-    // last time (Settings → Models gets the list again).
-    unawaited(FeaturedUpstream.readKept());
-    // Settings → Appearance: how wide the conversation grows.
-    ChatWidth.follow(
-      files.settings,
-      () => files.settings[ChatWidth.settingKey],
-    );
-    // Settings → Appearance: how the user's messages show.
-    UserMessageStyle.follow(
-      files.settings,
-      () => files.settings[UserMessageStyle.settingKey],
-    );
-    // Settings → Appearance: where a conversation stays as a reply comes.
-    ReplyScroll.keep(
-      files.settings,
-      () => files.settings[ReplyScroll.settingKey],
-    );
-    // Settings → Appearance: whether the conversation has a minimap, how
-    // opaque its glass is and how much it stretches.
-    ChatMinimap.follow(files.settings, (key) => files.settings[key]);
-    // Settings → Appearance: what an agent and a subagent show running.
-    PixelLoaderRole.follow(files.settings, (key) => files.settings[key]);
-    // Settings → Appearance: whether the sidebar's agents show their times.
-    SidebarTimes.follow(
-      files.settings,
-      () => files.settings[SidebarTimes.settingKey],
-    );
-    // Settings → Browser: whether the agents may use the user's browsers.
-    BrowserBridge.instance.follow(
-      files.settings,
-      () => files.settings[BrowserBridge.settingKey],
-    );
-    // Settings → Browser: whether the history keeps bodies and steps too.
-    BrowserHistory.instance.follow(
-      files.settings,
-      () => files.settings[BrowserHistory.detailedKey],
-    );
-    // Settings → Appearance: the code's font, size and ligatures, and the
-    // window's text size.
-    CodeFont.follow(files.settings, (key) => files.settings[key]);
-    // Settings → Terminal: the cursor, the scrollback and the Option key.
-    TerminalSettings.follow(files.settings, (key) => files.settings[key]);
+    followSettingsFiles(files);
+    // The channel build's first start: set up before anything else shows.
+    await _beginChannelSetup(files);
+    _openChannelGate(files);
   }
   // Emoji as pictures: fetched into the cache the first run, in the
   // background, through the proxy.
@@ -320,14 +239,52 @@ Future<void> main(List<String> arguments) async {
     );
   }
   unawaited(workspace.load());
+  // The conversations' titles and projects, kept with their calls.
+  UsageLedger.titleOf = (session) => switch (workspace.threads
+      .where((thread) => thread.id == session)
+      .firstOrNull) {
+    final thread? when thread.titled => thread.title,
+    _ => null,
+  };
+  UsageLedger.projectOf = (session) => workspace.threads
+      .where((thread) => thread.id == session)
+      .firstOrNull
+      ?.project
+      .name;
   // Claude Code's skills, agents, commands, rules, servers, hooks and
   // plugins: the Customize view beside the chat, and Settings → Customize.
   final customizations = CustomizationStore();
   // The phones paired with this computer (Settings → Mobile): listening
   // for them, if they are allowed to connect.
+  // The user's bots: agents that chat as a person does, with the phones.
+  final bots = kIsWeb
+      ? null
+      : Bots(
+          workspace: workspace,
+          store: PreferenceStore.file(
+            p.join(DataDirectory.current.botsDir, 'bots.json'),
+          ),
+          chinese:
+              (locale.locale ?? AppLocale.systemLocale()).languageCode == 'zh',
+        );
+  unawaited(bots?.start());
   final link = kIsWeb
       ? null
-      : LinkHost(workspace: workspace, customizations: customizations);
+      : LinkHost(
+          workspace: workspace,
+          customizations: customizations,
+          bots: bots,
+        );
+  if (bots != null && link != null) {
+    // The bots are the phones': with none paired, told of nothing.
+    var paired = false;
+    bots.hasPhone = () => link.phones.isNotEmpty;
+    link.addListener(() {
+      if (link.phones.isNotEmpty == paired) return;
+      paired = !paired;
+      bots.phonesChanged();
+    });
+  }
   unawaited(link?.load());
   // The first frame is in the kept theme, restored from storage as VS Code
   // does before the workbench shows; its file is read after. The setting
@@ -414,6 +371,10 @@ Future<void> main(List<String> arguments) async {
         .layoutAtLaunch(workspace.layout);
   }
   WindowControls.trackActiveView();
+  // What an editor copies, its tags and all, on the clipboard itself.
+  if (WindowControls.isDesktop) {
+    MdClipboard.instance = const NativeMdClipboard();
+  }
   // An older `code` script opened windows for `code --version`.
   unawaited(ShellCommand.refresh());
   final ColorThemeStorage colorTheme = files == null
@@ -453,7 +414,7 @@ Future<void> main(List<String> arguments) async {
       link: link,
       customizations: customizations,
     );
-    _startTelemetry(files);
+    _startTelemetry(files, link);
   }
   // The theme extensions (lib/extensions/): color and file icon themes
   // from Open VSX or a .vsix, `workbench.iconTheme` followed as
@@ -507,6 +468,177 @@ Future<void> main(List<String> arguments) async {
   }
 }
 
+/// Has the app follow the user's settings files: what each setting
+/// changes, read as it is needed or followed as it changes. Also the
+/// showcase app's (tool/showcase/), on a data folder of its own.
+void followSettingsFiles(SettingsFiles files) {
+  // Read as each agent starts.
+  CommitAttribution.current = () =>
+      CommitAttribution.parse(files.settings[CommitAttribution.settingKey]);
+  // Read as each message is sent.
+  QueuedMessages.current = () =>
+      QueuedMessages.parse(files.settings[QueuedMessages.settingKey]);
+  // Read as each agent starts, and as each message is sent.
+  PromptSuggestions.current = () =>
+      PromptSuggestions.enabled(files.settings[PromptSuggestions.settingKey]);
+  // The composer's Polish button, shown or not as it changes.
+  ComposerPolishSetting.current = () => ComposerPolishSetting.enabled(
+    files.settings[ComposerPolishSetting.settingKey],
+  );
+  ComposerPolishSetting.changes = files.settings;
+  // The turn under way's line of figures, shown or not as it changes.
+  LiveTurnStatsSetting.current = () => LiveTurnStatsSetting.enabled(
+    files.settings[LiveTurnStatsSetting.settingKey],
+  );
+  LiveTurnStatsSetting.changes = files.settings;
+  // An agent stopped at the usage limit: whether it goes on once it
+  // resets, set in the model picker.
+  ResumeAfterResetSetting.current = () => ResumeAfterResetSetting.enabled(
+    files.settings[ResumeAfterResetSetting.settingKey],
+  );
+  ResumeAfterResetSetting.changes = files.settings;
+  ResumeAfterResetSetting.write = (on) => unawaited(
+    files.settings
+        .update(
+          ResumeAfterResetSetting.settingKey,
+          on ? ResumeAfterResetSetting.on : null,
+        )
+        .catchError((Object error) {
+          // A settings file that does not parse is left as it is; its
+          // error is shown.
+          debugPrint('${ResumeAfterResetSetting.settingKey} not kept: $error');
+        }),
+  );
+  // Settings → Customize's switches: the skills, MCP servers and tools
+  // turned off, given each agent at start and as they change.
+  ExtensionSwitches.current = () =>
+      ExtensionSwitches.parse(files.settings.values);
+  ExtensionSwitches.changes = files.settings;
+  ExtensionSwitches.save = (switches) async {
+    final before = ExtensionSwitches.current().toSettings();
+    for (final MapEntry(:key, :value) in switches.toSettings().entries) {
+      if (jsonEncode(before[key]) != jsonEncode(value)) {
+        await files.settings.update(key, value);
+      }
+    }
+  };
+  // Settings → General → Claude Code: the build to run, read as each
+  // agent starts.
+  ClaudePathSetting.current = () =>
+      ClaudePathSetting.parse(files.settings[ClaudePathSetting.settingKey]);
+  // Settings → General → Claude Code: the core sessions run on (BaoCode's
+  // own, or the CLI), read as each agent starts. Unset, the CLI where it
+  // is installed (looked for on the app's PATH, then the shell's), else
+  // the built-in core, which suggests the CLI.
+  ClaudeCore.cliInstalled = localClaudeInstalled;
+  unawaited(lookForLocalClaude());
+  ClaudeCore.current = () =>
+      ClaudeCore.parse(files.settings[ClaudeCore.settingKey]);
+  ClaudeCore.changes = files.settings;
+  ClaudeCore.pick = (core) =>
+      files.settings.update(ClaudeCore.settingKey, core.name);
+  // Settings → Models: the upstreams, kept in settings.json.
+  ModelProviders.current = ModelProviders.settings(files.settings);
+  // Claude Code's own models as it last listed them: in the picker
+  // before a session on them starts.
+  ClaudeCodeKernel.modelCache = files.storage;
+  // Whether the welcome to setting a model up has shown by itself.
+  ModelWelcome.storage = files.storage;
+  // What each turn took and spent, for its footer when the session is
+  // opened again: in the data folder, a file per session.
+  ClaudeCodeKernel.turnStats = turnStatsIn(
+    p.join(DataDirectory.current.path, 'turn-stats'),
+  );
+  // The calls to custom upstreams (Settings → Usage, the side panel's
+  // Usage page): in the data folder, a file a day, kept as long as the
+  // user says.
+  UsageLedger.current = UsageLedger(
+    usageStorageIn(p.join(DataDirectory.current.path, 'usage')),
+  )..follow(files.settings);
+  unawaited(UsageLedger.current.prune());
+  // The models' prices, the calls' costs worked out from them.
+  UsagePrices.current = UsagePrices()..follow(files.settings);
+  // The upstreams' sites' icons, for those that show no other: in the
+  // cache, fetched as soon as one is added.
+  SiteIcons.current = SiteIcons(
+    library: IconLibrary(
+      storage: IconStorage.directory(
+        p.join(DataDirectory.current.cacheDir, 'site-icons'),
+      ),
+    ),
+  );
+  prefetchProviderIcons(ModelProviders.current, SiteIcons.current);
+  // The logos of the sites listed, for their upstreams' icons, as kept
+  // last time (Settings → Models gets the list again).
+  unawaited(FeaturedUpstream.readKept());
+  // Settings → Appearance: how wide the conversation grows.
+  ChatWidth.follow(files.settings, () => files.settings[ChatWidth.settingKey]);
+  // Settings → Appearance: how the user's messages show.
+  UserMessageStyle.follow(
+    files.settings,
+    () => files.settings[UserMessageStyle.settingKey],
+  );
+  // Settings → Appearance: how a file edit shows.
+  EditDetail.follow(
+    files.settings,
+    () => files.settings[EditDetail.settingKey],
+  );
+  // Settings → Appearance: where a conversation stays as a reply comes.
+  ReplyScroll.keep(
+    files.settings,
+    () => files.settings[ReplyScroll.settingKey],
+  );
+  // Settings → Appearance: whether the conversation has a minimap, how
+  // opaque its glass is and how much it stretches.
+  ChatMinimap.follow(files.settings, (key) => files.settings[key]);
+  // Settings → Appearance: what an agent and a subagent show running.
+  PixelLoaderRole.follow(files.settings, (key) => files.settings[key]);
+  // Settings → Appearance: whether the windows are blurred underneath.
+  WindowBlur.follow(
+    files.settings,
+    () => files.settings[WindowBlur.settingKey],
+  );
+  // Settings → Appearance: whether the sidebar's agents show their times.
+  SidebarTimes.follow(
+    files.settings,
+    () => files.settings[SidebarTimes.settingKey],
+  );
+  // Settings → Browser: whether the agents may use the user's browsers.
+  BrowserBridge.instance.follow(
+    files.settings,
+    () => files.settings[BrowserBridge.settingKey],
+  );
+  // Settings → Browser: whether the history keeps bodies and steps too.
+  BrowserHistory.instance.follow(
+    files.settings,
+    () => files.settings[BrowserHistory.detailedKey],
+  );
+  // Settings → Appearance: the code's font, size and ligatures, and the
+  // window's text size.
+  CodeFont.follow(files.settings, (key) => files.settings[key]);
+  // Settings → Terminal: the cursor, the scrollback and the Option key.
+  TerminalSettings.follow(files.settings, (key) => files.settings[key]);
+  // Interface Size as it changes, in the event log, with what
+  // settings.json held then: a window seen going back to 100% unasked
+  // tells there why.
+  var scale = CodeFont.uiScale.value;
+  CodeFont.uiScale.addListener(() {
+    final kept = files.settings[CodeFont.uiScaleSettingKey];
+    appEvent(
+      'zoom',
+      '$scale% -> ${CodeFont.uiScale.value}% '
+          '(settings.json: ${kept ?? 'unset'}, '
+          '${files.settings.values.length} settings'
+          '${files.settings.error == null ? '' : ', does not parse'})',
+    );
+    scale = CodeFont.uiScale.value;
+  });
+  // Whether the editors wrap long lines.
+  EditorWordWrap.follow(files.settings);
+  // Whether the code editors show their minimap.
+  EditorMinimap.follow(files.settings);
+}
+
 /// The app's updates (lib/update/): looked for as settings.json's
 /// `update.mode` says, from baocode.dev, installed as the app quits. None
 /// where the build does not update itself.
@@ -537,11 +669,76 @@ UpdateController? _startUpdates(SettingsFiles files) {
   );
 }
 
+/// The channel build's first start (lib/channel/): to set up while it is
+/// pending, for the windows to show. The install's id made now, to give
+/// the page, and kept before the telemetry would make its own.
+Future<void> _beginChannelSetup(SettingsFiles files) async {
+  // Not the channel build: nothing looked up upstream, though the data
+  // folder (shared with upstream's app) says a setup is pending.
+  if (kIsWeb || !ChannelSetup.channelBuild) return;
+  final store = GlobalChannelSetupStore(files.storage);
+  if (!ChannelSetup.begin(store)) return;
+  var id = GlobalTelemetryStore(files.storage).installId;
+  if (id == null) {
+    id = TelemetryService.randomInstallId();
+    await files.storage
+        .set(GlobalTelemetryStore.installIdKey, id)
+        .catchError(
+          (Object error) => debugPrint('install id not kept: $error'),
+        );
+  }
+  ChannelSetup.current = _channelSetup(store, id);
+}
+
+ChannelSetup _channelSetup(
+  ChannelSetupStore store,
+  String installId, {
+  String? again,
+}) => ChannelSetup(
+  store: store,
+  installId: installId,
+  again: again,
+  lookUp: lookUpChannel,
+  open: (url) => openExternal('$url'),
+);
+
+/// The channel build's way in (lib/channel/): set up, then signed in to
+/// its channel's account site, whose key is its only upstream.
+void _openChannelGate(SettingsFiles files) {
+  if (kIsWeb || !ChannelSetup.channelBuild) return;
+  final accounts = GlobalChannelAccountStore(files.storage);
+  final setupStore =
+      ChannelSetup.current?.store ?? GlobalChannelSetupStore(files.storage);
+  ChannelGate.current = ChannelGate(
+    setup: ChannelSetup.current,
+    setupStore: setupStore,
+    accountStore: accounts,
+    fetch: channelEntry,
+    // Its link opened, the setup asking takes it (workbench.dart).
+    makeSetupAgain: () => ChannelSetup.current = _channelSetup(
+      setupStore,
+      GlobalTelemetryStore(files.storage).installId ??
+          TelemetryService.randomInstallId(),
+      again: TelemetryService.randomInstallId(),
+    ),
+    makeAccount: (channel) => ChannelAccount(
+      site: channel.info.account!,
+      channelName: channel.info.name,
+      store: accounts,
+      send: sendToAccountSite,
+      listModels: listUpstreamModels,
+    ),
+  );
+}
+
 /// The app's usage data (lib/telemetry/): once a UTC day it is in front.
 /// None in a debug build.
-void _startTelemetry(SettingsFiles files) {
+void _startTelemetry(SettingsFiles files, LinkHost? link) {
   final platform = platformTelemetry();
   if (platform == null) return;
+  // The setup's, read back as it was set.
+  final channel =
+      ChannelSetup.current?.store ?? GlobalChannelSetupStore(files.storage);
   bool inFront() => switch (WidgetsBinding.instance.lifecycleState) {
     null || AppLifecycleState.resumed => true,
     _ => false,
@@ -554,6 +751,10 @@ void _startTelemetry(SettingsFiles files) {
     url: platform.url,
     store: GlobalTelemetryStore(files.storage),
     inFront: inFront,
+    edition: () => ChannelSetup.editionOf(channel),
+    attribution: () => channel.attribution?.toJson(),
+    linkPaths: () => link?.pathCounts.pending,
+    linkPathsSent: link?.pathCountsSent,
   )..start();
   // Back in front: a new day, if it is one. For the app's whole run.
   AppLifecycleListener(onResume: telemetry.markActive);
@@ -622,11 +823,13 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
 
   late final AppLocale _locale = widget.appLocale ?? AppLocale();
 
-  /// The code's font, size and ligatures: what restyles all code.
+  /// The code's font, size and ligatures: what restyles all code; and the
+  /// windows' blur, which every surface over it is tinted for.
   static final Listenable _codeFont = Listenable.merge([
     CodeFont.families,
     CodeFont.size,
     CodeFont.ligatures,
+    WindowBlur.enabled,
   ]);
 
   late final AppSettings _settings =
@@ -647,16 +850,20 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
   /// terminals' shells are hung up, as closing their window would.
   late final AppLifecycleListener _lifecycle = AppLifecycleListener(
     onExitRequested: () async {
+      appEvent('app', 'quit requested');
       // The unsaved files of all windows asked about at once, then the
       // agents at work; in the window in front.
       final updates = _settings.updates?.service;
       if (!await _windows.confirmQuit()) {
+        appEvent('app', 'quit cancelled');
         updates?.disarm();
         return AppExitResponse.cancel;
       }
       // Restart to Update: the installer waits for the app to go. One that
       // will not start keeps the app (and says why).
+      final updating = updates?.armed ?? false;
       if (updates != null && !await updates.launchArmed()) {
+        appEvent('app', 'quit cancelled: the update would not start');
         return AppExitResponse.cancel;
       }
       await Future.wait([
@@ -669,6 +876,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
       ]);
       // The remote hosts' servers end, and all they run with them.
       await SshHosts.instance.closeAll();
+      appExit(updating ? 'quit to update' : 'quit');
       return AppExitResponse.exit;
     },
   );
@@ -787,7 +995,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
             : scaler;
         final system = media.textScaler;
         return SystemTextScale(
-          // Code at its own size: the zoom taken back off.
+          // A terminal at a size of its own: the zoom taken back off.
           scaler: snapped(
             zoom == 1 ? system : TextScaler.linear(system.scale(1) / zoom),
           ),
@@ -806,7 +1014,6 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
       GlobalMaterialLocalizations.delegate,
       GlobalCupertinoLocalizations.delegate,
       GlobalWidgetsLocalizations.delegate,
-      FlutterQuillLocalizations.delegate,
     ],
     home: window.isStash
         ? Material(

@@ -83,8 +83,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // tool would fail with "The log reader stopped unexpectedly, or never
   // started". Only a release build, the one installed, claims the name.
 #else
+  // Nor does the perf suite's app (tool/perf/run.dart starts it with its
+  // scenarios in the environment): it runs beside the user's own copy, on
+  // a data folder of its own.
+  const bool perf_run =
+      ::GetEnvironmentVariableW(L"BAOCODE_PERF_SCENARIOS", nullptr, 0) > 0;
   const HANDLE single_instance =
-      ::CreateMutexW(nullptr, FALSE, kSingleInstanceMutex);
+      perf_run ? nullptr
+               : ::CreateMutexW(nullptr, FALSE, kSingleInstanceMutex);
   if (single_instance != nullptr && ::GetLastError() == ERROR_ALREADY_EXISTS) {
     // Not taken (or no window to take them): the copy running is written
     // down, as it may hang (see hang_watchdog.h).
@@ -108,6 +114,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   ::OleInitialize(nullptr);
 
   flutter::DartProject project(L"data");
+  // Drawn by Skia, as on macOS (FLTEnableImpeller), not Impeller, Flutter's
+  // default here since 3.47: Skia draws the chat's frames several times
+  // faster, in about half the memory (tool/perf, 2026-10). With 1.6.0's
+  // Skia some users saw a white strip along the window's sides and bottom.
+  // BAOCODE_IMPELLER=1 brings Impeller back, to compare.
+  project.set_impeller_switch(
+      ::GetEnvironmentVariableW(L"BAOCODE_IMPELLER", nullptr, 0) > 0
+          ? flutter::ImpellerSwitch::Enabled
+          : flutter::ImpellerSwitch::Disabled);
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
@@ -128,6 +143,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // A hang (closing a window, quitting) written down where it is: see
   // hang_watchdog.h.
   hang_watchdog::Start(window.GetHandle());
+  // And a crash: see hang_watchdog.h.
+  hang_watchdog::InstallCrashHandler();
 
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {

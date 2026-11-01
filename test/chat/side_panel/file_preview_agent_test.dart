@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:bao_editor/monaco/flutter/editor_surface.dart';
 import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
 import 'package:baocode/chat/chat_models.dart' show FileChange;
@@ -40,11 +38,6 @@ class _Files with ReadWriteOnlyFiles implements IdeFileService {
 }
 
 class _NoStore implements ReviewStore {
-  _NoStore(this.root);
-
-  @override
-  final String root;
-
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
@@ -54,7 +47,7 @@ class _NoStore implements ReviewStore {
 /// panel asks of it.
 class _Review extends ChangeReview {
   _Review(String root, this.file, this.base, {this.others = const []})
-    : super(_NoStore(root));
+    : super(_NoStore(), root: root);
 
   final String file;
   String base;
@@ -65,9 +58,6 @@ class _Review extends ChangeReview {
   final kept = <String>[];
   final keptFiles = <String>[];
   final settled = <String>[];
-
-  @override
-  Future<void> refresh() async {}
 
   @override
   List<FileChange> get changes => [

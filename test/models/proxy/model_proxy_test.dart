@@ -19,7 +19,9 @@ class FakeUpstream {
   }
 
   final HttpServer _server;
-  final List<({String path, Map<String, String> headers, Object? body})>
+  final List<
+    ({String path, String query, Map<String, String> headers, Object? body})
+  >
   requests = [];
 
   /// The status, and the lines of the answer.
@@ -32,7 +34,12 @@ class FakeUpstream {
     final headers = <String, String>{};
     request.headers.forEach((name, values) => headers[name] = values.join(','));
     final body = text.isEmpty ? null : jsonDecode(text);
-    requests.add((path: request.uri.path, headers: headers, body: body));
+    requests.add((
+      path: request.uri.path,
+      query: request.uri.query,
+      headers: headers,
+      body: body,
+    ));
     final (status, lines) = reply(body);
     request.response.statusCode = status;
     for (final line in lines) {
@@ -648,6 +655,8 @@ void main() {
         'x-session-id': '{{CLAUDE_SESSION_ID}}',
         'x-model': '{{ANTHROPIC_MODEL}}',
         'x-tenant': 'acme',
+        // The user agent may be the upstream's own client's.
+        'User-Agent': 'opencode/1.17.12',
         // A key must not go from here, and no auth header is overwritten.
         'authorization': 'Bearer nope',
         'x-api-key': 'nope',
@@ -672,8 +681,38 @@ void main() {
     expect(sent['x-session-id'], session);
     expect(sent['x-model'], 'gpt-5');
     expect(sent['x-tenant'], 'acme');
+    expect(sent['user-agent'], 'opencode/1.17.12');
     expect(sent['authorization'], 'Bearer sk-upstream');
     expect(sent.containsKey('x-api-key'), isFalse);
+  });
+
+  test('a conversation goes to the upstream\'s own endpoint, a model\'s '
+      'own address over it', () async {
+    final origin = Uri.parse(upstream.base).origin;
+    provider = provider.copyWith(
+      endpointUrl: () => '$origin/gateway/chat',
+      models: [
+        const ProviderModel(id: 'gpt-5'),
+        ProviderModel(id: 'plain', endpointUrl: '$origin/plain/chat'),
+      ],
+    );
+    for (final (model, path) in [
+      ('gpt-5', '/gateway/chat'),
+      ('plain', '/plain/chat'),
+    ]) {
+      await post(
+        await messages(),
+        {
+          'model': model,
+          'stream': true,
+          'messages': [
+            {'role': 'user', 'content': 'hi'},
+          ],
+        },
+        headers: {'authorization': 'Bearer tok'},
+      );
+      expect(upstream.requests.last.path, path, reason: model);
+    }
   });
 
   test('an unknown provider or endpoint is not found', () async {
@@ -857,6 +896,45 @@ void main() {
       expect((jsonDecode(counted.text) as Map)['input_tokens'], greaterThan(0));
     });
 
+    test('Anthropic\'s API at an address of its own: the endpoint\'s query '
+        'kept, tokens counted under it', () async {
+      final origin = Uri.parse(anthropic.base).origin;
+      claude = claude.copyWith(endpointUrl: () => '$origin/relay/msg?k=1');
+      await post(
+        (await on('an')).replace(query: 'beta=true'),
+        {'model': 'claude-opus-4-5', 'messages': []},
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(anthropic.requests.last.path, '/relay/msg');
+      expect(anthropic.requests.last.query, 'k=1&beta=true');
+      expect(anthropic.requests.last.headers['x-api-key'], 'sk-an');
+      await post(
+        await on('an', '/count_tokens'),
+        {'model': 'claude-opus-4-5', 'messages': []},
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(anthropic.requests.last.path, '/relay/msg/count_tokens');
+    });
+
+    test('a model\'s endpoint type and address apart: Anthropic\'s API '
+        'spoken to at its own address', () async {
+      final origin = Uri.parse(anthropic.base).origin;
+      provider = provider.withModel(
+        ProviderModel(
+          id: 'claude-x',
+          protocol: ProviderProtocol.anthropic,
+          endpointUrl: '$origin/x/messages',
+        ),
+      );
+      await post(
+        await messages(),
+        {'model': 'claude-x', 'messages': []},
+        headers: {'authorization': 'Bearer tok'},
+      );
+      expect(anthropic.requests.single.path, '/x/messages');
+      expect(upstream.requests, isEmpty);
+    });
+
     test('Claude Code\'s own, or an upstream not here, is not found', () async {
       for (final model in ['@claude-code/sonnet', '@gone/x']) {
         final answer = await post(
@@ -867,6 +945,150 @@ void main() {
         expect(answer.status, 404, reason: model);
       }
       expect(anthropic.requests, isEmpty);
+      expect(upstream.requests, isEmpty);
+    });
+  });
+
+  group('a model at an endpoint of its own', () {
+    late FakeUpstream relay;
+    late ModelProxy routing;
+    late ModelProvider mixed;
+
+    setUp(() async {
+      relay = await FakeUpstream.start();
+      // A relay serving each API at one base URL: its GPT at Chat
+      // Completions, as the upstream is set, its Claude at Messages, one
+      // more at Responses. Its auth set for its Claude.
+      mixed = ModelProvider(
+        id: 'rl',
+        name: 'Relay',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: relay.base,
+        auth: ProviderAuth.apiKey,
+        models: const [
+          ProviderModel(id: 'gpt-5'),
+          ProviderModel(
+            id: 'claude-sonnet-4-5',
+            protocol: ProviderProtocol.anthropic,
+          ),
+          ProviderModel(
+            id: 'gpt-5-codex',
+            protocol: ProviderProtocol.openaiResponses,
+          ),
+        ],
+      );
+      routing = ModelProxy(
+        provider: (id) => {'rl': mixed, 'gw': provider}[id],
+        key: (id) async => 'sk-$id',
+        onError: (_, error) => errors.add(error),
+        findProxy: (_) => 'DIRECT',
+        token: 'tok',
+      );
+    });
+
+    tearDown(() async {
+      await routing.close();
+      await relay.close();
+    });
+
+    Future<Uri> on(String id, [String path = '']) async =>
+        Uri.parse('${(await routing.endpoint(id)).baseUrl}/v1/messages$path');
+
+    final hi = [
+      {'role': 'user', 'content': 'hi'},
+    ];
+
+    test('its Claude goes to the Messages API as it came, the key as '
+        'x-api-key', () async {
+      relay.reply = (_) => (200, const ['{"id":"m1"}']);
+      final body = {
+        'model': 'claude-sonnet-4-5',
+        'max_tokens': 100,
+        'output_config': {'effort': 'high'},
+        'messages': hi,
+      };
+      final answer = await post(
+        await on('rl'),
+        body,
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/messages');
+      expect(sent.body, body);
+      expect(sent.headers['x-api-key'], 'sk-rl');
+      expect(sent.headers.containsKey('authorization'), isFalse);
+      expect(sent.headers['anthropic-version'], '2023-06-01');
+
+      // Its count too, at the Messages API.
+      relay.reply = (_) => (200, const ['{"input_tokens":7}']);
+      final counted = await post(
+        await on('rl', '/count_tokens'),
+        {'model': 'claude-sonnet-4-5', 'messages': hi},
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(jsonDecode(counted.text), {'input_tokens': 7});
+      expect(relay.requests.last.path, '/v1/messages/count_tokens');
+    });
+
+    test('its GPT goes to Chat Completions, translated, the effort after '
+        'its name, the key a bearer token', () async {
+      relay.reply = (_) => (
+        200,
+        [
+          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi."},"finish_reason":"stop"}]}',
+          '',
+          'data: [DONE]',
+        ],
+      );
+      final answer = await post(
+        await on('rl'),
+        {
+          'model': 'gpt-5(high)',
+          'max_tokens': 100,
+          'stream': true,
+          'messages': hi,
+        },
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/chat/completions');
+      expect((sent.body! as Map)['model'], 'gpt-5');
+      expect((sent.body! as Map)['reasoning_effort'], 'high');
+      expect(sent.headers['authorization'], 'Bearer sk-rl');
+      expect(sent.headers.containsKey('x-api-key'), isFalse);
+      expect(sent.headers.containsKey('anthropic-version'), isFalse);
+    });
+
+    test('one at Responses goes there', () async {
+      await post(
+        await on('rl'),
+        {
+          'model': 'gpt-5-codex(low)',
+          'max_tokens': 100,
+          'stream': true,
+          'messages': hi,
+        },
+        headers: {'x-api-key': 'tok'},
+      );
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/responses');
+      expect((sent.body! as Map)['model'], 'gpt-5-codex');
+      expect((sent.body! as Map)['reasoning'], containsPair('effort', 'low'));
+    });
+
+    test('picked from another upstream, at its own endpoint too', () async {
+      relay.reply = (_) => (200, const ['{"id":"m2"}']);
+      final answer = await post(
+        await on('gw'),
+        {'model': '@rl/claude-sonnet-4-5', 'max_tokens': 100, 'messages': hi},
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/messages');
+      expect((sent.body! as Map)['model'], 'claude-sonnet-4-5');
       expect(upstream.requests, isEmpty);
     });
   });

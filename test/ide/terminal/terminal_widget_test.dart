@@ -167,6 +167,13 @@ void main() {
     // Stopped, the last of them.
     await tester.pump(const Duration(milliseconds: 100));
     expect(fits.last, (16, 10));
+
+    // A while after, a single change is the first of another run: told
+    // at once.
+    await tester.pump(const Duration(seconds: 1));
+    await show(215);
+    await tester.pump();
+    expect(fits.last, (20, 10));
   });
 
   testWidgets('paints at most once per frame', (tester) async {

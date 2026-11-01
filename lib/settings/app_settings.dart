@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
+import '../channel/channel_gate.dart';
+import '../channel/channel_setup.dart' show ChannelSetup;
 import '../diagnostics/diagnostics_upload.dart';
 import '../forge/forge_accounts.dart';
 import '../customize/customization_store.dart';
@@ -21,11 +23,14 @@ import '../tips/builtin_tips.dart';
 import '../tips/feature_tip.dart';
 import '../tips/feature_tips_controller.dart';
 import '../update/update_controller.dart';
+import '../usage/ui/usage_dashboard.dart';
 import '../workspace/workspace.dart';
 import 'app_locale.dart';
+import 'pages/about_page.dart';
 import 'pages/accounts_page.dart';
 import 'pages/appearance_page.dart';
 import 'pages/browser_page.dart';
+import 'pages/channel_account_page.dart';
 import 'pages/customize_page.dart';
 import 'pages/data_dir_page.dart';
 import 'pages/general_page.dart';
@@ -158,11 +163,15 @@ class AppSettings {
         );
       case SettingsSection.terminal:
         return TerminalSettingsPage(settings: files?.settings);
+      case SettingsSection.models when ChannelSetup.channelBuild:
+        return ChannelAccountPage(gate: ChannelGate.current);
       case SettingsSection.models:
         return ModelsSettingsPage(
           providers: ModelProviders.current,
           workspace: workspace,
         );
+      case SettingsSection.usage:
+        return UsageSettingsPage(workspace: workspace);
       case SettingsSection.network:
         return NetworkSettingsPage(settings: files?.settings);
       case SettingsSection.ssh:
@@ -218,6 +227,8 @@ class AppSettings {
           settings: files?.settings,
           diagnostics: diagnostics,
         );
+      case SettingsSection.about:
+        return const AboutSettingsPage();
       case SettingsSection.dataDirectory:
         return const DataDirectoryPage();
     }

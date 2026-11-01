@@ -41,9 +41,11 @@ class MemoryTelemetryStore implements TelemetryStore {
 
 /// The app's usage data, as little as tells how many use it, how many come
 /// back, and on which versions: once a UTC day the app is in front, the
-/// day is reported with a random install id, the app's version and the
-/// system and processor it runs on. Nothing about the user, their machine,
-/// their projects or what they do in the app.
+/// day is reported with a random install id, the app's version, the
+/// system and processor it runs on, and its edition: the channel build's
+/// or not, and where its user came to baocode.dev from, as its setup was
+/// told (lib/channel/). Nothing about the user, their machine, their
+/// projects or what they do in the app.
 ///
 /// A day not reported (offline) is kept and sent later, the latest
 /// [maxPendingDays] of them. Not a setting: what is sent tells nothing of
@@ -59,6 +61,10 @@ class TelemetryService {
     DateTime Function()? now,
     bool Function()? inFront,
     String Function()? newId,
+    this.edition,
+    this.attribution,
+    this.linkPaths,
+    this.linkPathsSent,
     this.firstDelay = const Duration(seconds: 10),
     this.interval = const Duration(hours: 1),
   }) : url = url ?? Uri.parse(defaultUrl),
@@ -85,6 +91,20 @@ class TelemetryService {
   final TelemetrySender sender;
   final Uri url;
   final TelemetryStore store;
+
+  /// `channel` or `standard` (ChannelSetup.editionOf); not sent without.
+  final String Function()? edition;
+
+  /// `{source, value}`, once the channel build's setup was told; sent
+  /// again each time, the server keeping the first it hears of (the page
+  /// may have told it already).
+  final Map<String, Object?>? Function()? attribution;
+
+  /// How many phone connections took each path (`lan`, `direct`,
+  /// `relay`) since last told, if any: sent with the report, and given to
+  /// [linkPathsSent] once it got through. Counts only.
+  final Map<String, int>? Function()? linkPaths;
+  final void Function(Map<String, int> sent)? linkPathsSent;
 
   /// After [start], the first look; then one every [interval], for a day
   /// that begins while the app stays open.
@@ -147,6 +167,7 @@ class TelemetryService {
     final days = store.pendingDays;
     if (_disposed || days.isEmpty) return;
     final id = store.installId ??= _newId();
+    final link = linkPaths?.call();
     final int status;
     try {
       status = await sender.send(url, {
@@ -156,6 +177,9 @@ class TelemetryService {
         'version': '$current',
         'os': os,
         'arch': arch,
+        'edition': ?edition?.call(),
+        'attribution': ?attribution?.call(),
+        'link': ?link,
       });
     } on Object catch (error) {
       debugPrint('telemetry: not sent: $error');
@@ -168,6 +192,7 @@ class TelemetryService {
       return;
     }
     if (refused) debugPrint('telemetry: refused: HTTP $status');
+    if (link != null) linkPathsSent?.call(link);
     // Days marked while it was sent wait for the next.
     store.pendingDays = [
       for (final day in store.pendingDays)

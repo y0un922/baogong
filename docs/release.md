@@ -108,6 +108,8 @@ git push origin v1.2.0                          # 从这里开始 CI 接手
 
 然后在 GitHub 的 Actions → Release 里看进度（如果给 `release` 环境设了审批人，要点一下 Approve）。macOS 公证要等几分钟，整个流程大约 20～30 分钟。
 
+macOS 最常见的失败是钉票据（`stapler staple`）：Apple 的 CloudKit 会连续几分钟断开连接（-1005，stapler 报 Error 68），公证本身是成功的。`build_macos.dart` 遇到这种情况会退避重试，总共约 12 分钟。还不行的话，`release-retry.yml` 会把失败的任务自动重跑一次（只在第一次失败、且失败任务里有 macOS 构建时）。换一台机器通常就能过。再失败就要手动 Re-run。
+
 完成后确认：
 
 - [ ] `curl -s https://dl.baocode.dev/releases/latest.json` 是新版本
@@ -172,7 +174,7 @@ dart run tool/build_macos.dart --remote-release              # macOS 同理
 | `remote` › `build` | macOS 15 | 下载和 Flutter 同版本的 x64 Dart SDK → 编译远程服务端（`--all`：Linux x64/arm64 交叉编译；macOS arm64 用本机的 dart，macOS x64 用 x64 的 dart 经 Rosetta，`dart compile exe` 只能在 Mac 上、按 dart 自己的架构编 macOS 版）→ `tool/test_remote_server_macos.sh`：在这台 Mac 上把两份 macOS 版各跑一遍 → 上传 `remote`（`VERSION`、`servers.json`、`.gz`）和 `remote-linux`（Linux 的两个二进制）两个产物 |
 | `remote` › `linux` | Ubuntu | `tool/test_remote_server.sh`：在 Docker 里的 Ubuntu 20.04 / 24.04、Debian 12、Rocky Linux 8 上，两种架构各跑一遍（arm64 用 QEMU 模拟），要能启动、回答 `initialize`、列出目录 |
 | `macos` | macOS 15 | 有证书就导入临时钥匙串 → `tool/build_macos.dart --remote-built`：构建 universal 的 .app，**检查是 universal**（每个可执行文件都有 arm64 和 x86_64）→ 放进 `remote` 任务的 `servers.json` → 用 `ditto --arch` 拆成 Apple silicon（arm64）和 Intel（x64）两个应用，各自检查只剩一种架构，下面每个各做一遍：→ 签名（有证书用 Developer ID，带 hardened runtime；没有就 ad hoc，**不带** hardened runtime，否则系统拒绝加载应用自己的框架、一启动就崩；总要重签，因为放进去的文件要包进签名）→ 做 dmg → 有证书时签 dmg、公证、钉票据 → 打更新用的 zip → **把两个 zip 解开各真正启动一次**（Intel 版经 Rosetta），15 秒内退出就不发 |
-| `windows` | Windows | 装 Inno Setup → `tool/build_windows.dart --remote-built`：构建、放进 `servers.json`、打安装包 |
+| `windows` | Windows（x64 在 `windows-latest`，arm64 在 `windows-11-arm`） | 装 Inno Setup → `tool/build_windows.dart --remote-built --arch <x64\|arm64>`：构建、放进 `servers.json`、打安装包。Flutter 只能给本机架构构建，所以 arm64 在 Arm 机器上编；Flutter 的 Windows 压缩包里是 x64 的 Dart，arm64 改为按标签 clone Flutter。arm64 没有打过补丁的引擎（`tool/engine/`），用 Flutter 自带的；OpenSSH 用 `OpenSSH-ARM64.zip`。安装包 `BaoCode-<版本>-setup-arm64.exe`，和 x64 同一个 AppId，互相覆盖安装 |
 | `publish` | Ubuntu | 汇总产物 → 用更新私钥签 `latest.json`（`tool/release_manifest.dart`，带上 dmg 给网站用）→ 上传远程服务端 → 上传安装包 → 按清单里的链接确认 CDN 给出的文件大小对 → **最后**上传 `latest.json` → 建 GitHub Release（附两个 dmg 和 exe；重新发布时先删掉旧的） |
 
 几个设计上的考虑：
@@ -180,7 +182,7 @@ dart run tool/build_macos.dart --remote-release              # macOS 同理
 - **`latest.json` 最后传**：应用一读到新清单就会去下载，安装包必须先就位。
 - **远程服务端只编译一次**：`remote` 任务编译，macOS 和 Windows 两个应用带的是同一份 `servers.json`（四个平台都有），R2 上一个版本只有一个 `releases/remote/<版本>-<二进制哈希>/`。
 - **下载链接带哈希**：`latest.json` 里每个链接末尾是 `?sha256=<文件哈希前 16 位>`。CDN 按完整地址缓存，文件换了地址就换了，不会给出旧文件；应用取文件名时只看路径。
-- **`downloads`**：`latest.json` 里多了这一项，是给网站用的（两个 dmg 和 Windows 安装包的链接、大小，键是 `macos-arm64`、`macos-x64`、`windows`），应用不读它。
+- **`downloads`**：`latest.json` 里多了这一项，是给网站用的（两个 dmg 和 Windows 安装包的链接、大小，键是 `macos-arm64`、`macos-x64`、`windows`、`windows-arm64`、`linux-x64`、`linux-arm64`），应用不读它。Windows on Arm 的应用按 `windows-arm64` 更新；x64 版在 Arm 上（模拟运行）继续按 `windows-x64` 更新，不自动换。
 - **密钥只在 `release` 环境里**，只有 `v*` 标签能用（见 7.2）。PR 和手动运行拿不到。
 - Flutter 版本固定在工作流的 `FLUTTER_VERSION`，升级 Flutter 时一起改。
 
@@ -193,6 +195,7 @@ releases/
   latest.json                            应用和下载页读的清单          max-age=300
   1.2.0/
     BaoCode-1.2.0-setup.exe              Windows：首次安装和自动更新   immutable，一年
+    BaoCode-1.2.0-setup-arm64.exe        Windows on Arm：同上          immutable，一年
     BaoCode-1.2.0-mac-arm64.zip          macOS Apple silicon：自动更新 immutable，一年
     BaoCode-1.2.0-mac-x64.zip            macOS Intel：自动更新         immutable，一年
     BaoCode-1.2.0-arm64.dmg              macOS Apple silicon：首次安装 immutable，一年
@@ -232,7 +235,7 @@ releases/
 
 设置和对话放在数据目录里，不在安装目录里，更新不会动它们。
 
-**官网**（首页和 `baocode.dev/download`，`site/site.js`）：浏览器读同一份 `latest.json`，按其中的 `downloads` 换上版本号、两个 dmg 和 Windows 安装包的链接（带哈希）和大小。下载页的 macOS 卡片有 Apple silicon 和 Intel 两个按钮，默认突出 Apple silicon；Chromium 系浏览器能报出处理器架构，Intel Mac 上会改为突出 Intel（`site/download.js`）。需要 R2 的 CORS 允许 `https://baocode.dev`（见 7.1）。读不到时显示页面里写死的版本；页面里的下载链接本身写的是 `/dl/windows`、`/dl/macos-arm64`、`/dl/macos-x64`，由 Worker（`site-worker/index.js`，只接管 `/dl/*`）按当时的 `latest.json` 302 到对应安装包，所以脚本没跑完、被拦或页面被缓存时下到的也是最新版，发版不用改页面里的链接。
+**官网**（首页和 `baocode.dev/download`，`site/site.js`）：浏览器读同一份 `latest.json`，按其中的 `downloads` 换上版本号、两个 dmg 和 Windows 安装包的链接（带哈希）和大小。下载页的 macOS 卡片有 Apple silicon 和 Intel 两个按钮，默认突出 Apple silicon；Chromium 系浏览器能报出处理器架构，Intel Mac 上会改为突出 Intel（`site/download.js`）。需要 R2 的 CORS 允许 `https://baocode.dev`（见 7.1）。读不到时显示页面里写死的版本；页面里的下载链接本身写的是 `/dl/windows`、`/dl/windows-arm64`、`/dl/macos-arm64`、`/dl/macos-x64`（Arm64 的按钮先隐藏，`site.js` 读到清单里有 `windows-arm64` 才显示），由 Worker（`site-worker/index.js`，只接管 `/dl/*`）按当时的 `latest.json` 302 到对应安装包，所以脚本没跑完、被拦或页面被缓存时下到的也是最新版，发版不用改页面里的链接。
 
 **两把“钥匙”管的是不同的事**：
 
@@ -375,21 +378,25 @@ macOS 本机签名时用的环境变量：
 
 ## 10. 手机版
 
-手机版（Android 的 APK、iOS 的 IPA）由 `.github/workflows/mobile.yml` 构建，和桌面版分开发布，版本号也分开（手机版 `pubspec.yaml` 里的版本，`0.x` 算 Beta）。官网下载页的「手机版」两个按钮是 `/dl/android`、`/dl/ios`，由 `site-worker/index.js` 按 `releases/mobile/latest.json` 跳转到当前版本。
+手机版（Android 的 APK、iOS 走 TestFlight）由 `.github/workflows/mobile.yml` 构建，和桌面版分开发布，版本号也分开（手机版 `pubspec.yaml` 里的版本，`0.x` 算 Beta）。官网下载页的 Android 按钮是 `/dl/android`，由 `site-worker/index.js` 按 `releases/mobile/latest.json` 跳转到当前版本。
 
 ```sh
 git tag mobile-v0.1.0 && git push origin mobile-v0.1.0      # 发布：标签要和手机版的版本一致
-git tag mobile-test-foo && git push origin mobile-test-foo  # 只打测试包，传到 dl.baocode.dev/test/mobile-…
+git tag mobile-test-foo && git push origin mobile-test-foo  # 测试包：APK 传到 dl.baocode.dev/test/mobile-…，iOS 照样传 TestFlight
 ```
 
 CI 从 `baocode-dev/mobile` 的 main 取代码（放在本仓库旁边，`../monad` 的包照常能找到），分两台机器构建：
 
 - **Android**（Ubuntu）：`flutter build apk --release`，用发布密钥签名。每个版本都要用**同一把密钥**，否则装不上旧版之上，只能卸载重装。
-- **iOS**（macOS）：`flutter build ios --release --no-codesign`，打成不签名的 IPA。用户用 AltStore、Sideloadly 等工具以自己的 Apple ID 签名安装（下载页有说明）。
+- **iOS**（`macos-26`，要 Xcode 26：App Store Connect 只收 iOS 26 SDK 编的包）：导入 Apple Distribution 证书和 App Store 描述文件 → 把工程里 Runner 目标的 Release 配置改成手动签名（工程本身是自动签名，要登录开发者账号，CI 上没有；只改 Runner，Pods 的目标不能带描述文件）→ `flutter build ipa`，build 号用本工作流的 run number（TestFlight 不收重复的 build 号）→ `xcrun altool --upload-app` 用 App Store Connect API Key 上传到 TestFlight。**`mobile-test-*` 也上传**：iOS 的测试员走 TestFlight。上传后苹果要处理几分钟，测试员才看得到。
 
-两个包上传时都用 `--content-type` 说明类型。R2 认得 `.apk`（`application/vnd.android.package-archive`），不认得 `.ipa`：不说明的话对象就没有 Content-Type，浏览器嗅探到里面是 zip，把下载的文件存成 `.zip`，用户得手动改回 `.ipa` 才能导进 Sideloadly。IPA 用 `application/octet-stream`，浏览器便照扩展名保存。
+APK 上传时用 `--content-type` 说明类型（`application/vnd.android.package-archive`）。
 
-发布时文件传到 `releases/mobile/<版本>/`，最后写 `releases/mobile/latest.json`（`version`、`pubDate`、`beta`、`downloads.android` / `downloads.ios` 的 `url / size / sha256`）。桌面版的 `latest.json` 不受影响。
+发布时 APK 传到 `releases/mobile/<版本>/`，最后写 `releases/mobile/latest.json`（`version`、`pubDate`、`beta`、`downloads.android` 的 `url / size / sha256`）。桌面版的 `latest.json` 不受影响。
+
+iOS 在 App Store Connect 上的 App 是 **BaoCode**（Apple ID `6825371537`，Bundle ID `dev.baocode.mobile`，Team `77SLP2NCVR`）。证书和描述文件一年一换：到期前用 App Store Connect API（或开发者网站）新建 Apple Distribution 证书、用它重做 App Store 描述文件，换掉下面三个密钥。
+
+TestFlight 上每个 build 都要回答出口合规（加密）问题，否则停在「缺少合规证明」；在手机版的 `Info.plist` 里加 `ITSAppUsesNonExemptEncryption` 就不用每次回答。
 
 **`release` 环境里要有的**（7.2 那些之外）：
 
@@ -398,10 +405,15 @@ CI 从 `baocode-dev/mobile` 的 main 取代码（放在本仓库旁边，`../mon
 | `MOBILE_DEPLOY_KEY` | 读 `baocode-dev/mobile` 的部署密钥（私钥）。公钥加在那个仓库的 Settings → Deploy keys，只读即可 |
 | `ANDROID_KEYSTORE` | Android 发布密钥库（`.jks`）的 base64 |
 | `ANDROID_KEYSTORE_PASSWORD` | 它的密码（密钥别名 `baocode`，密钥密码与之相同） |
+| `IOS_CERTIFICATE` | Apple Distribution 证书 `.p12` 的 base64 |
+| `IOS_CERTIFICATE_PASSWORD` | 它的密码 |
+| `IOS_PROFILE` | `dev.baocode.mobile` 的 App Store 描述文件（`.mobileprovision`）的 base64 |
+
+上传 TestFlight 用的是 7.3 公证用的那把 App Store Connect API Key（`NOTARY_KEY`、`NOTARY_KEY_ID`、`NOTARY_ISSUER`），它的职能是 App 管理，两件事都够用。
 
 环境的部署规则里要允许 `mobile-*` 标签。
 
-下载页这两张卡片各带一个二维码（`site/qr/android.svg`、`site/qr/ios.svg`，鼠标悬停或点击卡片时显示）：码里是卡片自己那个按钮的链接，也就是 `/dl/android`、`/dl/ios`，扫到就跳到当时最新的那版安装包。链接变了就先跑 `dart run tool/make_download_qr.dart` 重新生成（`test/tool/download_qr_test.dart` 会检查页面、按钮和码三者一致）。**别把 `dl.baocode.dev` 上带哈希的直链写进码里**：那地址每次发版都换，码是要能一直用的。
+下载页这两张卡片各带一个二维码（`site/qr/android.svg`、`site/qr/ios.svg`，鼠标悬停或点击卡片时显示）：码里是卡片自己那个按钮的链接，也就是 `/dl/android`、`/dl/ios`，扫到就跳到当时最新的那版安装包。链接变了就先跑 `dart run tool/make_download_qr.dart` 重新生成（`test/tool/download_qr_test.dart` 会检查页面、按钮和码三者一致）。**别把 `dl.baocode.dev` 上带哈希的直链写进码里**：那地址每次发版都换，码是要能一直用的。`latest.json` 里已经没有 iOS 的包：`/dl/ios` 跳到 TestFlight 公开测试的链接（`site-worker/index.js` 的 `TESTFLIGHT`，App Store Connect → BaoCode → TestFlight → Public beta），每个 build 都是这一个，上了 App Store 再换。要暂时下线哪个平台，把它加进 `site-worker/index.js` 的 `MOBILE_OFFLINE`，它的链接就跳回下载页。
 
 > 发布密钥库丢了就再也发不了能覆盖安装的 APK：本机和 CI 之外务必另存一份。
 
@@ -439,4 +451,4 @@ CI 做的事：
 
 **能力和协议版本**：扩展新增的方法写进 `background.js` 的 `CAPABILITIES`，在握手时告诉应用，应用用 `BrowserConnection.can('…')` 判断后再用，旧扩展照样能连。只有改了已有消息的含义、旧的一方会理解错时，才把 `background.js` 的 `BRIDGE` 和 `BrowserBridge.protocol` 一起加一。版本对不上的连接，应用不用它，并在 设置 → 浏览器 里提示用户更新扩展或更新 BaoCode。商店版扩展会自动更新，通常比应用新；所以改协议时尽量让应用同时兼容旧版，先发应用、再发扩展。
 
-**应用这边的 host**：浏览器按 native messaging 启动应用自带的 host，host 再去连应用。macOS 是 `macos/BrowserBridge/host.c`，Xcode 编进 `Contents/MacOS`，应用每次启动把 manifest 写进各浏览器的 `NativeMessagingHosts` 目录，经 Unix socket 连接。Windows 是 `windows/BrowserBridge/host.cpp`，`flutter build windows` 时编成 `baocode-browser-host.exe`，和 manifest `dev.baocode.browser.json` 一起放在 `baocode.exe` 旁边；安装包在 Chrome、Edge、Chromium 的注册表键里指向这个 manifest，卸载时删掉（Brave、Vivaldi 等读 Chrome 的键）。Windows 上 Dart 没有 Unix socket，应用改为监听 127.0.0.1 的随机端口，端口和每次启动新生成的 token 写在临时目录的 `baocode-browser.port`，host 握手时必须带上 token，否则应用直接断开。没经过安装包的本地构建没有注册表键，要测就手动加一条：`reg add HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.baocode.browser /ve /d <构建目录>\dev.baocode.browser.json /f`。改扩展 ID 时 Windows 的 manifest 要一起改，`test/browser/browser_bridge_test.dart` 会检查两边一致。
+**应用这边的 host**：浏览器按 native messaging 启动应用自带的 host，host 再去连应用。macOS 是 `macos/BrowserBridge/host.c`，Xcode 编进 `Contents/MacOS`，应用每次启动把 manifest 写进各浏览器的 `NativeMessagingHosts` 目录，经 Unix socket 连接。Windows 是 `windows/BrowserBridge/host.cpp`，`flutter build windows` 时编成 `baocode-browser-host.exe`，和 manifest `dev.baocode.browser.json` 一起放在 `baocode.exe` 旁边；安装包在 Chrome、Edge、Chromium 的注册表键里指向这个 manifest，卸载时删掉（Brave、Vivaldi 等读 Chrome 的键）。Windows 上 Dart 没有 Unix socket，应用改为监听 127.0.0.1 的随机端口，端口和每次启动新生成的 token 写在临时目录的 `baocode-browser.port`，host 握手时必须带上 token，否则应用直接断开。没经过安装包的本地构建没有注册表键，要测就手动加一条：`reg add HKCU\Software\Google\Chrome\NativeMessagingHosts\dev.baocode.browser /ve /d <构建目录>\dev.baocode.browser.json /f`。改扩展 ID 时 Windows 的 manifest 要一起改，`test/browser/browser_bridge_test.dart` 会检查两边一致。Linux 用的也是 `host.c`：`linux/BrowserBridge/CMakeLists.txt` 在 `flutter build linux` 时把它编成 `baocode-browser-host`，放在 `baocode` 旁边（deb 里是 `/opt/baocode/`）；应用每次启动把 manifest 写进 `~/.config/<浏览器>/NativeMessagingHosts`（设了 `XDG_CONFIG_HOME` 就用它）。socket 放在 `$XDG_RUNTIME_DIR`（只有本用户能进），没有才退回 `$TMPDIR` 或 `/tmp`；`/tmp` 是所有用户共用的，所以 host 连上后会用 `SO_PEERCRED` 核对对方是不是同一个用户，不是就断开，免得别的用户抢先占住 socket、截走浏览器的消息。Snap 版 Chromium 和 Flatpak 装的浏览器有沙箱，启动不了沙箱外的 host，暂不支持，设置 → 浏览器 里会提示改用官方 deb/rpm 包。CI 的 Linux 任务装上 deb 启动后，会检查 manifest 写对了位置，并真的跑一遍 host 连上应用。

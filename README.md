@@ -166,7 +166,7 @@ Releases are built and published by CI when a `v*` tag is pushed; versions, sign
 
 ## Feedback
 
-Issues are welcome. Pull requests are not accepted.
+Issues and pull requests are welcome. Discuss a change in an issue before you write it; large pull requests, and pull requests for changes not discussed first, are not accepted. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

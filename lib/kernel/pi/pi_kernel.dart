@@ -870,6 +870,22 @@ class PiKernel
     cancel();
   }
 
+  /// Those held here ([_queue]) go in any order; those pi was given
+  /// ([_steered]) keep theirs, ahead of them, as it takes them up first.
+  @override
+  void moveQueued(String turnId, int index) {
+    final turn = _queue.where((turn) => turn.id == turnId).firstOrNull;
+    if (turn == null) return;
+    _queue
+      ..remove(turn)
+      ..insert((index - _steered.length).clamp(0, _queue.length), turn);
+    emit(
+      QueueReordered(nextSeq, [
+        for (final turn in [..._steered, ..._queue]) turn.id,
+      ]),
+    );
+  }
+
   void _endTurn({bool interrupted = false}) {
     final turn = _turn;
     if (turn == null) return;
@@ -974,7 +990,6 @@ class PiKernel
     }
     _userItems.removeRange(at, _userItems.length);
     _resumeFile = file;
-    _restoreTodos(await readPiHistory(file) ?? const []);
     emit(Rewound(nextSeq, itemId: itemId, index: index));
     return true;
   }
@@ -1103,14 +1118,6 @@ class PiKernel
         _toolUpdated(message);
       case 'tool_execution_end':
         _toolEnded(message);
-      case 'entry_appended':
-        if (message['entry'] case {
-          'type': 'custom',
-          'customType': 'rpiv-todo-state',
-          'data': final details,
-        }) {
-          _reportTodos(details);
-        }
       case 'compaction_start':
         _meter.pause();
         emit(
@@ -1388,7 +1395,6 @@ class PiKernel
     final args = tool?.args ?? const {};
     final result = (message['result'] as Map?)?.cast<String, Object?>() ?? {};
     final failed = message['isError'] == true;
-    if (name == 'todo' && !failed) _reportTodos(result['details']);
     if (_questionnaires.remove(id)?.dialogId case final requestId?) {
       _resolveDialog(requestId);
     }
@@ -1675,7 +1681,6 @@ class PiKernel
     for (final (index, message) in messages.indexed) {
       if (message['role'] == 'user') _userItems.add('pi:history:$index');
     }
-    _restoreTodos(messages);
     var counted = false;
     for (final message in messages) {
       if (message case {
@@ -1790,33 +1795,6 @@ class PiKernel
     ].join('\n'),
     _ => '',
   };
-
-  void _reportTodos(Object? details) {
-    if (details case {'tasks': final List tasks}) {
-      emit(
-        TodosReported(nextSeq, [
-          for (final task in tasks.whereType<Map>())
-            if (task['status'] != 'deleted')
-              TodoEntry(task['subject'] as String, switch (task['status']) {
-                'in_progress' => TodoStatus.inProgress,
-                'completed' => TodoStatus.completed,
-                _ => TodoStatus.pending,
-              }, activeForm: task['activeForm'] as String?),
-        ]),
-      );
-    }
-  }
-
-  void _restoreTodos(List<Map<String, Object?>> messages) {
-    final snapshot = messages.reversed.where(
-      (message) =>
-          ((message['role'] == 'toolResult' && message['toolName'] == 'todo') ||
-              (message['role'] == 'custom' &&
-                  message['customType'] == 'rpiv-todo-state')) &&
-          (message['details'] as Map?)?['tasks'] is List,
-    );
-    _reportTodos(snapshot.firstOrNull?['details'] ?? {'tasks': const []});
-  }
 
   // --- Extension dialogs ------------------------------------------------------
 
