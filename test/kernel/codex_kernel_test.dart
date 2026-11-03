@@ -705,6 +705,39 @@ void main() {
       ]);
     });
 
+    test('full access, the server let go and the thread resumed on another: '
+        'the next turn is on full access again', () async {
+      final first = FakeCodex();
+      final second = FakeCodex();
+      final (:kernel, transcript: _, events: _) = codexKernel([first, second]);
+      kernel.permission.select('full');
+      kernel.send(const KernelTurn(id: 't1', text: 'Hi'));
+      await pumpEventQueue();
+      expect(
+        first.sent('thread/start').single['sandbox'],
+        'danger-full-access',
+      );
+      first.emit({
+        'method': 'turn/completed',
+        'params': {
+          'threadId': _thread,
+          'turn': {'id': 'st1', 'status': 'completed'},
+        },
+      });
+      await pumpEventQueue();
+
+      kernel.release();
+      await pumpEventQueue();
+      kernel.send(const KernelTurn(id: 't2', text: 'Again'));
+      await pumpEventQueue();
+      // Resumed on what Codex is configured with, not what the thread was on.
+      expect(second.sent('thread/resume').single['threadId'], _thread);
+      final turn = second.sent('turn/start').single;
+      expect(turn['sandboxPolicy'], {'type': 'dangerFullAccess'});
+      expect(turn['approvalPolicy'], 'never');
+      expect(kernel.permission.selected, 'full');
+    });
+
     test(
       'not started yet: its models asked of a server of their own',
       () async {

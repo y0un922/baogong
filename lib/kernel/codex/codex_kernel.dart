@@ -304,12 +304,9 @@ class CodexKernel
     switch (response['sandbox']) {
       case {'type': 'readOnly'}:
         _mode = 'ask';
-        _threadSandbox = 'read-only';
       case {'type': 'dangerFullAccess'}:
         _permission = 'full';
-        _threadSandbox = 'danger-full-access';
       case {'type': 'workspaceWrite'}:
-        _threadSandbox = 'workspace-write';
         if (response['approvalPolicy'] == 'untrusted') {
           _permission = 'untrusted';
         }
@@ -539,6 +536,14 @@ class CodexKernel
     _subscribed = true;
     final thread = (resumed['thread'] as Map?)?.cast<String, Object?>();
     _threadPath = thread?['path'] as String? ?? _threadPath;
+    // Resumed on what Codex is configured with: the next turn moves it to the
+    // sandbox picked, if another.
+    _threadSandbox = switch (resumed['sandbox']) {
+      {'type': 'readOnly'} => 'read-only',
+      {'type': 'dangerFullAccess'} => 'danger-full-access',
+      {'type': 'workspaceWrite'} => 'workspace-write',
+      _ => null,
+    };
     if (_historyShown) return;
     _historyShown = true;
     _applyThreadSettings(resumed);
