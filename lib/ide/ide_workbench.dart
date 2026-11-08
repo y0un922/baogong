@@ -33,6 +33,7 @@ import '../keybindings/keybinding_service.dart';
 import '../settings/user_settings.dart';
 import '../theme/codicons.dart';
 import '../theme/file_icon_theme.dart';
+import '../theme/material_file_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import '../workspace/back_to_chat_button.dart';
@@ -384,6 +385,13 @@ typedef _Chord = ({String label, List<KeyChord> chords, String message});
 
 class IdeWorkbenchState extends State<IdeWorkbench> {
   final _editorKey = GlobalKey<IdeEditorState>();
+  final _rightEditorKey = GlobalKey<IdeEditorState>();
+  IdeDocument? _splitLeft;
+  IdeDocument? _splitRight;
+  bool _splitRightFocused = false;
+  double _splitRatio = 0.5;
+  final List<IdeDocument> _leftGroup = [];
+  final List<IdeDocument> _rightGroup = [];
   final _runAndDebugKey = GlobalKey<RunAndDebugViewState>();
   DebugService? _listenedDebug;
 
@@ -778,6 +786,53 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       widget.workspace
           .restore(editors, active: kept['active'] as String?)
           .whenComplete(() {
+            if (kept['splitEditors'] case [
+              final String leftPath,
+              final String rightPath,
+            ]) {
+              final docs = widget.workspace.documents;
+              IdeDocument? fileAt(String path) => docs
+                  .where((doc) => doc.path == path && doc.isFileTab)
+                  .firstOrNull;
+              final left = fileAt(leftPath);
+              final right = fileAt(rightPath);
+              if (left != null && right != null) {
+                List<IdeDocument> groupOf(Object? paths) => [
+                  for (final path
+                      in paths is List
+                          ? paths.whereType<String>()
+                          : const <String>[])
+                    ?fileAt(path),
+                ];
+                var leftGroup = groupOf(kept['splitLeft']);
+                var rightGroup = groupOf(kept['splitRight']);
+                if (leftGroup.isEmpty || rightGroup.isEmpty) {
+                  rightGroup = [right];
+                  leftGroup = [
+                    for (final doc in docs)
+                      if (doc.isFileTab &&
+                          (doc.path != right.path || identical(doc, left)))
+                        doc,
+                  ];
+                  if (leftGroup.isEmpty) leftGroup = [left];
+                }
+                _leftGroup
+                  ..clear()
+                  ..addAll(leftGroup);
+                _rightGroup
+                  ..clear()
+                  ..addAll(rightGroup);
+                _addToGroup(_leftGroup, left);
+                _addToGroup(_rightGroup, right);
+                _splitLeft = left;
+                _splitRight = right;
+                _splitRightFocused = kept['splitRightFocused'] == true;
+                if (kept['splitRatio'] case final num ratio) {
+                  _splitRatio = ratio.toDouble().clamp(0.15, 0.85);
+                }
+                if (mounted) setState(() {});
+              }
+            }
             _restoring = false;
             _keepViewSoon();
           }),
@@ -792,12 +847,23 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     ];
     final active = widget.workspace.active?.key;
     final search = _search.kept;
-    _editor?.keepViewStates();
+    _editorKey.currentState?.keepViewStates();
+    _rightEditorKey.currentState?.keepViewStates();
     final paths = widget.workspace.paths;
     // Those of files (not a diff's or a revision's, nor an untitled one).
     final views = widget.workspace.viewStates.toJson(
       (key) => !key.contains('\u0000') && paths.isAbsolute(key),
     );
+    final leftFiles = [
+      for (final doc in _liveGroup(_leftGroup))
+        if (doc.isFileTab) doc.path,
+    ];
+    final rightFiles = [
+      for (final doc in _liveGroup(_rightGroup))
+        if (doc.isFileTab) doc.path,
+    ];
+    final splitLeft = _liveSplitDocument(_splitLeft);
+    final splitRight = _liveSplitDocument(_splitRight);
     return {
       'sidebarWidth': _sidebarWidth,
       'chatWidth': _chatWidth,
@@ -811,6 +877,19 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       if (_changelists.several) 'gitChangelists': _changelists.toJson(),
       'editors': editors,
       if (editors.contains(active)) 'active': active,
+      if (splitLeft != null &&
+          splitRight != null &&
+          leftFiles.isNotEmpty &&
+          rightFiles.isNotEmpty) ...{
+        'splitEditors': [
+          splitLeft.isFileTab ? splitLeft.path : leftFiles.first,
+          splitRight.isFileTab ? splitRight.path : rightFiles.first,
+        ],
+        'splitLeft': leftFiles,
+        'splitRight': rightFiles,
+        'splitRightFocused': _splitRightFocused,
+        'splitRatio': _splitRatio,
+      },
       if (views.isNotEmpty) 'editorViews': views,
     };
   }
@@ -856,7 +935,148 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   static const _sashWidth = IdeModernUI.gap;
 
-  IdeEditorState? get _editor => _editorKey.currentState;
+  IdeEditorState? get _editor => _splitRight != null && _splitRightFocused
+      ? _rightEditorKey.currentState
+      : _editorKey.currentState;
+
+  IdeDocument? _liveSplitDocument(IdeDocument? document) {
+    if (document == null) return null;
+    final docs = widget.workspace.documents;
+    if (docs.contains(document)) return document;
+    return docs
+        .where(
+          (candidate) =>
+              candidate.key == document.key ||
+              (candidate.label == document.label &&
+                  identical(candidate.model, document.model)),
+        )
+        .firstOrNull;
+  }
+
+  List<IdeDocument> _liveGroup(List<IdeDocument> group) {
+    final live = <IdeDocument>[];
+    final seen = <String>{};
+    for (final doc in group) {
+      final next = _liveSplitDocument(doc);
+      if (next == null || !seen.add(next.key)) continue;
+      live.add(next);
+    }
+    return live;
+  }
+
+  bool _inGroup(List<IdeDocument> group, IdeDocument doc) =>
+      group.any((d) => d.key == doc.key);
+
+  void _addToGroup(List<IdeDocument> group, IdeDocument doc) {
+    if (!_inGroup(group, doc)) group.add(doc);
+  }
+
+  List<IdeDocument> _groupDocuments({required bool right}) {
+    if (_splitRight == null) {
+      return right ? const [] : widget.workspace.documents;
+    }
+    return _liveGroup(right ? _rightGroup : _leftGroup);
+  }
+
+  List<IdeDocument> get _activeGroupDocuments =>
+      _groupDocuments(right: _splitRight != null && _splitRightFocused);
+
+  void _clearSplit() {
+    _leftGroup.clear();
+    _rightGroup.clear();
+    _splitLeft = null;
+    _splitRight = null;
+    _splitRightFocused = false;
+  }
+
+  void _closeSplit() {
+    if (_splitRight == null) return;
+    unawaited(_editorKey.currentState?.flush());
+    unawaited(_rightEditorKey.currentState?.flush());
+    _editorKey.currentState?.keepViewStates();
+    _rightEditorKey.currentState?.keepViewStates();
+    unawaited(_closeDocsInGroup(_liveGroup(_rightGroup), right: true));
+  }
+
+  void _activateSplitSide(bool right) {
+    if (_splitRight == null || _splitRightFocused == right) return;
+    unawaited(_editor?.flush());
+    final document = _liveSplitDocument(right ? _splitRight : _splitLeft);
+    if (document == null) return;
+    setState(() => _splitRightFocused = right);
+    if (widget.workspace.active?.key != document.key) {
+      widget.workspace.select(document.key);
+    }
+  }
+
+  void _openDocumentToSide(IdeDocument document) {
+    if (_busy) return;
+    final left = _liveSplitDocument(_splitLeft) ?? widget.workspace.active;
+    if (!document.isFileTab || left == null || !left.isFileTab) return;
+    unawaited(_editorKey.currentState?.flush());
+    unawaited(_rightEditorKey.currentState?.flush());
+    _editorKey.currentState?.keepViewStates();
+    _rightEditorKey.currentState?.keepViewStates();
+    setState(() {
+      if (_splitRight == null) {
+        _leftGroup
+          ..clear()
+          ..addAll([
+            for (final doc in widget.workspace.documents)
+              if (doc.isFileTab) doc,
+          ]);
+      }
+      _addToGroup(_leftGroup, left);
+      _addToGroup(_rightGroup, document);
+      _splitLeft = left;
+      _splitRight = document;
+      _splitRightFocused = true;
+      _extensionPageShown = false;
+    });
+    widget.workspace.select(document.key);
+    _keepViewSoon();
+  }
+
+  Future<void> _openToSide(String path) async {
+    if (_busy) return;
+    final left = _liveSplitDocument(_splitLeft) ?? widget.workspace.active;
+    if (left == null || !left.isFileTab) {
+      await _open(path);
+      return;
+    }
+    final creating = _splitRight == null;
+    final existed = widget.workspace.documents.any(
+      (doc) => doc.path == path || doc.key == path,
+    );
+    if (creating) {
+      _leftGroup
+        ..clear()
+        ..addAll([
+          for (final doc in widget.workspace.documents)
+            if (doc.isFileTab) doc,
+        ]);
+    } else {
+      _splitRightFocused = true;
+    }
+    await _open(path);
+    if (!mounted) return;
+    final right = widget.workspace.active;
+    if (right == null || !right.isFileTab) {
+      if (creating) _leftGroup.clear();
+      return;
+    }
+    if (creating && !existed) {
+      _leftGroup.removeWhere((doc) => doc.key == right.key);
+    }
+    _addToGroup(_leftGroup, left);
+    _addToGroup(_rightGroup, right);
+    setState(() {
+      _splitLeft = _liveSplitDocument(left) ?? _leftGroup.firstOrNull ?? left;
+      _splitRight = right;
+      _splitRightFocused = true;
+    });
+    _keepViewSoon();
+  }
 
   /// The file in front in the editor, its cursor and the lines selected:
   /// what the chat beside it tells the agent. None for a tab of no file of
@@ -871,11 +1091,22 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   /// The active markdown document's preview, when it shows.
   IdeMarkdownPreviewState? get _preview => switch (widget.workspace.active) {
-    final active? => GlobalObjectKey<IdeMarkdownPreviewState>(
+    final active? => _previewKey(
       active,
+      right: _splitRight != null && _splitRightFocused,
     ).currentState,
     null => null,
   };
+
+  /// [doc]'s preview's key, in the left pane or the right one (a document
+  /// can show in both).
+  GlobalKey<IdeMarkdownPreviewState> _previewKey(
+    IdeDocument doc, {
+    bool right = false,
+  }) => right
+      ? _rightPreviewKeys[doc] ??= GlobalKey<IdeMarkdownPreviewState>()
+      : GlobalObjectKey<IdeMarkdownPreviewState>(doc);
+  final _rightPreviewKeys = Expando<GlobalKey<IdeMarkdownPreviewState>>();
 
   /// Whether [doc] can show as a markdown preview: a markdown file's own
   /// tab (or a revision's), not its diff.
@@ -893,6 +1124,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// The edits the active editor holds back (a field of the fallback
   /// editor) put in its document.
   Future<void> _flushEditor() async {
+    if (_splitRight != null) {
+      await (_splitRightFocused
+          ? _editorKey.currentState?.flush()
+          : _rightEditorKey.currentState?.flush());
+    }
     await _editor?.flush();
   }
 
@@ -1016,11 +1252,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     });
   }
 
-  /// [doc]'s preview.
-  Widget _markdownPreview(IdeDocument doc) {
+  /// [doc]'s preview, in the right pane when [right].
+  Widget _markdownPreview(IdeDocument doc, {bool right = false}) {
     final files = widget.workspace.files;
     return IdeMarkdownPreview(
-      key: GlobalObjectKey<IdeMarkdownPreviewState>(doc),
+      key: _previewKey(doc, right: right),
       path: doc.path,
       model: doc.model,
       readOnly: doc.readOnly,
@@ -1106,8 +1342,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   }
 
   /// [editor], taking the files other apps drop on it when it is a
-  /// markdown document's (see [_dropOnMarkdown]).
-  Widget _markdownDrops(IdeDocument? active, Widget editor) {
+  /// markdown document's (see [_dropOnMarkdown]), in the left pane or the
+  /// right one.
+  Widget _markdownDrops(
+    IdeDocument? active,
+    Widget editor, {
+    bool right = false,
+  }) {
     if (active == null ||
         !isMarkdownPath(active.path) ||
         active.readOnly ||
@@ -1115,31 +1356,49 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         active.openError != null) {
       return editor;
     }
-    return FileDropRegion(delegate: _markdownDrop, child: editor);
+    return FileDropRegion(
+      delegate: right ? _rightMarkdownDrop : _markdownDrop,
+      child: editor,
+    );
   }
 
   late final _markdownDrop = _MarkdownDrop(
-    (position, files) => unawaited(_dropOnMarkdown(position, files)),
+    (position, files) =>
+        unawaited(_dropOnMarkdown(position, files, right: false)),
+  );
+  late final _rightMarkdownDrop = _MarkdownDrop(
+    (position, files) =>
+        unawaited(_dropOnMarkdown(position, files, right: true)),
   );
 
-  /// Files dropped from other apps on the active markdown document: put
+  /// The document the left pane or the right one shows: the left one's is
+  /// the active document while there is no split.
+  IdeDocument? _paneDocument({required bool right}) => right
+      ? _liveSplitDocument(_splitRight)
+      : _liveSplitDocument(_splitLeft) ?? widget.workspace.active;
+
+  /// Files dropped from other apps on a pane's markdown document: put
   /// beside it and linked to, at the caret, or after the block they were
   /// dropped on.
   Future<void> _dropOnMarkdown(
     Offset position,
-    List<ComposerFile> files,
-  ) async {
-    final doc = widget.workspace.active;
+    List<ComposerFile> files, {
+    required bool right,
+  }) async {
+    final doc = _paneDocument(right: right);
     if (doc == null || !isMarkdownPath(doc.path) || doc.readOnly) return;
     final outcome = await _markdownPaste().drop(doc.path, files);
     if (!mounted || outcome is! MarkdownPasteLinks) return;
-    if (!identical(widget.workspace.active, doc)) {
+    if (!identical(_paneDocument(right: right), doc)) {
       insertMarkdownAtEnd(doc.model, outcome.text);
       widget.workspace.notifyDocumentChanged(doc);
-    } else if (_preview case final preview?) {
+    } else if (_previewKey(doc, right: right).currentState
+        case final preview?) {
       preview.insert(outcome.text, position: position);
     } else {
-      _editor?.insertAtCaret(outcome.text);
+      (right ? _rightEditorKey : _editorKey).currentState?.insertAtCaret(
+        outcome.text,
+      );
     }
   }
 
@@ -1216,6 +1475,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   void _attach() {
     final workspace = widget.workspace;
+    _clearSplit();
     workspace.notifications.addListener(_notificationsChanged);
     workspace.layout.terminals = _terminals != null;
     _explorer = IdeExplorerController(
@@ -1649,6 +1909,33 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     );
     _scheduleAutoSave();
     final active = widget.workspace.active;
+    if (_splitRight != null) {
+      final leftGroup = _liveGroup(_leftGroup);
+      final rightGroup = _liveGroup(_rightGroup);
+      _leftGroup
+        ..clear()
+        ..addAll(leftGroup);
+      _rightGroup
+        ..clear()
+        ..addAll(rightGroup);
+      _splitLeft = _liveSplitDocument(_splitLeft);
+      _splitRight = _liveSplitDocument(_splitRight);
+      if (_leftGroup.isEmpty || _rightGroup.isEmpty) {
+        _clearSplit();
+      } else {
+        _splitLeft ??= _leftGroup.first;
+        _splitRight ??= _rightGroup.first;
+        if (active?.key != _activeKey && active != null && !_closingEditors) {
+          if (_splitRightFocused) {
+            _addToGroup(_rightGroup, active);
+            _splitRight = active;
+          } else {
+            _addToGroup(_leftGroup, active);
+            _splitLeft = active;
+          }
+        }
+      }
+    }
     if (widget.workspace.takeReveal() case final range? when active != null) {
       final location = IdeLocation(active.path, range);
       // Once the editor shows it.
@@ -2257,7 +2544,8 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
           }
           if (choice == 'save') await widget.workspace.save(doc);
         }
-        await _editor?.closeDocument(doc);
+        await _editorKey.currentState?.closeDocument(doc);
+        await _rightEditorKey.currentState?.closeDocument(doc);
         if (doc.label == null && !doc.isUntitled) {
           _closedEditors.remove(doc.path);
           _closedEditors.add(doc.path);
@@ -2279,12 +2567,83 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   Future<void> _close(IdeDocument doc) => _closeDocs([doc]);
 
+  Future<void> _closeInGroup(IdeDocument doc, {required bool right}) =>
+      _closeDocsInGroup([doc], right: right);
+
+  Future<void> _closeDocsInGroup(
+    List<IdeDocument> docs, {
+    required bool right,
+  }) async {
+    if (_splitRight == null) {
+      await _closeDocs(docs);
+      return;
+    }
+    final group = right ? _rightGroup : _leftGroup;
+    final other = right ? _leftGroup : _rightGroup;
+    final closing = [
+      for (final doc in docs)
+        if (_inGroup(group, doc)) doc,
+    ];
+    if (closing.isEmpty) return;
+
+    var shown = _liveSplitDocument(right ? _splitRight : _splitLeft);
+    final before = _liveGroup(group);
+    final gone = [
+      for (final doc in closing)
+        if (!_inGroup(other, doc)) doc,
+    ];
+    if (gone.isNotEmpty) {
+      await _closeDocs(gone);
+      if (!mounted) return;
+    }
+    final open = {for (final doc in widget.workspace.documents) doc.key};
+    for (final doc in closing) {
+      if (open.contains(doc.key) && !_inGroup(other, doc)) continue;
+      group.removeWhere((d) => d.key == doc.key);
+    }
+    final remaining = _liveGroup(group);
+    if (shown != null && !_inGroup(remaining, shown)) {
+      shown = remaining.isEmpty
+          ? null
+          : before.skipWhile((d) => d.key != shown!.key).skip(1).firstOrNull ??
+                remaining.last;
+      if (shown != null && !_inGroup(remaining, shown)) {
+        shown = remaining.firstOrNull;
+      }
+    }
+    if (right) {
+      _splitRight = shown;
+    } else {
+      _splitLeft = shown;
+    }
+    final focus = remaining.isEmpty
+        ? (right
+              ? _liveSplitDocument(_splitLeft)
+              : _liveSplitDocument(_splitRight))
+        : shown;
+    if (remaining.isEmpty) _clearSplit();
+    if (mounted) setState(() {});
+    if (focus != null &&
+        mounted &&
+        widget.workspace.active?.key != focus.key &&
+        widget.workspace.documents.any((d) => d.key == focus.key)) {
+      widget.workspace.select(focus.key);
+    }
+    _keepViewSoon();
+  }
+
   void _closeActive() {
     if (_extensionPageShown && _extensionPage != null) {
       _closeExtensionPage();
       return;
     }
-    if (widget.workspace.active case final doc?) unawaited(_close(doc));
+    if (widget.workspace.active case final doc?) {
+      unawaited(
+        _splitRight == null
+            ? _close(doc)
+            : _closeInGroup(doc, right: _splitRightFocused),
+      );
+    }
   }
 
   void _reopenClosed() {
@@ -2299,14 +2658,16 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   }
 
   void _cycleEditor(int delta) {
-    final docs = widget.workspace.documents;
+    final docs = _activeGroupDocuments;
     if (docs.length < 2) return;
     final index = docs.indexOf(widget.workspace.active ?? docs.first);
     unawaited(_select(docs[(index + delta) % docs.length]));
   }
 
   void _openEditorAt(int index) {
-    final docs = widget.workspace.documents;
+    final docs = _activeGroupDocuments.isEmpty
+        ? widget.workspace.documents
+        : _activeGroupDocuments;
     if (docs.isEmpty) return;
     unawaited(
       _select(
@@ -2383,29 +2744,38 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     yield IdeTextSearchComplete(limitHit: limitHit);
   }
 
-  void _tabAction(IdeDocument doc, IdeTabAction action) {
-    final docs = widget.workspace.documents;
+  void _tabAction(IdeDocument doc, IdeTabAction action, {bool? right}) {
+    final inRight = right ?? (_splitRight != null && _splitRightFocused);
+    final split = _splitRight != null;
+    final docs = _groupDocuments(right: split && inRight);
     switch (action) {
+      case IdeTabAction.openToSide:
+        _openDocumentToSide(doc);
       case IdeTabAction.close:
-        unawaited(_close(doc));
+        unawaited(split ? _closeInGroup(doc, right: inRight) : _close(doc));
       case IdeTabAction.closeOthers:
         unawaited(
-          _closeDocs([
+          _closeDocsInGroup([
             for (final d in docs)
               if (!identical(d, doc)) d,
-          ]),
+          ], right: inRight),
         );
       case IdeTabAction.closeToTheRight:
-        unawaited(_closeDocs(docs.sublist(docs.indexOf(doc) + 1)));
+        unawaited(
+          _closeDocsInGroup(
+            docs.sublist(docs.indexOf(doc) + 1),
+            right: inRight,
+          ),
+        );
       case IdeTabAction.closeSaved:
         unawaited(
-          _closeDocs([
+          _closeDocsInGroup([
             for (final d in docs)
               if (!d.dirty) d,
-          ]),
+          ], right: inRight),
         );
       case IdeTabAction.closeAll:
-        unawaited(_closeDocs(docs));
+        unawaited(_closeDocsInGroup(docs, right: inRight));
       case IdeTabAction.copyPath:
         unawaited(Clipboard.setData(ClipboardData(text: doc.path)));
       case IdeTabAction.copyRelativePath:
@@ -3471,7 +3841,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   List<IdeCommand> _workbenchCommands() {
     final workspace = widget.workspace;
     final active = workspace.active;
+    final l10n = context.l10n;
     final hasEditors = workspace.documents.isNotEmpty;
+    final activeGroup = _activeGroupDocuments;
     final terminals = _terminals;
     final terminal = terminals?.active;
     return [
@@ -3570,29 +3942,46 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         run: _closeActive,
       ),
       IdeCommand(
+        id: 'workbench.action.splitEditorRight',
+        category: 'View',
+        label: l10n.ideOpenToSide,
+        enabled: active?.isFileTab == true,
+        run: () => _openDocumentToSide(active!),
+      ),
+      IdeCommand(
+        id: 'baocode.ide.closeSplitEditor',
+        category: 'View',
+        label: l10n.ideCloseSplit,
+        enabled: _splitRight != null,
+        run: _closeSplit,
+      ),
+      IdeCommand(
         id: 'workbench.action.closeOtherEditors',
         category: 'View',
         label: 'Close Other Editors',
-        enabled: active != null && workspace.documents.length > 1,
+        enabled: active != null && activeGroup.length > 1,
         run: () => _tabAction(active!, IdeTabAction.closeOthers),
       ),
       IdeCommand(
         id: 'workbench.action.closeEditorsToTheRight',
         category: 'View',
         label: 'Close Editors to the Right',
-        enabled: active != null && workspace.documents.last != active,
+        enabled:
+            active != null &&
+            activeGroup.isNotEmpty &&
+            activeGroup.last != active,
         run: () => _tabAction(active!, IdeTabAction.closeToTheRight),
       ),
       IdeCommand(
         id: 'workbench.action.closeUnmodifiedEditors',
         category: 'View',
         label: 'Close Saved Editors',
-        enabled: workspace.documents.any((doc) => !doc.dirty),
+        enabled: activeGroup.any((doc) => !doc.dirty),
         run: () => unawaited(
-          _closeDocs([
-            for (final doc in workspace.documents)
+          _closeDocsInGroup([
+            for (final doc in _activeGroupDocuments)
               if (!doc.dirty) doc,
-          ]),
+          ], right: _splitRight != null && _splitRightFocused),
         ),
       ),
       IdeCommand(
@@ -4460,6 +4849,8 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                                         folders: folders,
                                       ),
                                     ),
+                            onOpenToSide: (path) =>
+                                unawaited(_openToSide(path)),
                           ),
                   ),
                 IdePane(
@@ -4517,7 +4908,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   }
 
   Widget _editorArea(List<IdeCommand> commands) {
-    final active = widget.workspace.active;
+    final active = _paneDocument(right: false);
     final page = widget.themeExtensions == null ? null : _extensionPage;
     final pageShown = page != null && _extensionPageShown;
     final debug = _debug;
@@ -4531,19 +4922,27 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
           if (dockedToolbar) DebugToolbar(service: debug),
           if (widget.workspace.documents.isNotEmpty || page != null) ...[
             IdeTabBar(
-              documents: widget.workspace.documents,
+              documents: _groupDocuments(right: false),
               active: pageShown ? null : active,
               root: widget.workspace.root,
-              onSelect: (doc) => unawaited(_select(doc)),
-              onClose: (doc) => unawaited(_close(doc)),
-              onAction: _tabAction,
+              onSelect: (doc) {
+                if (_splitRight != null) {
+                  unawaited(_editor?.flush());
+                  _splitRightFocused = false;
+                }
+                unawaited(_select(doc));
+              },
+              onClose: (doc) => unawaited(_closeInGroup(doc, right: false)),
+              onAction: (doc, action) => _tabAction(doc, action, right: false),
               local: _local,
               markdownPreview:
                   !pageShown && active != null && _hasPreview(active)
                   ? _previewing(active)
                   : null,
-              onMarkdownPreview: (preview) =>
-                  unawaited(_setMarkdownPreview(preview)),
+              onMarkdownPreview: (preview) {
+                _activateSplitSide(false);
+                unawaited(_setMarkdownPreview(preview));
+              },
               page: page == null ? null : _extensionPageTab(page),
               actions: switch (widget.agentEdits) {
                 final edits? when !pageShown && active != null =>
@@ -4568,7 +4967,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                   root: widget.workspace.root,
                   path: active.path,
                   onReveal: _revealInExplorer,
-                  symbols: _symbolPath,
+                  symbols: _splitRightFocused ? const [] : _symbolPath,
                   onSymbol: _revealSymbol,
                 ),
               ),
@@ -4626,104 +5025,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                                 ),
                             ],
                           )
-                        : active.view != null &&
-                              FileViews.byId(active.view!) != null
-                        // Its lists scrolled as they were, those of them
-                        // keyed with a PageStorageKey.
-                        ? PageStorage(
-                            key: ValueKey(active),
-                            bucket: widget.workspace.viewStates.bucket(
-                              active.key,
-                            ),
-                            child: FileViews.byId(active.view!)!
-                                .build(context, active.path),
-                          )
-                        : active.isMedia && ideIsPdfPath(active.path)
-                        ? IdePdfPreview(
-                            key: ValueKey(active),
-                            path: active.path,
-                            read: switch (widget.workspace.files) {
-                              final IdeHostFiles files => files.readBytes,
-                              _ => null,
-                            },
-                            onOpenInDefaultApp:
-                                _local && WindowControls.canOpenInDefaultApp
-                                ? () =>
-                                      unawaited(_openInDefaultApp(active.path))
-                                : null,
-                          )
-                        : active.isMedia
-                        ? IdeImagePreview(
-                            key: ValueKey(active),
-                            path: active.path,
-                            initialTransform: widget.workspace
-                                .viewStateOf(active)
-                                .image,
-                            onLeave: (transform) =>
-                                widget.workspace.keepViewState(
-                                  active,
-                                  (kept) => kept.copyWith(image: transform),
-                                ),
-                            read: switch (widget.workspace.files) {
-                              final IdeHostFiles files => files.readBytes,
-                              _ => null,
-                            },
-                            onOpenInDefaultApp:
-                                _local && WindowControls.canOpenInDefaultApp
-                                ? () =>
-                                      unawaited(_openInDefaultApp(active.path))
-                                : null,
-                          )
-                        : active.openError != null
-                        ? IdeEditorPlaceholder(
-                            key: ValueKey(active),
-                            error: active.openError!,
-                            path: active.path,
-                            onOpenAnyway: () => unawaited(
-                              widget.workspace.reopen(active, force: true),
-                            ),
-                            onRetry: () =>
-                                unawaited(widget.workspace.reopen(active)),
-                            onOpenInDefaultApp:
-                                _local &&
-                                    WindowControls.canOpenInDefaultApp &&
-                                    active.readRevision == null
-                                ? () =>
-                                      unawaited(_openInDefaultApp(active.path))
-                                : null,
-                          )
-                        : _previewing(active)
-                        ? _markdownPreview(active)
-                        : widget.editorBuilder?.call(
-                                context,
-                                widget.workspace,
-                              ) ??
-                              IdeEditor(
-                                nativeEditorEnabled: widget.nativeEditorEnabled,
-                                key: _editorKey,
-                                workspace: widget.workspace,
-                                active: active,
-                                onError: _report,
-                                onLspStatus: (_) {},
-                                onPositionChanged: _positionChanged,
-                                onScrolled: _editorViewChanged,
-                                // Go to Definition's target (F12),
-                                // centered even when already in view.
-                                onOpenLocation: (location) =>
-                                    _openLocation(location, center: true),
-                                onShowReferences: _showReferences,
-                                onShowCommands: () => _showQuickInput('>'),
-                                gitBlame: _gitBlame,
-                                onShowCommit: _showCommitInLog,
-                                onShowHistory: _showHistory,
-                                onCompare: (path, what) =>
-                                    unawaited(_compareWith(path, what)),
-                                keyResolver: _resolveEditorKey,
-                                onPaste: _pasteInEditor,
-                                formatOnSave: _formatOnSave,
-                                debug: _debug,
-                                agentEdits: widget.agentEdits,
-                              ),
+                        : _documentView(active, right: false),
                   ),
                 ),
                 // And it under them, while another tab is in front.
@@ -4753,6 +5055,147 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         selected: selection.selectionLength,
       );
     }
+  }
+
+  Widget _rightEditorArea(IdeDocument document) {
+    final docs = _groupDocuments(right: true);
+    final active = _liveSplitDocument(_splitRight) ?? document;
+    return IdePart(
+      color: themeColors['editor.background'],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          IdeTabBar(
+            documents: docs.isEmpty ? [active] : docs,
+            active: active,
+            root: widget.workspace.root,
+            onSelect: (doc) {
+              unawaited(_editor?.flush());
+              _splitRightFocused = true;
+              unawaited(_select(doc));
+            },
+            onClose: (doc) => unawaited(_closeInGroup(doc, right: true)),
+            onAction: (doc, action) => _tabAction(doc, action, right: true),
+            local: _local,
+            markdownPreview: _hasPreview(active) ? _previewing(active) : null,
+            onMarkdownPreview: (preview) {
+              _activateSplitSide(true);
+              unawaited(_setMarkdownPreview(preview));
+            },
+          ),
+          if (!active.isUntitled)
+            ListenableBuilder(
+              listenable: _caret,
+              builder: (context, _) => IdeBreadcrumbs(
+                root: widget.workspace.root,
+                path: active.path,
+                onReveal: _revealInExplorer,
+                symbols: _splitRightFocused ? _symbolPath : const [],
+                onSymbol: _revealSymbol,
+              ),
+            ),
+          Expanded(
+            child: _markdownDrops(
+              active,
+              _documentView(active, right: true),
+              right: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// What shows [document] in the left pane or the right one: its view, its
+  /// pages, its image, why it did not open, its preview or its editor.
+  Widget _documentView(IdeDocument document, {required bool right}) {
+    final files = widget.workspace.files;
+    final openInDefaultApp = _local && WindowControls.canOpenInDefaultApp
+        ? () => unawaited(_openInDefaultApp(document.path))
+        : null;
+    if (document.view case final id? when FileViews.byId(id) != null) {
+      // Its lists scrolled as they were, those of them keyed with a
+      // PageStorageKey.
+      return PageStorage(
+        key: ValueKey(document),
+        bucket: widget.workspace.viewStates.bucket(document.key),
+        child: FileViews.byId(id)!.build(context, document.path),
+      );
+    }
+    if (document.isMedia && ideIsPdfPath(document.path)) {
+      return IdePdfPreview(
+        key: ValueKey(document),
+        path: document.path,
+        read: switch (files) {
+          final IdeHostFiles files => files.readBytes,
+          _ => null,
+        },
+        onOpenInDefaultApp: openInDefaultApp,
+      );
+    }
+    if (document.isMedia) {
+      return IdeImagePreview(
+        key: ValueKey(document),
+        path: document.path,
+        initialTransform: widget.workspace.viewStateOf(document).image,
+        onLeave: (transform) => widget.workspace.keepViewState(
+          document,
+          (kept) => kept.copyWith(image: transform),
+        ),
+        read: switch (files) {
+          final IdeHostFiles files => files.readBytes,
+          _ => null,
+        },
+        onOpenInDefaultApp: openInDefaultApp,
+      );
+    }
+    if (document.openError case final error?) {
+      return IdeEditorPlaceholder(
+        key: ValueKey(document),
+        error: error,
+        path: document.path,
+        onOpenAnyway: () =>
+            unawaited(widget.workspace.reopen(document, force: true)),
+        onRetry: () => unawaited(widget.workspace.reopen(document)),
+        onOpenInDefaultApp: document.readRevision == null
+            ? openInDefaultApp
+            : null,
+      );
+    }
+    if (_previewing(document)) return _markdownPreview(document, right: right);
+    // Whether this pane is the one in front.
+    bool focused() => _splitRightFocused == right;
+    return (right
+            ? null
+            : widget.editorBuilder?.call(context, widget.workspace)) ??
+        IdeEditor(
+          nativeEditorEnabled: widget.nativeEditorEnabled,
+          key: right ? _rightEditorKey : _editorKey,
+          workspace: widget.workspace,
+          active: document,
+          onError: _report,
+          onLspStatus: (_) {},
+          onPositionChanged: (position) {
+            if (focused()) _positionChanged(position);
+          },
+          onScrolled: () {
+            if (focused()) _editorViewChanged();
+          },
+          // Go to Definition's target (F12), centered even when already in
+          // view.
+          onOpenLocation: (location) => _openLocation(location, center: true),
+          onShowReferences: _showReferences,
+          onShowCommands: () => _showQuickInput('>'),
+          gitBlame: _gitBlame,
+          onShowCommit: _showCommitInLog,
+          onShowHistory: _showHistory,
+          onCompare: (path, what) => unawaited(_compareWith(path, what)),
+          keyResolver: _resolveEditorKey,
+          onPaste: _pasteInEditor,
+          formatOnSave: _formatOnSave,
+          debug: _debug,
+          agentEdits: widget.agentEdits,
+        );
   }
 
   /// The chat, kept mounted (and its state kept) while hidden.
@@ -4984,9 +5427,59 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     );
     final panelVisible = rows.panel > 0;
     final debug = _debug;
+    final right = _extensionPageShown ? null : _liveSplitDocument(_splitRight);
     final editor = KeyedSubtree(
       key: const ValueKey('ide-editor'),
-      child: _editorArea(commands),
+      child: right == null
+          ? _editorArea(commands)
+          : LayoutBuilder(
+              builder: (context, bounds) {
+                const sash = 6.0;
+                final available = math.max(0.0, bounds.maxWidth - sash);
+                if (available < 1) return _editorArea(commands);
+                final minimum = math.min(160.0, available / 2);
+                final leftWidth = (available * _splitRatio)
+                    .clamp(minimum, available - minimum)
+                    .toDouble();
+                return Row(
+                  children: [
+                    SizedBox(
+                      width: leftWidth,
+                      child: Listener(
+                        behavior: HitTestBehavior.translucent,
+                        onPointerDown: (_) => _activateSplitSide(false),
+                        child: _editorArea(commands),
+                      ),
+                    ),
+                    MouseRegion(
+                      cursor: SystemMouseCursors.resizeColumn,
+                      child: GestureDetector(
+                        key: const ValueKey('ide-editor-split-sash'),
+                        behavior: HitTestBehavior.opaque,
+                        onHorizontalDragUpdate: (details) => setState(() {
+                          _splitRatio =
+                              ((_splitRatio * available + details.delta.dx) /
+                                      available)
+                                  .clamp(0.15, 0.85);
+                        }),
+                        onDoubleTap: () => setState(() => _splitRatio = 0.5),
+                        child: Container(
+                          width: sash,
+                          color: themeColors['editorGroup.border'],
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Listener(
+                        behavior: HitTestBehavior.translucent,
+                        onPointerDown: (_) => _activateSplitSide(true),
+                        child: _rightEditorArea(right),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
     );
     final toolbarLocation = debug?.settings().toolBarLocation;
     final sashTop = (height - rows.panel - _sashWidth / 2)

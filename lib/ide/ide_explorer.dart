@@ -525,6 +525,7 @@ class IdeExplorer extends StatefulWidget {
     this.onShowHistory,
     this.onShowLocalHistory,
     this.onCompareFiles,
+    this.onOpenToSide,
     this.onOpenInTerminal,
     this.isBound,
     this.local = true,
@@ -589,6 +590,9 @@ class IdeExplorer extends StatefulWidget {
   /// Compare Files, VS Code's Compare with Selected), or two folders.
   final void Function(String original, String modified, {bool folders})?
   onCompareFiles;
+
+  /// Opens a file in the editor pane to the right of the current one.
+  final ValueChanged<String>? onOpenToSide;
 
   /// Open in Terminal: opens a terminal in the folder, or in the one
   /// holding the file; null where there are no terminals.
@@ -1818,6 +1822,11 @@ class IdeExplorerState extends State<IdeExplorer>
       position: position,
       entries: ideMenuGroups([
         [
+          if (!multiple && !isFolder && widget.onOpenToSide != null)
+            IdeMenuAction(
+              l10n.ideOpenToSide,
+              onSelected: () => widget.onOpenToSide!(path),
+            ),
           if (isFolder) ...[
             IdeMenuAction(
               l10n.explorerNewFile,

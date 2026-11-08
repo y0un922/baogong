@@ -20,6 +20,7 @@ import 'tab_strip_scroll.dart';
 
 /// The actions of a tab's context menu.
 enum IdeTabAction {
+  openToSide,
   close,
   closeOthers,
   closeToTheRight,
@@ -213,6 +214,7 @@ class _IdeTabBarState extends State<IdeTabBar> {
       alignRight: anchor != null,
       entries: ideMenuGroups([
         [
+          if (doc.isFileTab) item(IdeTabAction.openToSide, l10n.ideOpenToSide),
           item(
             IdeTabAction.close,
             l10n.tabClose,

@@ -189,6 +189,12 @@ class IdeDocument {
   /// servers.
   bool get isFile =>
       readRevision == null && openError == null && !isMedia && !isUntitled;
+
+  /// Whether the tab is a file's own, shown as its text, its preview or its
+  /// view (not a diff's, a revision's or an untitled one's): what opens to
+  /// the side.
+  bool get isFileTab =>
+      label == null && diff == null && readRevision == null && !isUntitled;
   bool get readOnly => readRevision != null;
 
   String get text => model.text;

@@ -32,9 +32,8 @@ part of 'ide_workbench.dart';
 // src/vs/workbench/browser/actions/listCommands.ts.
 //
 // Deviations:
-// - One editor group: "in group" and across groups are the same (one
-//   recently used stack for both), and the editor group commands focus the
-//   editor.
+// - Two visible editor panes share one recently used stack; the group focus
+//   commands choose the left or right pane when the split is open.
 // - The last edit location is the end of the last change to an open file
 //   (upstream: the selection after it), and only the last one is kept.
 // - Accepting a file in the background opens it where the text says, but
@@ -447,12 +446,12 @@ extension _WorkbenchKeys on IdeWorkbenchState {
       _catalogCommand(
         'workbench.action.nextEditorInGroup',
         () => _cycleEditor(1),
-        enabled: docs.length > 1,
+        enabled: _activeGroupDocuments.length > 1,
       ),
       _catalogCommand(
         'workbench.action.previousEditorInGroup',
         () => _cycleEditor(-1),
-        enabled: docs.length > 1,
+        enabled: _activeGroupDocuments.length > 1,
       ),
       _catalogCommand(
         'workbench.action.firstEditorInGroup',
@@ -461,14 +460,23 @@ extension _WorkbenchKeys on IdeWorkbenchState {
       ),
       _catalogCommand(
         'workbench.action.closeEditorsInGroup',
-        () => unawaited(_closeDocs(docs)),
+        () => unawaited(
+          _closeDocsInGroup(
+            _activeGroupDocuments,
+            right: _splitRight != null && _splitRightFocused,
+          ),
+        ),
         enabled: hasEditors,
       ),
-      _catalogCommand(
-        'workbench.action.closeEditorsToTheLeft',
-        () => unawaited(_closeDocs(docs.sublist(0, docs.indexOf(active!)))),
-        enabled: active != null && docs.first != active,
-      ),
+      _catalogCommand('workbench.action.closeEditorsToTheLeft', () {
+        final group = _activeGroupDocuments;
+        unawaited(
+          _closeDocsInGroup(
+            group.sublist(0, group.indexOf(active!)),
+            right: _splitRight != null && _splitRightFocused,
+          ),
+        );
+      }, enabled: active != null && _activeGroupDocuments.first != active),
       _catalogCommand(
         'workbench.action.navigateToLastEditLocation',
         () => unawaited(
@@ -560,12 +568,29 @@ extension _WorkbenchKeys on IdeWorkbenchState {
         () => _layout.chat = false,
         enabled: _chatShown,
       ),
-      for (final id in const [
+      _catalogCommand(
         'workbench.action.focusActiveEditorGroup',
-        'workbench.action.focusFirstEditorGroup',
-        'workbench.action.focusLastEditorGroup',
-      ])
-        _catalogCommand(id, _focusEditorOrWorkbench, enabled: editing),
+        _focusEditorOrWorkbench,
+        enabled: editing,
+      ),
+      _catalogCommand('workbench.action.focusFirstEditorGroup', () {
+        _activateSplitSide(false);
+        _focusEditorOrWorkbench();
+      }, enabled: editing),
+      IdeCommand(
+        id: 'workbench.action.focusSecondEditorGroup',
+        label: context.l10n.ideFocusRightEditor,
+        category: 'View',
+        run: () {
+          _activateSplitSide(true);
+          _focusEditorOrWorkbench();
+        },
+        enabled: _splitRight != null,
+      ),
+      _catalogCommand('workbench.action.focusLastEditorGroup', () {
+        if (_splitRight != null) _activateSplitSide(true);
+        _focusEditorOrWorkbench();
+      }, enabled: editing),
     ];
   }
 

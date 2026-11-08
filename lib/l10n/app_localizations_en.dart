@@ -3311,6 +3311,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tabClose => 'Close';
 
   @override
+  String get ideOpenToSide => 'Open to the Side';
+
+  @override
+  String get ideCloseSplit => 'Close Split Editor';
+
+  @override
+  String get ideFocusRightEditor => 'Focus Right Editor';
+
+  @override
   String get tabCloseOthers => 'Close Others';
 
   @override

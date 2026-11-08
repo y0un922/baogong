@@ -3182,6 +3182,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get tabClose => '关闭';
 
   @override
+  String get ideOpenToSide => '在右侧打开';
+
+  @override
+  String get ideCloseSplit => '关闭分屏编辑器';
+
+  @override
+  String get ideFocusRightEditor => '聚焦右侧编辑器';
+
+  @override
   String get tabCloseOthers => '关闭其他';
 
   @override

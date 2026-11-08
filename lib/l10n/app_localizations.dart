@@ -5654,6 +5654,24 @@ abstract class AppLocalizations {
   /// **'Close'**
   String get tabClose;
 
+  /// No description provided for @ideOpenToSide.
+  ///
+  /// In en, this message translates to:
+  /// **'Open to the Side'**
+  String get ideOpenToSide;
+
+  /// No description provided for @ideCloseSplit.
+  ///
+  /// In en, this message translates to:
+  /// **'Close Split Editor'**
+  String get ideCloseSplit;
+
+  /// No description provided for @ideFocusRightEditor.
+  ///
+  /// In en, this message translates to:
+  /// **'Focus Right Editor'**
+  String get ideFocusRightEditor;
+
   /// No description provided for @tabCloseOthers.
   ///
   /// In en, this message translates to:
