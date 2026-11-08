@@ -142,7 +142,7 @@ void main() {
     );
     expect(
       '${output['hookSpecificOutput']['permissionDecisionReason']}',
-      contains('terminal open --ssh jiageng'),
+      contains('pane split --ssh jiageng'),
     );
 
     for (final event in [
@@ -280,6 +280,7 @@ void main() {
   test('keys as the terminal sends them', () {
     expect(keySequence('Enter'), '\r');
     expect(keySequence('C-c'), '\x03');
+    expect(keySequence('ctrl+c'), '\x03');
     expect(keySequence('ctrl-D'), '\x04');
     expect(keySequence('Esc'), '\x1b');
     expect(keySequence('Up'), '\x1b[A');
@@ -334,7 +335,7 @@ void main() {
     }
   }, skip: Platform.isWindows || !File('/bin/bash').existsSync());
 
-  group('baocode-agent terminal', () {
+  group('baocode-agent pane', () {
     late Workspace workspace;
     late AgentHost host;
     late AgentThread caller;
@@ -368,177 +369,237 @@ void main() {
     });
 
     Future<AgentReply> run(List<String> arguments) =>
-        host.run(key, ['terminal', ...arguments]);
+        host.run(key, ['pane', ...arguments]);
 
-    /// Opens t1, its shell at a prompt it reports.
-    Future<FakePty> open([List<String> options = const []]) async {
-      final opening = run(['open', ...options]);
+    Map<String, dynamic> decoded(AgentReply reply, {bool ok = true}) {
+      expect(reply.ok, ok, reason: reply.text);
+      return jsonDecode(reply.text) as Map<String, dynamic>;
+    }
+
+    /// Opens a terminal, its shell at a prompt it reports. Caller is p1.
+    Future<(FakePty, String)> open([List<String> options = const []]) async {
+      final opening = run(['split', ...options]);
       await pumpEventQueue();
       final pty = started.last..emitText(_prompt);
       final reply = await opening;
-      expect(reply.ok, isTrue, reason: reply.text);
-      expect(reply.text.split('\n').first, 't1');
-      return pty;
+      final id = decoded(reply)['result']['pane']['pane_id'] as String;
+      return (pty, id);
     }
 
     test('opens a terminal in the panel, on a server over ssh', () async {
-      final pty = await open(['--ssh', 'deploy@web']);
+      final (pty, id) = await open(['--ssh', 'deploy@web']);
+      expect(id, 'p2');
       expect(pty.launch!.executable, 'ssh');
       expect(pty.launch!.arguments.take(3), ['-t', '--', 'deploy@web']);
       expect(service.instances.single.title, 'ssh deploy@web');
       expect(shown, [service.instances.single]);
-      expect((await run(['list'])).text, startsWith('t1  ssh deploy@web'));
+      final panes = decoded(await run(['list']))['result']['panes'] as List;
+      expect(
+        panes.any(
+          (pane) => pane['pane_id'] == 'p2' && pane['host'] == 'deploy@web',
+        ),
+        isTrue,
+      );
 
-      final refused = await run(['open', '--ssh', '-oProxyCommand=x']);
+      final refused = await run(['split', '--ssh', '-oProxyCommand=x']);
       expect(refused.ok, isFalse);
     });
 
     test('runs a command, and tells its output and exit code', () async {
-      final pty = await open();
-      final running = run(['run', 't1', 'ls']);
+      final (pty, id) = await open();
+      final running = run(['run', id, 'ls']);
       await pumpEventQueue();
       expect(pty.written, endsWith('ls\r'));
       pty.emitText(
         'ls\r\n\x1b]633;C\x07a.txt\r\nb.txt\r\n\x1b]633;D;2\x07$_prompt',
       );
-      final reply = await running;
-      expect(reply.text, contains('exited 2'));
-      expect(reply.text, contains('a.txt\nb.txt'));
+      final result = decoded(await running)['result'] as Map;
+      expect(result['exit_code'], 2);
+      expect(result['output'], contains('a.txt\nb.txt'));
     });
 
     test('one still running after its timeout is said to be, and waited '
         'for', () async {
-      final pty = await open();
-      final running = run(['run', 't1', 'sleep 9', '--timeout', '0.05']);
+      final (pty, id) = await open();
+      final running = run(['run', id, 'sleep 9', '--timeout', '50']);
       await pumpEventQueue();
       pty.emitText('sleep 9\r\n\x1b]633;C\x07');
-      final reply = (await running).text;
-      expect(reply, contains('still running'));
-      expect(reply, contains('after 0.05s'));
-      final waiting = run(['wait', 't1']);
+      final result = decoded(await running)['result'] as Map;
+      expect(result['running'], isTrue);
+      final waiting = run([
+        'wait-output',
+        id,
+        '--match',
+        'done-now',
+        '--timeout',
+        '5000',
+      ]);
       await pumpEventQueue();
-      pty.emitText('\x1b]633;C\x07\x1b]633;D;0\x07$_prompt');
-      expect((await waiting).text, contains('exited 0'));
+      pty.emitText('done-now\r\n\x1b]633;D;0\x07$_prompt');
+      expect(decoded(await waiting)['result']['type'], 'output_matched');
     });
 
     test('one done between run giving up and wait is still told', () async {
-      final pty = await open();
-      final running = run(['run', 't1', 'make', '--timeout', '0.05']);
+      final (pty, id) = await open();
+      final running = run(['run', id, 'make', '--timeout', '50']);
       await pumpEventQueue();
       pty.emitText('make\r\n\x1b]633;C\x07');
-      expect((await running).text, contains('still running'));
+      expect(decoded(await running)['result']['running'], isTrue);
       pty.emitText('built\r\n\x1b]633;D;1\x07$_prompt');
       await pumpEventQueue();
-      final waited = (await run(['wait', 't1'])).text;
-      expect(waited, contains('exited 1'));
-      expect(waited, contains('built'));
-      // Told once.
-      expect((await run(['wait', 't1'])).text, contains('running nothing'));
+      final waited = decoded(
+        await run(['wait-output', id, '--match', 'built', '--timeout', '50']),
+      );
+      expect(waited['result']['type'], 'output_matched');
+      expect(waited['result']['read']['text'], contains('built'));
     });
 
     test("opens with the prompt drawn, and says when ssh could not", () async {
-      final opening = run(['open']);
+      final opening = run(['split']);
       await pumpEventQueue();
       final pty = started.last..emitText('\x1b]633;A\x07');
       await Future<void>.delayed(const Duration(milliseconds: 5));
       pty.emitText('user@host \$ \x1b]633;B\x07');
-      expect((await opening).text, contains('user@host \$'));
+      final opened = decoded(await opening);
+      final id = opened['result']['pane']['pane_id'] as String;
+      expect(
+        decoded(await run(['read', id]))['result']['read']['text'],
+        contains('user@host \$'),
+      );
 
-      final failing = run(['open', '--ssh', 'nowhere']);
+      final failing = run(['split', '--ssh', 'nowhere']);
       await pumpEventQueue();
       started.last
         ..emitText('ssh: Could not resolve hostname nowhere\r\n')
         ..exit(255);
-      final failed = await failing;
-      expect(failed.ok, isFalse);
-      expect(failed.text, startsWith('t2\n'));
-      expect(failed.text, contains('exited (255)'));
-      expect(failed.text, contains('Could not resolve hostname'));
+      final failed = decoded(await failing, ok: false);
+      expect(failed['error']['code'], 'pane_exited');
+      expect(failed['error']['message'], contains('p3'));
+      expect(failed['error']['message'], contains('255'));
     });
 
     test('a destructive command is only typed: Enter is the user\'s', () async {
-      final pty = await open();
-      final reply = await run(['run', 't1', 'sudo rm -rf /srv/old']);
-      expect(reply.text, contains('only typed'));
+      final (pty, id) = await open();
+      final reply = decoded(await run(['run', id, 'sudo rm -rf /srv/old']));
+      expect(reply['result']['destructive'], isTrue);
+      expect(reply['result']['ran'], isFalse);
       expect(pty.written, contains('sudo rm -rf /srv/old'));
       // Brought in sight again, for the user to see it waits for them.
       expect(shown, hasLength(2));
       expect(pty.written, isNot(contains('\r')));
 
-      // Nor does the agent press Enter on it.
       pty.emitText('sudo rm -rf /srv/old');
       await pumpEventQueue();
-      final waiting = await run(['wait', 't1', '--timeout', '0.05']);
-      expect(waiting.text, contains('the user has not run'));
-      final enter = await run(['keys', 't1', 'Enter']);
+      final enter = await run(['send-keys', id, 'Enter']);
       expect(enter.ok, isFalse, reason: enter.text);
       expect(pty.written, isNot(contains('\r')));
-      final typed = await run(['type', 't1', 'rm -r x\n']);
+      final typed = await run(['send-text', id, 'rm -r x\n']);
       expect(typed.ok, isFalse);
     });
 
     test('types and presses keys, and reads the screen', () async {
-      final pty = await open();
-      await run(['type', 't1', 'python3']);
+      final (pty, id) = await open();
+      await run(['send-text', id, 'python3']);
       expect(pty.written, endsWith('python3'));
-      await run(['keys', 't1', 'Enter', 'C-c']);
+      await run(['send-keys', id, 'enter', 'ctrl+c']);
       expect(pty.written, endsWith('python3\r\x03'));
       pty.emitText('\r\n>>> ');
       await pumpEventQueue();
-      final read = await run(['read', 't1']);
-      expect(read.text, contains('>>>'));
-      expect((await run(['keys', 't1', 'Hyper-x'])).ok, isFalse);
+      final read = decoded(await run(['read', id]));
+      expect(read['result']['read']['text'], contains('>>>'));
+      expect((await run(['send-keys', id, 'Hyper-x'])).ok, isFalse);
     });
 
     test('without shell integration, a command is done once the terminal is '
         'quiet', () async {
-      final opening = run(['open']);
+      final opening = run(['split']);
       await pumpEventQueue();
       final pty = started.last..emitText('server login banner\r\n# ');
-      expect((await opening).text, contains('no shell integration'));
-      final running = run(['run', 't1', 'uptime']);
+      final opened = decoded(await opening);
+      expect(
+        opened['result']['pane']['state'],
+        contains('no shell integration'),
+      );
+      final id = opened['result']['pane']['pane_id'] as String;
+      final running = run(['run', id, 'uptime']);
       await pumpEventQueue();
       pty.emitText('uptime\r\n 10:00 up 3 days\r\n# ');
-      final reply = await running;
-      expect(reply.text, contains('a guess'));
-      expect(reply.text, contains('up 3 days'));
+      final reply = decoded(await running)['result'] as Map;
+      expect(reply['guess'], isTrue);
+      expect(reply['output'], contains('up 3 days'));
     });
 
     test('waits for what it is told to', () async {
-      final pty = await open();
-      final waiting = run(['wait', 't1', '--match', r'Listening on \d+']);
+      final (pty, id) = await open();
+      final waiting = run([
+        'wait-output',
+        id,
+        '--regex',
+        r'Listening on \d+',
+        '--timeout',
+        '5000',
+      ]);
       await pumpEventQueue();
       pty.emitText('starting\r\nListening on 8080\r\n');
-      expect((await waiting).text, contains('it shows'));
+      expect(decoded(await waiting)['result']['type'], 'output_matched');
     });
 
-    test('only its own terminals, and not once closed', () async {
-      await open();
+    test('lists a terminal the user opened, stably, and another agent can '
+        'drive it', () async {
+      final instance = service.create();
+      await pumpEventQueue();
+      started.last.emitText(_prompt);
+      await pumpEventQueue();
+
+      final listed = decoded(await run(['list']));
+      final terminals = (listed['result']['panes'] as List)
+          .where((pane) => pane['kind'] == 'terminal')
+          .toList();
+      expect(terminals, hasLength(1));
+      expect(terminals.single['pane_id'], 'p2');
+      expect(terminals.single['title'], instance.title);
+      expect(
+        decoded(await run(['list']))['result']['panes'].toString(),
+        listed['result']['panes'].toString(),
+      );
+
       final other = workspace.startAgent(const Project('app', '/tmp/app'));
       final otherKey = host
           .environmentOf(other)[AgentHost.urlVariable]!
           .split('/')
           .last;
-      expect(
-        (await host.run(otherKey, ['terminal', 'read', 't1'])).ok,
-        isFalse,
+      final read = await host.run(otherKey, ['pane', 'read', 'p2']);
+      expect(read.ok, isTrue, reason: read.text);
+      expect(decoded(read)['result']['read']['pane_id'], 'p2');
+
+      final running = run(['run', 'p2', 'ls']);
+      await pumpEventQueue();
+      expect(started.last.written, endsWith('ls\r'));
+      started.last.emitText(
+        'ls\r\n\x1b]633;C\x07ok\r\n\x1b]633;D;0\x07$_prompt',
       );
+      expect(decoded(await running)['result']['exit_code'], 0);
+    });
+
+    test('a closed terminal is gone', () async {
+      final (_, id) = await open();
       service.kill(service.instances.single);
-      final read = await run(['read', 't1']);
-      expect(read.text, contains('closed by the user'));
-      expect((await run(['list'])).text, 'You opened no terminals.');
+      final read = decoded(await run(['read', id]), ok: false);
+      expect(read['error']['code'], 'pane_not_found');
+      final panes = decoded(await run(['list']))['result']['panes'] as List;
+      expect(panes.any((pane) => pane['kind'] == 'terminal'), isFalse);
     });
 
     test('close ends it', () async {
-      final pty = await open();
-      expect((await run(['close', 't1'])).text, 'Closed t1.');
+      final (pty, id) = await open();
+      expect(decoded(await run(['close', id]))['result']['closed'], isTrue);
       expect(service.instances, isEmpty);
       expect(pty.kills, isNotEmpty);
     });
 
     test('none without a window for them', () async {
       workspace.agentTerminals = null;
-      final reply = await run(['open']);
+      final reply = await run(['split']);
       expect(reply.ok, isFalse);
     });
   });

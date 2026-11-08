@@ -1,4 +1,4 @@
-// The terminals an agent works in with `baocode-agent terminal`: in the
+// The terminals an agent works in with `baocode-agent pane`: in the
 // window's side panel, in the agent's project, where the user sees all
 // it types and can take over. One on a server is ssh to it, with nothing
 // put there (see [sshArguments]). What the agent runs is told back once it
@@ -26,7 +26,7 @@ import 'workspace.dart';
 class _AgentTerminal {
   _AgentTerminal(this.id, this.owner, this.place, this.instance, this.host);
 
-  /// Its name to the command: `t1`, `t2`, …
+  /// Its name to the command: `p1`, `p2`, … shared with agent panes.
   final String id;
   final AgentThread owner;
   final AgentTerminalPlace place;
@@ -40,85 +40,190 @@ class _AgentTerminal {
 
   /// How many commands the shell had reported before the one the agent
   /// waits for: one still running when `run` gave up, or one typed for the
-  /// user to run. `wait` tells how it went, even once it is over.
+  /// user to run. `wait-output` tells how it went, even once it is over.
   int? awaited;
 }
 
-/// `baocode-agent terminal`'s side in the app: each agent's terminals, and
-/// what each command does with them.
+/// `baocode-agent pane`'s terminals in the app: each project's side panel,
+/// and what each command does with them.
 class AgentTerminals {
-  AgentTerminals(this.workspace);
+  AgentTerminals(this.host);
 
-  final Workspace workspace;
+  final AgentHost host;
+
+  Workspace get workspace => host.workspace;
 
   /// How long a terminal without shell integration prints nothing before
-  /// what it was sent counts as done; after `type` and `keys`, before the
-  /// screen is read back. Shorter in tests.
+  /// what it was sent counts as done; after `send-text` and `send-keys`,
+  /// before the screen is read back. Shorter in tests.
   Duration quiet = const Duration(seconds: 2);
   Duration settle = const Duration(milliseconds: 500);
 
-  /// How long `open` waits for the shell's first prompt.
+  /// How long `split` waits for the shell's first prompt.
   Duration opening = const Duration(seconds: 30);
 
   /// The most lines of output told back at once.
   static const maxLines = 200;
 
   final List<_AgentTerminal> _terminals = [];
-  int _opened = 0;
 
-  static const usage = '''
-Usage: baocode-agent terminal <command>
+  List<Map<String, Object?>> records(AgentThread caller) {
+    _adopt(caller);
+    return [for (final terminal in _openOf(caller)) _record(terminal, caller)];
+  }
 
-  open [--ssh <host>] [--name <name>]
-                       Open a terminal in your project, in BaoCode's side
-                       panel; with --ssh, a shell on <host> (as ssh reaches
-                       it), nothing installed there. Prints its id (t1, …).
-  run <id> <command> [--timeout <seconds>]
-                       Run <command> at the prompt, wait until it is done (by
-                       default up to 100s), print its output and exit code.
-                       One that looks destructive is only typed: the user
-                       runs it.
-  type <id> <text>     Type <text>, without Enter (a line break is Enter).
-  keys <id> <key>...   Press keys: Enter Tab Esc Space Backspace Delete Up
-                       Down Left Right Home End PageUp PageDown F1-F12,
-                       C-<key> (C-c, C-d, …), M-<key>, a character (q, y).
-  read <id> [--lines <n>]
-                       Print the screen, or its last <n> lines with the
-                       scrollback.
-  wait <id> [--match <regex>] [--idle <seconds>] [--timeout <seconds>]
-                       Wait until the command running is done, <regex> shows,
-                       or nothing is printed for <seconds>.
-  list                 The terminals you opened, and what each is doing.
-  close <id>           Close it, ending what runs in it.''';
+  Map<String, Object?>? record(AgentThread caller, String id) {
+    final terminal = _find(caller, id);
+    return terminal == null ? null : _record(terminal, caller);
+  }
 
-  /// What `baocode-agent terminal` [arguments] does, for [caller].
-  Future<AgentReply> run(AgentThread caller, List<String> arguments) async {
-    final [command, ...rest] = arguments.isEmpty ? ['help'] : arguments;
+  Future<AgentReply> open(
+    AgentThread caller, {
+    String? ssh,
+    String? cwd,
+    bool show = true,
+  }) async {
     try {
-      return switch (command) {
-        'open' => await _open(caller, rest),
-        'run' => await _run(_terminal(caller, rest), rest.skip(1).toList()),
-        'type' => await _type(_terminal(caller, rest), rest.skip(1).toList()),
-        'keys' => await _keys(_terminal(caller, rest), rest.skip(1).toList()),
-        'read' => _read(_terminal(caller, rest), rest.skip(1).toList()),
-        'wait' => await _wait(_terminal(caller, rest), rest.skip(1).toList()),
-        'list' => _list(caller),
-        'close' => _close(_terminal(caller, rest)),
-        'help' || '--help' || '-h' => const AgentReply(usage),
-        _ => AgentReply.error('Unknown command "terminal $command".\n\n$usage'),
-      };
+      return await _open(caller, ssh: ssh, cwd: cwd, show: show);
     } on _Refused catch (refused) {
-      return AgentReply.error(refused.message);
+      return AgentReply.jsonError(
+        'cli:pane:split',
+        refused.code,
+        refused.message,
+      );
     }
   }
 
-  Future<AgentReply> _open(AgentThread caller, List<String> arguments) async {
-    final (:options, :rest) = _options(arguments, const {'--ssh', '--name'});
-    if (rest.isNotEmpty) {
-      throw _Refused('open takes no "${rest.join(' ')}": see terminal help.');
+  Future<AgentReply> run(
+    AgentThread caller,
+    String id,
+    String command, {
+    Duration? timeout,
+  }) async {
+    try {
+      return await _run(
+        _need(caller, id, 'cli:pane:run'),
+        command,
+        timeout ?? AgentHost.defaultWait,
+      );
+    } on _Refused catch (refused) {
+      return AgentReply.jsonError(
+        'cli:pane:run',
+        refused.code,
+        refused.message,
+      );
     }
-    final host = options['--ssh'];
-    if (host != null && (host.trim().isEmpty || host.startsWith('-'))) {
+  }
+
+  Future<AgentReply> sendText(
+    AgentThread caller,
+    String id,
+    String text,
+  ) async {
+    try {
+      return await _type(_need(caller, id, 'cli:pane:send-text'), text);
+    } on _Refused catch (refused) {
+      return AgentReply.jsonError(
+        'cli:pane:send-text',
+        refused.code,
+        refused.message,
+      );
+    }
+  }
+
+  Future<AgentReply> sendKeys(
+    AgentThread caller,
+    String id,
+    List<String> names,
+  ) async {
+    try {
+      return await _keys(_need(caller, id, 'cli:pane:send-keys'), names);
+    } on _Refused catch (refused) {
+      return AgentReply.jsonError(
+        'cli:pane:send-keys',
+        refused.code,
+        refused.message,
+      );
+    }
+  }
+
+  AgentReply read(
+    AgentThread caller,
+    String id, {
+    String source = 'recent',
+    int? lines,
+  }) {
+    try {
+      return _read(
+        _need(caller, id, 'cli:pane:read'),
+        source: source,
+        lines: lines,
+      );
+    } on _Refused catch (refused) {
+      return AgentReply.jsonError(
+        'cli:pane:read',
+        refused.code,
+        refused.message,
+      );
+    }
+  }
+
+  Future<AgentReply> waitOutput(
+    AgentThread caller,
+    String id, {
+    String? match,
+    String? regex,
+    Duration? timeout,
+    String source = 'recent',
+    int? lines,
+  }) async {
+    try {
+      return await _waitOutput(
+        _need(caller, id, 'cli:pane:wait-output'),
+        match: match,
+        regex: regex,
+        timeout: timeout ?? AgentHost.defaultWait,
+        source: source,
+        lines: lines,
+      );
+    } on _Refused catch (refused) {
+      return AgentReply.jsonError(
+        'cli:pane:wait-output',
+        refused.code,
+        refused.message,
+      );
+    }
+  }
+
+  AgentReply close(AgentThread caller, String id) {
+    try {
+      final terminal = _need(caller, id, 'cli:pane:close');
+      terminal.place.service.kill(
+        terminal.instance,
+        TerminalExitReason.extension,
+      );
+      _terminals.remove(terminal);
+      return AgentReply.json('cli:pane:close', {
+        'type': 'ok',
+        'pane_id': id,
+        'closed': true,
+      });
+    } on _Refused catch (refused) {
+      return AgentReply.jsonError(
+        'cli:pane:close',
+        refused.code,
+        refused.message,
+      );
+    }
+  }
+
+  Future<AgentReply> _open(
+    AgentThread caller, {
+    String? ssh,
+    String? cwd,
+    bool show = true,
+  }) async {
+    if (ssh != null && (ssh.trim().isEmpty || ssh.startsWith('-'))) {
       throw const _Refused(
         '--ssh takes a host as ssh does: user@host, or a Host of ~/.ssh/config.',
       );
@@ -129,21 +234,22 @@ Usage: baocode-agent terminal <command>
         'BaoCode has no terminals here: they need its chat window.',
       );
     }
-    final id = 't${++_opened}';
+    final id = host.nextPaneId();
     final nonce = generateShellIntegrationNonce();
     final instance = place.service.create(
       config: TerminalLaunchConfig(
-        name: options['--name'] ?? (host == null ? 'Agent $id' : 'ssh $host'),
-        executable: host == null ? null : 'ssh',
-        arguments: host == null ? null : sshArguments(host, nonce),
-        shellIntegrationNonce: host == null ? null : nonce,
+        name: ssh == null ? 'Agent $id' : 'ssh $ssh',
+        executable: ssh == null ? null : 'ssh',
+        arguments: ssh == null ? null : sshArguments(ssh, nonce),
+        cwd: cwd,
+        shellIntegrationNonce: ssh == null ? null : nonce,
         // Kept once it exits, for the agent to read why.
         waitOnExit: (_) => 'Press any key to close the terminal.',
       ),
     );
-    final terminal = _AgentTerminal(id, caller, place, instance, host);
+    final terminal = _AgentTerminal(id, caller, place, instance, ssh);
     _terminals.add(terminal);
-    terminal.show();
+    if (show) terminal.show();
     // Its first prompt; or, without shell integration, ssh asking for a
     // password, say: until it prints nothing for a while.
     await _until(
@@ -156,30 +262,25 @@ Usage: baocode-agent terminal <command>
     if (!instance.exited) {
       await _until(instance, quiet: () => settle, timeout: settle * 10);
     }
-    final where = host == null ? 'in your project' : 'ssh to $host';
     if (instance.exited) {
-      return AgentReply.error(
-        '$id\n'
-        '$id, $where, ${_state(terminal)} before it had a prompt: close it '
-        'with baocode-agent terminal close $id.\n\n${_screen(instance)}',
+      throw _Refused(
+        '$id, ${ssh == null ? 'in your project' : 'ssh to $ssh'}, '
+        '${_state(terminal)} before it had a prompt.',
+        code: 'pane_exited',
       );
     }
-    return AgentReply(
-      '$id\n'
-      'Opened $id, $where, in BaoCode\'s side panel (${_state(terminal)}). '
-      'The user sees it and can type in it too.\n\n'
-      '${_screen(instance)}',
-    );
+    return AgentReply.json('cli:pane:split', {
+      'type': 'pane_info',
+      'pane': _record(terminal, caller),
+    });
   }
 
   Future<AgentReply> _run(
     _AgentTerminal terminal,
-    List<String> arguments,
+    String text,
+    Duration timeout,
   ) async {
-    final (:options, :rest) = _options(arguments, const {'--timeout'});
-    final text = rest.join(' ');
     if (text.trim().isEmpty) throw const _Refused('run takes a command.');
-    final timeout = _seconds(options['--timeout']) ?? AgentHost.defaultWait;
     final instance = _alive(terminal);
     for (final line in _lines(text)) {
       if (destructiveCommand(line) case final reason?) {
@@ -209,18 +310,14 @@ Usage: baocode-agent terminal <command>
         timeout: timeout,
       );
       final output = _text(instance, from.line);
-      final how = detection == null
-          ? '${terminal.id} has no shell integration, so whether it is done '
-                'is a guess'
-          : '${terminal.id} was running ${_quote(detection.executingCommand)}'
-                ', which was sent the line';
-      return AgentReply(
-        quiet
-            ? '$how: it has printed nothing for ${_s(this.quiet)}.\n\n'
-                  '$output'
-            : '$how: it is still printing after ${_s(timeout)}.\n\n'
-                  '$output',
-      );
+      return AgentReply.json('cli:pane:run', {
+        'type': 'ok',
+        'pane_id': terminal.id,
+        'command': text,
+        'output': output,
+        'guess': true,
+        'running': !quiet,
+      });
     } finally {
       from.dispose();
     }
@@ -239,12 +336,14 @@ Usage: baocode-agent terminal <command>
     terminal.awaited = _detection(instance)?.commands.length;
     unawaited(instance.runCommand(text, shouldExecute: false));
     terminal.show();
-    return AgentReply(
-      '${terminal.id}: ${_quote(text)} looks destructive ($reason), so it was '
-      'only typed at the prompt, not run. The user runs it with Enter in the '
-      'terminal, or cancels it with Ctrl-C. Tell the user, then wait for it: '
-      'baocode-agent terminal wait ${terminal.id}',
-    );
+    return AgentReply.json('cli:pane:run', {
+      'type': 'ok',
+      'pane_id': terminal.id,
+      'command': text,
+      'destructive': true,
+      'ran': false,
+      'reason': reason,
+    });
   }
 
   /// What the command run after [before] of [detection]'s did; still
@@ -258,47 +357,52 @@ Usage: baocode-agent terminal <command>
     final instance = terminal.instance;
     final commands = detection.commands;
     if (commands.length <= before) {
-      if (instance.exited) return _exited(terminal);
+      if (instance.exited) {
+        throw _Refused(_exitedMessage(terminal), code: 'pane_exited');
+      }
       if (!_executing(detection)) {
         final typed = detection.promptInputModel.value;
         if (typed.trim().isEmpty) {
           terminal.awaited = null;
-          return AgentReply(
-            '${terminal.id} is at the prompt: what was there did not run '
-            '(cancelled?).\n\n${_screen(instance)}',
-          );
+          return AgentReply.json('cli:pane:run', {
+            'type': 'ok',
+            'pane_id': terminal.id,
+            'ran': false,
+            'output': _screen(instance),
+          });
         }
-        return AgentReply(
-          '${terminal.id}: the user has not run ${_quote(typed)} after '
-          '${_s(timeout)}: it waits at the prompt for their Enter. Wait '
-          'again: baocode-agent terminal wait ${terminal.id}',
-        );
+        return AgentReply.json('cli:pane:run', {
+          'type': 'ok',
+          'pane_id': terminal.id,
+          'waiting_for_user': true,
+          'command': typed,
+          'output': _screen(instance),
+        });
       }
-      final running = detection.executingCommand;
-      return AgentReply(
-        '${terminal.id} is still running ${_quote(running)} after '
-        '${_s(timeout)}. Wait again: baocode-agent terminal wait '
-        '${terminal.id}; stop it: baocode-agent terminal keys ${terminal.id} '
-        'C-c\n\n${_screen(instance)}',
-      );
+      return AgentReply.json('cli:pane:run', {
+        'type': 'ok',
+        'pane_id': terminal.id,
+        'running': true,
+        'command': detection.executingCommand,
+        'output': _screen(instance),
+      });
     }
     terminal.awaited = null;
     final command = commands[before];
-    final exit = command.exitCode;
     final output = _cut(command.getOutput()?.trimRight() ?? '');
-    return AgentReply(
-      '${terminal.id}: ${_quote(command.command)} '
-      '${exit == null ? 'ended (no exit code: stopped?)' : 'exited $exit'}'
-      '${output.isEmpty ? ', printing nothing.' : ':\n\n$output'}',
-    );
+    return AgentReply.json('cli:pane:run', {
+      'type': 'ok',
+      'pane_id': terminal.id,
+      'command': command.command,
+      'exit_code': command.exitCode,
+      'output': output,
+    });
   }
 
-  Future<AgentReply> _type(
-    _AgentTerminal terminal,
-    List<String> arguments,
-  ) async {
-    final text = arguments.join(' ');
-    if (text.isEmpty) throw const _Refused('type takes the text to type.');
+  Future<AgentReply> _type(_AgentTerminal terminal, String text) async {
+    if (text.isEmpty) {
+      throw const _Refused('send-text takes the text to type.');
+    }
     final instance = _alive(terminal);
     final lines = text.split(RegExp(r'\r\n|\r|\n'));
     _checkEntered(terminal, [
@@ -306,19 +410,19 @@ Usage: baocode-agent terminal <command>
         i == 0 ? _input(instance) + lines[i] : lines[i],
     ]);
     instance.sendText(text);
-    return _settled(terminal);
+    return _settled(terminal, 'cli:pane:send-text');
   }
 
   Future<AgentReply> _keys(_AgentTerminal terminal, List<String> names) async {
-    if (names.isEmpty) throw const _Refused('keys takes the keys to press.');
+    if (names.isEmpty) {
+      throw const _Refused('send-keys takes the keys to press.');
+    }
     final instance = _alive(terminal);
     final modes = instance.terminal.coreService.decPrivateModes;
     final sequences = [
       for (final name in names)
         keySequence(name, applicationCursor: modes.applicationCursorKeys) ??
-            (throw _Refused(
-              'No key "$name": see baocode-agent terminal help.',
-            )),
+            (throw _Refused('No key "$name": see baocode-agent pane.')),
     ];
     // Only the first Enter can run what is at the prompt: the keys type
     // nothing else of a line.
@@ -328,7 +432,7 @@ Usage: baocode-agent terminal <command>
     for (final keys in sequences) {
       instance.writeText(keys);
     }
-    return _settled(terminal);
+    return _settled(terminal, 'cli:pane:send-keys');
   }
 
   /// Refuses Enter on any of [lines] that looks destructive.
@@ -337,7 +441,7 @@ Usage: baocode-agent terminal <command>
       if (destructiveCommand(line) case final reason?) {
         throw _Refused(
           '${terminal.id}: Enter would run ${_quote(line.trim())}, which looks '
-          'destructive ($reason). Send it with baocode-agent terminal run '
+          'destructive ($reason). Send it with baocode-agent pane run '
           '${terminal.id} instead, for the user to run it.',
         );
       }
@@ -345,152 +449,161 @@ Usage: baocode-agent terminal <command>
   }
 
   /// The screen once [terminal] has taken what it was sent.
-  Future<AgentReply> _settled(_AgentTerminal terminal) async {
+  Future<AgentReply> _settled(_AgentTerminal terminal, String id) async {
     final instance = terminal.instance;
     await _until(instance, quiet: () => settle, timeout: settle * 10);
-    return AgentReply('Sent (${_state(terminal)}).\n\n${_screen(instance)}');
-  }
-
-  AgentReply _read(_AgentTerminal terminal, List<String> arguments) {
-    final (:options, :rest) = _options(arguments, const {'--lines'});
-    if (rest.isNotEmpty) {
-      throw _Refused('read takes no "${rest.join(' ')}": see terminal help.');
-    }
-    final count = switch (options['--lines']) {
-      null => null,
-      final lines => int.tryParse(lines) ?? -1,
-    };
-    if (count != null && count < 1) {
-      throw const _Refused('--lines takes a number of lines.');
-    }
-    final instance = terminal.instance;
-    final text = count == null
-        ? _screen(instance)
-        : _last(_text(instance, 0), math.min(count, 2000));
-    return AgentReply('${terminal.id}: ${_state(terminal)}\n\n$text');
-  }
-
-  Future<AgentReply> _wait(
-    _AgentTerminal terminal,
-    List<String> arguments,
-  ) async {
-    final (:options, :rest) = _options(arguments, const {
-      '--match',
-      '--idle',
-      '--timeout',
+    return AgentReply.json(id, {
+      'type': 'ok',
+      'pane_id': terminal.id,
+      'text': _screen(instance),
     });
-    if (rest.isNotEmpty) {
-      throw _Refused('wait takes no "${rest.join(' ')}": see terminal help.');
-    }
-    final timeout = _seconds(options['--timeout']) ?? AgentHost.defaultWait;
-    final idle = _seconds(options['--idle']);
-    final RegExp? match;
+  }
+
+  AgentReply _read(
+    _AgentTerminal terminal, {
+    required String source,
+    int? lines,
+  }) {
+    final instance = terminal.instance;
+    final text = _snapshot(instance, source, lines);
+    final all = _snapshot(instance, source, null);
+    return AgentReply.json('cli:pane:read', {
+      'type': 'pane_read',
+      'read': {
+        'pane_id': terminal.id,
+        'source': source == 'recent-unwrapped' ? 'recent_unwrapped' : source,
+        'format': 'text',
+        'text': text,
+        'truncated': lines != null && all.split('\n').length > lines,
+      },
+    });
+  }
+
+  Future<AgentReply> _waitOutput(
+    _AgentTerminal terminal, {
+    String? match,
+    String? regex,
+    required Duration timeout,
+    required String source,
+    int? lines,
+  }) async {
+    final RegExp pattern;
     try {
-      match = switch (options['--match']) {
-        null => null,
-        final pattern => RegExp(pattern, multiLine: true),
-      };
+      pattern = regex != null
+          ? RegExp(regex, multiLine: true)
+          : RegExp(RegExp.escape(match!), multiLine: true);
     } on FormatException catch (error) {
-      throw _Refused('--match takes a regular expression: ${error.message}');
+      throw _Refused('--regex takes a regular expression: ${error.message}');
     }
     final instance = terminal.instance;
-    if (instance.exited) return _exited(terminal);
-    final detection = _detection(instance);
-    if (match != null || idle != null || detection == null) {
-      // What shows from the line the cursor is on now.
-      final from = instance.terminal.registerMarker(0);
-      try {
-        final ended = await _until(
-          instance,
-          done: match == null
-              ? null
-              : () => match!.hasMatch(_text(instance, math.max(from.line, 0))),
-          quiet: match == null ? () => idle ?? quiet : null,
-          timeout: timeout,
-        );
-        final what = match != null
-            ? ended
-                  ? 'it shows /${match.pattern}/'
-                  : '/${match.pattern}/ has not shown after ${_s(timeout)}'
-            : ended
-            ? 'it has printed nothing for ${_s(idle ?? quiet)}'
-            : 'it is still printing after ${_s(timeout)}';
-        return AgentReply(
-          '${terminal.id}: $what (${_state(terminal)}).\n\n${_screen(instance)}',
-        );
-      } finally {
-        from.dispose();
-      }
+    if (instance.exited) {
+      throw _Refused(_exitedMessage(terminal), code: 'pane_exited');
     }
-    // A command running, or one at the prompt for the user to run (a
-    // destructive one typed): until it is done. One the agent waited for
-    // that is over already is told.
-    final before = terminal.awaited ?? detection.commands.length;
-    if (detection.commands.length > before) {
-      return _finished(terminal, detection, before, timeout);
+    String snapshot() => _snapshot(instance, source, lines);
+    bool found() => pattern.hasMatch(snapshot());
+    if (found()) {
+      return _matched(terminal, snapshot(), source);
     }
-    if (!_executing(detection) && detection.promptInputModel.value.isEmpty) {
-      terminal.awaited = null;
-      return AgentReply(
-        '${terminal.id} is at the prompt, running nothing.\n\n'
-        '${_screen(instance)}',
-      );
-    }
-    await _until(
-      instance,
-      done: () => detection.commands.length > before,
-      timeout: timeout,
-    );
-    return _finished(terminal, detection, before, timeout);
-  }
-
-  AgentReply _list(AgentThread caller) {
-    final mine = [
-      for (final terminal in _terminals)
-        if (terminal.owner == caller && _isOpen(terminal)) terminal,
-    ];
-    if (mine.isEmpty) return const AgentReply('You opened no terminals.');
-    return AgentReply(
-      [
-        for (final terminal in mine)
-          '${terminal.id}  ${terminal.host == null ? 'local' : 'ssh '
-                        '${terminal.host}'}  ${_state(terminal)}  '
-              '"${terminal.instance.title}"',
-      ].join('\n'),
-    );
-  }
-
-  AgentReply _close(_AgentTerminal terminal) {
-    terminal.place.service.kill(terminal.instance, TerminalExitReason.extension);
-    _terminals.remove(terminal);
-    return AgentReply('Closed ${terminal.id}.');
-  }
-
-  AgentReply _exited(_AgentTerminal terminal) {
-    final instance = terminal.instance;
-    final code = instance.exitCode;
-    return AgentReply.error(
-      '${terminal.id} has exited${code == null ? '' : ' ($code)'}: open '
-      'another.\n\n${_last(_text(instance, 0), 30)}',
-    );
-  }
-
-  _AgentTerminal _terminal(AgentThread caller, List<String> arguments) {
-    final id = arguments.firstOrNull;
-    if (id == null) {
-      throw const _Refused('Which terminal? Give its id (t1, …).');
-    }
-    final terminal = _terminals
-        .where((terminal) => terminal.id == id && terminal.owner == caller)
-        .firstOrNull;
-    if (terminal == null) {
+    final ended = await _until(instance, done: found, timeout: timeout);
+    if (!ended || !found()) {
       throw _Refused(
-        'You opened no terminal $id: see baocode-agent terminal list.',
+        'timed out waiting for output match. Wait again: baocode-agent '
+        'pane wait-output ${terminal.id}',
+        code: 'timeout',
       );
+    }
+    return _matched(terminal, snapshot(), source);
+  }
+
+  AgentReply _matched(_AgentTerminal terminal, String text, String source) {
+    return AgentReply.json('cli:pane:wait-output', {
+      'type': 'output_matched',
+      'pane_id': terminal.id,
+      'read': {
+        'pane_id': terminal.id,
+        'source': source == 'recent-unwrapped' ? 'recent_unwrapped' : source,
+        'format': 'text',
+        'text': text,
+        'truncated': false,
+      },
+    });
+  }
+
+  Map<String, Object?> _record(_AgentTerminal terminal, AgentThread caller) => {
+    'pane_id': terminal.id,
+    'kind': 'terminal',
+    'name': null,
+    'agent': null,
+    'agent_kind': null,
+    'agent_status': 'unknown',
+    'title': terminal.instance.title,
+    'project': caller.project.name,
+    'cwd': terminal.instance.shellIntegration?.cwd ?? caller.project.path,
+    'is_caller': false,
+    'focused': false,
+    if (terminal.host != null) 'host': terminal.host,
+    'state': _state(terminal),
+  };
+
+  String _snapshot(TerminalInstance instance, String source, int? lines) {
+    final text = switch (source) {
+      'visible' => _screen(instance),
+      'recent' => _rendered(instance),
+      'recent-unwrapped' => _text(instance, 0),
+      _ => throw const _Refused(
+        '--source is visible, recent or recent-unwrapped.',
+      ),
+    };
+    if (lines == null) return text;
+    return _last(text, math.min(lines, 2000));
+  }
+
+  /// Names the project's terminals the user opened, so `list` and the
+  /// rest can reach them by the same ids as those an agent opened.
+  void _adopt(AgentThread caller) {
+    final place = workspace.agentTerminals?.call(caller);
+    if (place == null) return;
+    for (final instance in place.service.instances) {
+      if (_terminals.any(
+        (terminal) => identical(terminal.instance, instance),
+      )) {
+        continue;
+      }
+      _terminals.add(
+        _AgentTerminal(host.nextPaneId(), caller, place, instance, null),
+      );
+    }
+  }
+
+  Iterable<_AgentTerminal> _openOf(AgentThread caller) {
+    final place = workspace.agentTerminals?.call(caller);
+    return [
+      for (final terminal in _terminals)
+        if (_isOpen(terminal) &&
+            (place == null || identical(terminal.place.service, place.service)))
+          terminal,
+    ];
+  }
+
+  _AgentTerminal? _find(AgentThread caller, String id) {
+    _adopt(caller);
+    final place = workspace.agentTerminals?.call(caller);
+    final terminal = _terminals.where((t) => t.id == id).firstOrNull;
+    if (terminal == null ||
+        (place != null && !identical(terminal.place.service, place.service))) {
+      return null;
     }
     if (!_isOpen(terminal)) {
       _terminals.remove(terminal);
-      throw _Refused('$id was closed by the user.');
+      return null;
+    }
+    return terminal;
+  }
+
+  _AgentTerminal _need(AgentThread caller, String id, String _) {
+    final terminal = _find(caller, id);
+    if (terminal == null) {
+      throw _Refused('pane $id not found', code: 'pane_not_found');
     }
     return terminal;
   }
@@ -500,8 +613,15 @@ Usage: baocode-agent terminal <command>
 
   /// [terminal]'s instance, its process running.
   TerminalInstance _alive(_AgentTerminal terminal) {
-    if (terminal.instance.exited) throw _Refused(_exited(terminal).text);
+    if (terminal.instance.exited) {
+      throw _Refused(_exitedMessage(terminal), code: 'pane_exited');
+    }
     return terminal.instance;
+  }
+
+  String _exitedMessage(_AgentTerminal terminal) {
+    final code = terminal.instance.exitCode;
+    return '${terminal.id} has exited${code == null ? '' : ' ($code)'}';
   }
 
   /// What [terminal] is doing, in a few words.
@@ -591,6 +711,21 @@ Usage: baocode-agent terminal <command>
     return _text(instance, buffer.ybase, buffer.ybase + instance.rows);
   }
 
+  /// Scrollback as rendered, wrapped lines kept separate.
+  static String _rendered(TerminalInstance instance) {
+    final lines = instance.terminal.buffer.lines;
+    final out = <String>[];
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines.get(i);
+      if (line == null) continue;
+      out.add(line.translateToString(true));
+    }
+    while (out.isNotEmpty && out.last.trim().isEmpty) {
+      out.removeLast();
+    }
+    return _cut(out.join('\n'));
+  }
+
   /// [instance]'s lines from [from] to [to] (the end by default), wrapped
   /// ones joined, without the empty ones at the end; at most [maxLines].
   static String _text(TerminalInstance instance, int from, [int? to]) {
@@ -621,17 +756,7 @@ Usage: baocode-agent terminal <command>
   static String _last(String text, int count) {
     final lines = text.split('\n');
     if (lines.length <= count) return text;
-    return '(${lines.length - count} lines before not shown: terminal read '
-        'with --lines shows more)\n'
-        '${lines.skip(lines.length - count).join('\n')}';
-  }
-
-  /// [duration] in seconds, as given: `2s`, `0.5s`.
-  static String _s(Duration duration) {
-    final milliseconds = duration.inMilliseconds;
-    return milliseconds % 1000 == 0
-        ? '${milliseconds ~/ 1000}s'
-        : '${milliseconds / 1000}s';
+    return lines.skip(lines.length - count).join('\n');
   }
 
   static Iterable<String> _lines(String text) =>
@@ -642,42 +767,6 @@ Usage: baocode-agent terminal <command>
     if (text.isEmpty) return 'a command';
     final line = text.split('\n').first;
     return '`${line.length > 80 ? '${line.substring(0, 80)}…' : line}`';
-  }
-
-  /// [arguments]' options of [names] (each with a value) and what is
-  /// left, in order; none after `--`.
-  static ({Map<String, String> options, List<String> rest}) _options(
-    List<String> arguments,
-    Set<String> names,
-  ) {
-    final options = <String, String>{};
-    final rest = <String>[];
-    for (var i = 0; i < arguments.length; i++) {
-      final argument = arguments[i];
-      if (argument == '--') {
-        rest.addAll(arguments.skip(i + 1));
-        break;
-      }
-      if (names.contains(argument)) {
-        if (i + 1 >= arguments.length) {
-          throw _Refused('$argument takes a value.');
-        }
-        options[argument] = arguments[++i];
-      } else {
-        rest.add(argument);
-      }
-    }
-    return (options: options, rest: rest);
-  }
-
-  static Duration? _seconds(String? value) {
-    if (value == null) return null;
-    final seconds = num.tryParse(value);
-    if (seconds == null || seconds < 0) {
-      throw _Refused('"$value" is no number of seconds.');
-    }
-    final duration = Duration(milliseconds: (seconds * 1000).round());
-    return duration > AgentHost.longestWait ? AgentHost.longestWait : duration;
   }
 }
 
@@ -821,7 +910,7 @@ final _destructive = <(RegExp, String)>[
   (RegExp(r'\bkubectl\s+delete\b'), 'kubectl delete'),
 ];
 
-/// What pressing the key [name] sends: `Enter`, `C-c`, `M-x`, `Up`, …
+/// What pressing the key [name] sends: `enter`, `ctrl+c`, `esc`, `up`, …
 /// (case aside); null for no key. The arrows as the application asked
 /// ([applicationCursor]: DECCKM).
 String? keySequence(String name, {bool applicationCursor = false}) {
@@ -842,7 +931,7 @@ String? keySequence(String name, {bool applicationCursor = false}) {
     case 'end':
       return '${arrow}F';
   }
-  if (RegExp(r'^(c|ctrl)-(.)$').firstMatch(key) case final match?) {
+  if (RegExp(r'^(c|ctrl)[-+](.)$').firstMatch(key) case final match?) {
     final char = match[2]!;
     final code = char.codeUnitAt(0);
     if (code >= 0x61 && code <= 0x7a) return String.fromCharCode(code - 0x60);
@@ -857,8 +946,8 @@ String? keySequence(String name, {bool applicationCursor = false}) {
       _ => null,
     };
   }
-  if (RegExp(r'^(m|alt)-(.)$').firstMatch(name.toLowerCase()) != null) {
-    // The key as typed, its case kept: M-b, M-B.
+  if (RegExp(r'^(m|alt)[-+](.)$').firstMatch(name.toLowerCase()) != null) {
+    // The key as typed, its case kept: M-b, M-B, alt+b.
     return '\x1b${name.substring(name.length - 1)}';
   }
   // A character's key: itself (q, y, :, 中).
@@ -898,7 +987,8 @@ const _named = {
 
 /// A command that cannot be done, and why: printed as it fails.
 class _Refused implements Exception {
-  const _Refused(this.message);
+  const _Refused(this.message, {this.code = 'invalid_request'});
 
   final String message;
+  final String code;
 }

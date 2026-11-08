@@ -16,7 +16,7 @@ abstract final class AgentInstructions {
   /// its shell.
   static const servers = '''
 <servers>
-To work on another machine over ssh, use a terminal in BaoCode that the user watches, not ssh in your shell tool: `"\$BAOCODE_AGENT" terminal open --ssh <host>` prints its id (t1, …); then `"\$BAOCODE_AGENT" terminal run t1 '<command>'` runs a command there and prints its output and exit code. The baocode-agents skill has the rest (type, keys, read, wait, close). scp, rsync and git over ssh are fine in your shell.
+To work on another machine over ssh, use a terminal in BaoCode that the user watches, not ssh in your shell tool: `"\$BAOCODE_AGENT" pane split --ssh <host>` prints JSON with the new pane_id; then `"\$BAOCODE_AGENT" pane run <pane> '<command>'` runs a command there and prints its output and exit code. The baocode-agents skill has the rest. scp, rsync and git over ssh are fine in your shell.
 </servers>''';
 
   /// Has the agent use the user's browser through BaoCode, not a browser
