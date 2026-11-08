@@ -4453,6 +4453,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           readBytesThrough(files, path),
       sizeOf: (path) async => await byteSizeThrough(files, path) ?? 0,
       paths: paths,
+      home: thread.project.host == null ? homeDirectory : null,
       roots: () =>
           _workspace.workspaceAt(thread.project.path)?.folders ?? const [],
     );

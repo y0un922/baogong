@@ -15,6 +15,7 @@ void main() {
     root: _root,
     onOpen: opened.add,
     existence: FileExistence((path) async => path == _read),
+    home: '/Users/me',
     seen: const [_read],
     child: const SizedBox(),
   );
@@ -38,12 +39,29 @@ void main() {
     expect(files.resolve('app/lib/chat/step_folds.dart'), _read);
   });
 
+  test('inline code for a file already read is clickable immediately', () {
+    final files = scope([]);
+    expect(files.codeRecognizer('app/lib/chat/step_folds.dart'), isNotNull);
+    expect(files.codeRecognizer(_read), isNotNull);
+    expect(
+      files.codeRecognizer('~/Documents/app/lib/chat/step_folds.dart'),
+      isNotNull,
+    );
+  });
+
   test('a file read outside the project opens by its absolute path', () {
     final files = scope([]);
     expect(files.resolve(_read), _read);
     expect(files.resolve('../Documents/app/lib/chat/step_folds.dart'), _read);
-    expect(files.resolve('/Users/me/Documents/other.dart'), isNull);
-    expect(files.resolve('../Documents/other.dart'), isNull);
+    expect(files.resolve('~/Documents/app/lib/chat/step_folds.dart'), _read);
+    expect(
+      files.resolve('/Users/me/Documents/other.dart'),
+      '/Users/me/Documents/other.dart',
+    );
+    expect(
+      files.resolve('../Documents/other.dart'),
+      '/Users/me/Documents/other.dart',
+    );
   });
 
   test('only whole names match, and only files read', () async {
@@ -51,5 +69,47 @@ void main() {
     await pumpEventQueue();
     expect(files.resolve('_folds.dart'), '$_root/_folds.dart');
     expect(files.resolve('lib/other/step_folds.dart'), isNot(_read));
+  });
+
+  group('a path relative to a folder the agent worked in', () {
+    const root = '/Users/me/sakura';
+    const made = '/Users/me/sakura/proposal/plan.pdf';
+    const built = '/Users/me/out/report.pdf';
+
+    FileOpenScope worked(List<FileOpenRequest> opened) => FileOpenScope(
+      root: root,
+      onOpen: opened.add,
+      existence: FileExistence((path) async => path == made || path == built),
+      // A script it wrote there, then ran to make the PDF beside it.
+      seen: const ['/Users/me/sakura/proposal/build.py'],
+      // And a folder it moved into.
+      folders: const ['/Users/me/out'],
+      child: const SizedBox(),
+    );
+
+    test('opens the file made beside one it read or changed', () async {
+      final opened = <FileOpenRequest>[];
+      final files = worked(opened);
+      expect(files.openLink(const FileLink('plan.pdf')), isTrue);
+      await pumpEventQueue();
+      expect(opened.single.path, made);
+      expect(files.resolve('plan.pdf'), made);
+    });
+
+    test('opens the file made in a folder it moved into', () async {
+      final opened = <FileOpenRequest>[];
+      final files = worked(opened);
+      expect(files.openLink(const FileLink('report.pdf')), isTrue);
+      await pumpEventQueue();
+      expect(opened.single.path, built);
+    });
+
+    test('a file in none of them is still looked for in the project', () async {
+      final opened = <FileOpenRequest>[];
+      final files = worked(opened);
+      expect(files.openLink(const FileLink('missing.pdf')), isTrue);
+      await pumpEventQueue();
+      expect(opened.single.path, '$root/missing.pdf');
+    });
   });
 }

@@ -213,35 +213,33 @@ void main() {
       removed: 1,
     );
 
-    testWidgets('an edit: a card of its file and counts over the diff, '
-        'always open', (tester) async {
+    testWidgets('an edit: one line with its counts, opening to the diff', (
+      tester,
+    ) async {
       await pumpStep(tester, edit);
-      expect(find.byType(StepHeader), findsNothing);
-      expect(header('Edited main.dart'), findsNothing);
       expect(find.text('main.dart'), findsOneWidget);
       expect(find.text('+12 -1', findRichText: true), findsOneWidget);
+      expect(find.byType(IdeCodeDiff), findsNothing);
+      expect(find.text('Edited'), findsOneWidget);
+      expect(chatItemPlainText(edit), 'Edited main.dart lib +12 -1');
+      await tester.tap(find.text('main.dart'));
+      await tester.pump();
       expect(
         tester.widget<IdeCodeDiff>(find.byType(IdeCodeDiff)).modified,
         'new line',
       );
-      expect(
-        chatItemPlainText(edit),
-        'main.dart +12 -1\n3 - old line\n3 + new line',
-      );
     });
 
-    testWidgets('an edit, compact: one line with its counts, opening to '
-        'the diff', (tester) async {
-      EditDetail.current.value = EditDetail.compact;
-      addTearDown(() => EditDetail.current.value = EditDetail.card);
+    testWidgets('an edit, as a card: the diff always open', (tester) async {
+      EditDetail.current.value = EditDetail.card;
+      addTearDown(() => EditDetail.current.value = EditDetail.compact);
       await pumpStep(tester, edit);
-      expect(header('Edited main.dart'), findsOneWidget);
-      expect(find.text('+12 -1', findRichText: true), findsOneWidget);
-      expect(find.byType(IdeCodeDiff), findsNothing);
-      expect(chatItemPlainText(edit), 'Edited main.dart +12 -1');
-      await tester.tap(header('Edited main.dart'));
-      await tester.pump();
+      expect(find.text('main.dart'), findsOneWidget);
       expect(find.byType(IdeCodeDiff), findsOneWidget);
+      expect(
+        chatItemPlainText(edit),
+        'Edited main.dart lib +12 -1\n3 - old line\n3 + new line',
+      );
     });
 
     testWidgets('an edit leaves out a count of none', (tester) async {

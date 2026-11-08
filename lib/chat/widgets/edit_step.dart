@@ -5,119 +5,319 @@ import 'package:flutter/material.dart';
 import '../../ide/ide_code_diff.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
 import '../chat_models.dart';
 import '../edit_detail.dart';
 import '../side_panel/file_link.dart';
+import '../side_panel/file_link_menu.dart';
 import '../side_panel/file_open.dart';
 import 'code_citation.dart';
 import 'hover_builder.dart';
 import 'own_selection.dart';
 import 'step_header.dart';
 
-/// A file edit, as [EditDetail] has it: a card of the file's icon, name
-/// and counts over its diff; or a step, "Edited main.dart +12 -3", a click
-/// opening it to that card. Where the chat's files open (see
-/// [FileOpenScope]), a click on the file's name shows its changes there.
+/// A file edit as one compact row that opens to its diff. Consecutive
+/// edits of the same file ([also]) share the row, marked ×N, and open to
+/// each diff in turn.
 class EditStep extends StatelessWidget {
   const EditStep({
     super.key,
     required this.item,
+    this.also = const [],
     this.expanded = false,
     this.onToggle,
   });
 
   final CodeDiffItem item;
 
-  /// Whether the step is open, as [EditDetail.compact] shows it; a card
+  /// Later consecutive edits of the same file, shown as one row with [item].
+  final List<CodeDiffItem> also;
+
+  /// Whether the diff is open, as [EditDetail.compact] shows it; a card
   /// is always.
   final bool expanded;
   final VoidCallback? onToggle;
 
-  /// How tall the card's diff grows before it scrolls.
-  static const maxCardHeight = 160.0;
+  /// How many lines the open diff shows before it fades and offers more.
+  static const previewLines = 12;
+
+  List<CodeDiffItem> get _all => [item, ...also];
+
+  int get _added => _all.fold(0, (sum, item) => sum + item.added);
+  int get _removed => _all.fold(0, (sum, item) => sum + item.removed);
+
+  bool get _canOpen => _all.any((item) => item.lines.isNotEmpty);
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder(
     valueListenable: EditDetail.current,
-    builder: (context, detail, _) => switch (detail) {
-      EditDetail.card => _card(
-        context,
-        counts: true,
-        maxHeight: maxCardHeight,
-        // The lines start right under the name.
-        padding: EdgeInsets.zero,
-      ),
-      EditDetail.compact => Column(
+    builder: (context, detail, _) {
+      final alwaysOpen = detail == EditDetail.card;
+      final open = alwaysOpen || expanded;
+      final toggle = alwaysOpen || !_canOpen ? null : onToggle;
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          StepHeader(
-            verb: context.l10n.toolEdited,
-            object: item.fileName,
-            expanded: expanded,
-            onToggle: onToggle,
-            trailing: _Counts(item),
+          _CompactRow(
+            item: item,
+            added: _added,
+            removed: _removed,
+            times: _all.length,
+            onToggle: toggle,
           ),
-          if (expanded)
-            _card(
-              context,
-              counts: false,
-              maxHeight: CodeCitationCard.maxCodeHeight,
-              padding: EdgeInsets.zero,
-            ),
+          if (open)
+            for (final diff in _all)
+              if (diff.lines.isNotEmpty) _Card(item: diff),
         ],
-      ),
+      );
     },
   );
+}
 
-  /// The file's name over its diff; its [counts] at the right when the
-  /// card stands alone.
-  Widget _card(
-    BuildContext context, {
-    required bool counts,
-    required double maxHeight,
-    required EdgeInsetsGeometry padding,
-  }) {
+bool _isCreated(CodeDiffItem item) =>
+    item.displayTool == 'write' && item.writeExisted != true;
+
+bool _isOverwrite(CodeDiffItem item) =>
+    item.displayTool == 'write' && item.writeExisted == true;
+
+String _fileSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+/// How many of the five diffstat squares are green and red. When the
+/// total is at least 5, they fill all five (largest remainder; at least
+/// one each when both added and removed). Below 5, the rest stay empty.
+@visibleForTesting
+(int added, int removed) editDiffStatSlots(int added, int removed) {
+  const slots = 5;
+  final total = added + removed;
+  if (total <= 0) return (0, 0);
+  if (total < slots) return (added, removed);
+  final addShare = added / total * slots;
+  final remShare = removed / total * slots;
+  var add = addShare.floor();
+  var rem = remShare.floor();
+  if (add + rem < slots) {
+    if (addShare - add >= remShare - rem) {
+      add++;
+    } else {
+      rem++;
+    }
+  }
+  if (added > 0 && add == 0) {
+    add = 1;
+    if (add + rem > slots) rem--;
+  }
+  if (removed > 0 && rem == 0) {
+    rem = 1;
+    if (add + rem > slots) add--;
+  }
+  return (add, rem);
+}
+
+/// `Edited  [icon] auth.dart  lib/services    +12 -3  ▮▮▮▮▮`
+class _CompactRow extends StatelessWidget {
+  const _CompactRow({
+    required this.item,
+    required this.added,
+    required this.removed,
+    required this.times,
+    this.onToggle,
+  });
+
+  final CodeDiffItem item;
+  final int added;
+  final int removed;
+  final int times;
+  final VoidCallback? onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final files = FileOpenScope.maybeOf(context);
     final path = files?.resolve(item.path);
     final first = item.firstChangedLine;
-    return _Card(
-      item: item,
-      maxHeight: maxHeight,
-      padding: padding,
-      header: _FileHeader(
-        item: item,
-        counts: counts,
-        onOpen: path == null
-            ? null
-            : () => files!.onOpen(
-                FileOpenRequest(
-                  path,
-                  diff: true,
-                  range: first == null ? null : FileLineRange(first),
+    final created = _isCreated(item);
+    final overwrite = _isOverwrite(item);
+    Widget row = HoverBuilder(
+      cursor: onToggle == null ? MouseCursor.defer : SystemMouseCursors.click,
+      builder: (context, hovered) {
+        final buttons = hovered && files != null && path != null;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onToggle,
+                  child: Row(
+                    children: [
+                      Text(
+                        created
+                            ? l10n.editCreated
+                            : overwrite
+                            ? l10n.toolOverwrote
+                            : l10n.toolEdited,
+                        style: TextStyle(
+                          color: AppColors.text,
+                          fontSize: StepHeader.fontSize,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      FileIcon(item.fileName, size: 15),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          item.fileName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: StepHeader.fontSize,
+                          ),
+                        ),
+                      ),
+                      if (item.directory.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            item.directory,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: AppColors.textFaint,
+                              fontSize: StepHeader.fontSize,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (overwrite &&
+                          (item.writeOldLines != null ||
+                              item.writeLines != null)) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          l10n.editOverwriteLines(
+                            item.writeOldLines ?? 0,
+                            item.writeLines ?? 0,
+                          ),
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: StepHeader.fontSize,
+                          ),
+                        ),
+                      ],
+                      if (added > 0 || removed > 0) ...[
+                        const SizedBox(width: 8),
+                        _Counts(added: added, removed: removed),
+                      ],
+                      if (created && item.writeBytes != null)
+                        Text(
+                          ' · ${_fileSize(item.writeBytes!)}',
+                          style: TextStyle(
+                            color: AppColors.textFaint,
+                            fontSize: StepHeader.fontSize,
+                          ),
+                        ),
+                      if (times > 1) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          '×$times',
+                          style: TextStyle(
+                            color: AppColors.textFaint,
+                            fontSize: StepHeader.fontSize,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 8),
+                      _DiffStat(added: added, removed: removed),
+                    ],
+                  ),
                 ),
               ),
+              if (buttons) ...[
+                const SizedBox(width: 4),
+                CodeBlockIconButton(
+                  icon: Codicons.diff,
+                  tooltip: l10n.sidePanelOpenDiff,
+                  onTap: () => files.onOpen(
+                    FileOpenRequest(
+                      path,
+                      diff: true,
+                      range: first == null ? null : FileLineRange(first),
+                    ),
+                  ),
+                ),
+                CodeBlockIconButton(
+                  icon: Codicons.goToFile,
+                  tooltip: l10n.sidePanelOpenFile,
+                  onTap: () => files.onOpen(FileOpenRequest(path)),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+    row = SelectionContainer.disabled(child: row);
+    if (files == null || path == null) return row;
+    return FileLinkMenuRegion(
+      menu: files.menuFor(
+        path,
+        () => files.onOpen(FileOpenRequest(path, diff: true)),
+        context: context,
       ),
+      child: row,
     );
   }
 }
 
-/// The file's [header] over its diff, scrolling past [maxHeight], with
-/// scrollbars across each side's text along its bottom: the diff is as
-/// tall as its lines, its editors' own out of view at its foot.
+/// Five GitHub-style squares: green / red / empty by added vs removed.
+class _DiffStat extends StatelessWidget {
+  const _DiffStat({required this.added, required this.removed});
+
+  final int added;
+  final int removed;
+
+  static const _slots = 5;
+
+  @override
+  Widget build(BuildContext context) {
+    final (add, rem) = editDiffStatSlots(added, removed);
+    final empty = _slots - add - rem;
+    Widget box(Color color) => Container(
+      width: 7,
+      height: 7,
+      margin: const EdgeInsets.only(left: 2),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(1.5),
+      ),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < add; i++)
+          box(themeColors['chat.linesAddedForeground']),
+        for (var i = 0; i < rem; i++)
+          box(themeColors['chat.linesRemovedForeground']),
+        for (var i = 0; i < empty; i++)
+          box(AppColors.textFaint.withValues(alpha: 0.35)),
+      ],
+    );
+  }
+}
+
+/// The diff in a framed card, about [EditStep.previewLines] tall until
+/// asked for the rest.
 class _Card extends StatefulWidget {
-  const _Card({
-    required this.item,
-    required this.maxHeight,
-    required this.padding,
-    required this.header,
-  });
+  const _Card({required this.item});
 
   final CodeDiffItem item;
-  final double maxHeight;
-  final EdgeInsetsGeometry padding;
-  final Widget header;
 
   @override
   State<_Card> createState() => _CardState();
@@ -125,6 +325,7 @@ class _Card extends StatefulWidget {
 
 class _CardState extends State<_Card> {
   final _horizontal = ValueNotifier<List<IdeDiffHorizontal>>(const []);
+  bool _showAll = false;
 
   @override
   void dispose() {
@@ -155,42 +356,100 @@ class _CardState extends State<_Card> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      ScrollbarTheme(data: _bars(context), child: _body());
-
-  Widget _body() => StepBody(
-    maxHeight: widget.maxHeight,
-    padding: widget.padding,
-    // Its lines fade under the name and at the bottom as they scroll.
-    fadeEdges: true,
-    scrollbar: true,
-    // A line round it, no background.
-    codeBlock: true,
-    // Scrolled to its end, a wheel goes on to the conversation only from
-    // outside it.
-    keepWheel: true,
-    header: widget.header,
-    bottom: (context, hovered) => ValueListenableBuilder(
-      valueListenable: _horizontal,
-      builder: (context, editors, _) => SizedBox(
-        height: _AcrossBar.thickness,
-        child: Stack(
+  Widget build(BuildContext context) {
+    final sides = DiffSides(widget.item.lines);
+    final lineH = IdeCodeDiff.lineHeight(context);
+    final clipped = !_showAll && sides.rows > EditStep.previewLines;
+    final diff = _Diff(widget.item, horizontal: _horizontal);
+    if (clipped) {
+      final fade = AppColors.conversationSurface;
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 2, bottom: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.partBorder),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            for (final editor in editors)
-              if (editor.max > 0)
-                Positioned(
-                  left: editor.left,
-                  width: editor.width,
-                  top: 0,
-                  bottom: 0,
-                  child: _AcrossBar(editor: editor, visible: hovered),
+            SizedBox(
+              height: EditStep.previewLines * lineH,
+              child: Stack(
+                children: [
+                  SingleChildScrollView(
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: diff,
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: 28,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [fade.withValues(alpha: 0), fade],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              child: GestureDetector(
+                onTap: () => setState(() => _showAll = true),
+                child: Text(
+                  context.l10n.editShowAllLines(sides.rows),
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                 ),
+              ),
+            ),
           ],
         ),
+      );
+    }
+    final maxHeight = math.min(math.max(sides.rows, 1) * lineH, 480.0);
+    return ScrollbarTheme(
+      data: _bars(context),
+      child: StepBody(
+        maxHeight: maxHeight,
+        padding: EdgeInsets.zero,
+        fadeEdges: true,
+        scrollbar: true,
+        codeBlock: true,
+        keepWheel: true,
+        bottom: (context, hovered) => ValueListenableBuilder(
+          valueListenable: _horizontal,
+          builder: (context, editors, _) => SizedBox(
+            height: _AcrossBar.thickness,
+            child: Stack(
+              children: [
+                for (final editor in editors)
+                  if (editor.max > 0)
+                    Positioned(
+                      left: editor.left,
+                      width: editor.width,
+                      top: 0,
+                      bottom: 0,
+                      child: _AcrossBar(editor: editor, visible: hovered),
+                    ),
+              ],
+            ),
+          ),
+        ),
+        child: diff,
       ),
-    ),
-    child: _Diff(widget.item, horizontal: _horizontal),
-  );
+    );
+  }
 }
 
 /// A scrollbar across an [editor]'s text, as the card's own down it is
@@ -273,23 +532,24 @@ class _AcrossBarState extends State<_AcrossBar> {
 /// "+12 -3", in the chat's colors for lines added and removed; a count of
 /// none is left out.
 class _Counts extends StatelessWidget {
-  const _Counts(this.item);
+  const _Counts({required this.added, required this.removed});
 
-  final CodeDiffItem item;
+  final int added;
+  final int removed;
 
   @override
   Widget build(BuildContext context) => Text.rich(
     TextSpan(
       children: [
-        if (item.added > 0)
+        if (added > 0)
           TextSpan(
-            text: '+${item.added}',
+            text: '+$added',
             style: TextStyle(color: themeColors['chat.linesAddedForeground']),
           ),
-        if (item.added > 0 && item.removed > 0) const TextSpan(text: ' '),
-        if (item.removed > 0)
+        if (added > 0 && removed > 0) const TextSpan(text: ' '),
+        if (removed > 0)
           TextSpan(
-            text: '-${item.removed}',
+            text: '-$removed',
             style: TextStyle(color: themeColors['chat.linesRemovedForeground']),
           ),
       ],
@@ -300,67 +560,6 @@ class _Counts extends StatelessWidget {
       fontSize: 11.5,
     ),
   );
-}
-
-/// The edited file's icon and name over its diff, its counts at the right
-/// when [counts]: a click shows its changes where the chat's files open,
-/// when they do.
-class _FileHeader extends StatelessWidget {
-  const _FileHeader({required this.item, this.counts = false, this.onOpen});
-
-  final CodeDiffItem item;
-  final bool counts;
-  final VoidCallback? onOpen;
-
-  /// How tall it is: its name's line and room round it, as tall as a code
-  /// block's title.
-  static double heightOf(BuildContext context) =>
-      (MediaQuery.textScalerOf(context).scale(12.5) * 1.3 + 16).roundToDouble();
-
-  @override
-  Widget build(BuildContext context) {
-    final onOpen = this.onOpen;
-    Widget row(bool hovered) {
-      final hover = AppColors.hover;
-      return Container(
-        height: heightOf(context),
-        // Faintly lit while hovered, as a code card's title.
-        color: hovered ? hover.withValues(alpha: hover.a * 0.6) : null,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(
-          children: [
-            FileIcon(item.fileName, size: 15),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                item.fileName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: AppColors.text, fontSize: 12.5),
-              ),
-            ),
-            if (counts) ...[const SizedBox(width: 8), _Counts(item)],
-          ],
-        ),
-      );
-    }
-
-    if (onOpen == null) return SelectionContainer.disabled(child: row(false));
-    return SelectionContainer.disabled(
-      child: Semantics(
-        button: true,
-        label: context.l10n.sidePanelOpenDiff,
-        child: HoverBuilder(
-          cursor: SystemMouseCursors.click,
-          builder: (context, hovered) => GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onOpen,
-            child: row(hovered),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// The diff's two sides, as texts of their own: the old (its context and
@@ -423,8 +622,9 @@ class DiffSides {
 }
 
 /// The diff as the IDE's diff editor shows it ([IdeCodeDiff]), side by
-/// side (a new file alone), its lines numbered as in the file, as tall as
-/// they are: the card scrolls it.
+/// side (a new file alone, as highlighted code with a green bar), its
+/// lines numbered as in the file, as tall as they are: the card scrolls
+/// it.
 class _Diff extends StatefulWidget {
   const _Diff(this.item, {required this.horizontal});
 
@@ -452,20 +652,35 @@ class _DiffState extends State<_Diff> {
   Widget build(BuildContext context) {
     final sides = _sides;
     final rows = sides.rows < 1 ? 1 : sides.rows;
+    final created = sides.created;
     return SizedBox(
       height: rows * IdeCodeDiff.lineHeight(context),
       // The editors' own selection, apart from the conversation's.
       child: OwnSelection(
-        child: IdeCodeDiff(
-          path: widget.item.fileName,
-          original: sides.original,
-          modified: sides.modified,
-          syntax: CodeCitationScope.maybeOf(context)?.syntax?.call(),
-          sideBySide: !sides.created,
-          originalLineNumberOf: sides.originalNumberOf,
-          modifiedLineNumberOf: sides.modifiedNumberOf,
-          embedded: true,
-          horizontal: widget.horizontal,
+        child: DecoratedBox(
+          decoration: created
+              ? BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                      color: themeColors['chat.linesAddedForeground'],
+                      width: 2,
+                    ),
+                  ),
+                )
+              : const BoxDecoration(),
+          child: IdeCodeDiff(
+            path: widget.item.fileName,
+            original: created ? sides.modified : sides.original,
+            modified: sides.modified,
+            syntax: CodeCitationScope.maybeOf(context)?.syntax?.call(),
+            sideBySide: !created,
+            originalLineNumberOf: created
+                ? sides.modifiedNumberOf
+                : sides.originalNumberOf,
+            modifiedLineNumberOf: sides.modifiedNumberOf,
+            embedded: true,
+            horizontal: widget.horizontal,
+          ),
         ),
       ),
     );

@@ -2398,6 +2398,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get toolEdited => 'Edited';
 
   @override
+  String get toolOverwrote => 'Overwrote';
+
+  @override
+  String get editCreated => 'Created';
+
+  @override
+  String editOverwriteLines(int from, int to) {
+    return '$from → $to lines';
+  }
+
+  @override
+  String editShowAllLines(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Show all $count lines',
+      one: 'Show all 1 line',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get toolRunning => 'Running';
 
   @override
@@ -2590,6 +2612,17 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get imageCopy => 'Copy Image';
+
+  @override
+  String stepsEdited(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'edited $count files',
+      one: 'edited 1 file',
+    );
+    return '$_temp0';
+  }
 
   @override
   String stepsRead(int count) {
@@ -7817,7 +7850,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appearanceSettingsEditDetailDescription =>
-      'How the agent\'s edits to files show in the conversation: as a card of the changes, always open; or as one line that opens to them.';
+      'How the agent\'s edits to files show in the conversation: as one line that opens to the changes, or as a card of the changes, always open.';
 
   @override
   String get appearanceSettingsEditDetailCard => 'Card with changes';

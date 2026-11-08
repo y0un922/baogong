@@ -2312,6 +2312,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get toolEdited => '已编辑';
 
   @override
+  String get toolOverwrote => '已覆盖';
+
+  @override
+  String get editCreated => '新建';
+
+  @override
+  String editOverwriteLines(int from, int to) {
+    return '$from → $to 行';
+  }
+
+  @override
+  String editShowAllLines(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '显示全部 $count 行',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get toolRunning => '正在运行';
 
   @override
@@ -2502,6 +2523,16 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get imageCopy => '复制图片';
+
+  @override
+  String stepsEdited(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '编辑 $count 个文件',
+    );
+    return '$_temp0';
+  }
 
   @override
   String stepsRead(int count) {
@@ -7347,7 +7378,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get appearanceSettingsEditDetailDescription =>
-      'Agent 编辑文件时在对话中的样子：直接显示为改动卡片；或者省略为一行，点开才看到改动。';
+      'Agent 编辑文件时在对话中的样子：省略为一行，点开才看到改动；或者直接显示为改动卡片。';
 
   @override
   String get appearanceSettingsEditDetailCard => '显示改动';

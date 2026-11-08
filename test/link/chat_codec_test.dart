@@ -10,6 +10,26 @@ void main() {
       ChatCodec.decode(jsonDecode(jsonEncode(ChatCodec.encode(item))))!
           as ToolCallItem;
 
+  test('an edit keeps its tool display across the phone link', () {
+    const item = CodeDiffItem(
+      fileName: 'note.txt',
+      directory: '/project',
+      lines: [DiffLine(DiffLineType.added, 1, 'hello')],
+      displayTool: 'write',
+      displayPath: 'note.txt',
+      writeLines: 1,
+      writeBytes: 6,
+      writeExisted: false,
+    );
+    final copy =
+        ChatCodec.decode(jsonDecode(jsonEncode(ChatCodec.encode(item))))!
+            as CodeDiffItem;
+    expect(copy.displayTool, 'write');
+    expect(copy.displayPath, 'note.txt');
+    expect(copy.writeExisted, false);
+    expect(copy.writeBytes, 6);
+  });
+
   final picture = ImageAttachment(
     bytes: Uint8List.fromList([1, 2, 3]),
     mediaType: 'image/png',

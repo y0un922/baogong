@@ -194,6 +194,62 @@ List<String> shown(Transcript transcript) => [
 
 void main() {
   group('pi adapter', () {
+    test(
+      'write keeps the old file for the tool display and side panel',
+      () async {
+        final dir = Directory.systemTemp.createTempSync('bao-pi-write-');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final file = File('${dir.path}/note.txt')
+          ..writeAsStringSync('one\nold\n');
+        final pi = FakePi();
+        final (:kernel, :transcript, :events, starts: _) = piKernel([
+          pi,
+        ], context: KernelContext(cwd: dir.path));
+        addTearDown(kernel.dispose);
+        kernel.send(const KernelTurn(id: 't1', text: 'Rewrite note.txt'));
+        await pumpEventQueue();
+        pi.emit({'type': 'turn_start'});
+        pi.emit({
+          'type': 'tool_execution_start',
+          'toolCallId': 'w1',
+          'toolName': 'write',
+          'args': {'path': 'note.txt', 'content': 'one\nnew\n'},
+        });
+        await pumpEventQueue();
+        file.writeAsStringSync('one\nnew\n');
+        pi.emit({
+          'type': 'tool_execution_end',
+          'toolCallId': 'w1',
+          'toolName': 'write',
+          'result': {
+            'content': [
+              {'type': 'text', 'text': 'Wrote note.txt'},
+            ],
+          },
+          'isError': false,
+        });
+        await pumpEventQueue();
+
+        final diff = [
+          for (var i = 0; i < transcript.length; i++)
+            if (transcript.itemAt(i) case final CodeDiffItem item) item,
+        ].single;
+        expect(diff.displayTool, 'write');
+        expect(diff.displayPath, 'note.txt');
+        expect(diff.writeExisted, isTrue);
+        expect((diff.writeLines, diff.writeBytes), (2, 8));
+        expect((diff.added, diff.removed), (1, 1));
+        expect(
+          events.whereType<FileEdited>().single.original,
+          isA<OriginalText>().having(
+            (original) => original.text,
+            'text',
+            'one\nold\n',
+          ),
+        );
+      },
+    );
+
     test('a recorded turn: a command, a read, an edit to review', () async {
       final pi = FakePi(turn: recordedTurn());
       final (:kernel, :transcript, :events, starts: _) = piKernel([pi]);
@@ -1037,7 +1093,6 @@ void main() {
           ]);
         },
       );
-
     });
 
     test('pi gone mid-turn: the turn ends saying why; restarted, it goes '

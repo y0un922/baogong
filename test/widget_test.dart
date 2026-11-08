@@ -787,7 +787,7 @@ void main() {
 final _foldedSteps = RegExp(r'Read 1 file, searched 1 pattern');
 
 /// An edit's card, as it copies: its file's name and counts.
-final _edits = RegExp(r'^main\.dart \+', multiLine: true);
+final _edits = RegExp(r'^Edited main\.dart ', multiLine: true);
 
 /// The scrollbar, not the minimap that stands in for it where there is room.
 void _scrollbarOnly() {

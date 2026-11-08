@@ -71,6 +71,27 @@ void main() {
     expect(session.filesSeen, ['/p/a.dart', '/p/b.dart']);
   });
 
+  test('foldersVisited are those cd moved into, the last first', () {
+    final live = StreamController<KernelEvent>.broadcast(sync: true);
+    addTearDown(live.close);
+    final session = _session(live.stream);
+    for (final (i, command) in const [
+      'cd /p/out && make',
+      'ls',
+      'cd "/p/my docs" && soffice --convert-to pdf a.docx',
+      'cd relative && ls',
+      'cd /p/out && ls',
+    ].indexed) {
+      live.add(
+        ItemUpserted(i, 'run$i', TerminalItem(command: command, output: '')),
+      );
+    }
+    final folders = session.foldersVisited;
+    expect(folders, ['/p/out', '/p/my docs']);
+    live.add(const ItemUpserted(9, 'say', AssistantTextItem('done')));
+    expect(session.foldersVisited, same(folders));
+  });
+
   test("each change pending with its turn and what the turn was asked", () {
     final live = StreamController<KernelEvent>.broadcast(sync: true);
     addTearDown(live.close);

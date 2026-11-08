@@ -121,13 +121,13 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    expect(find.text('Card with changes'), findsOneWidget);
-    await choose('Compact');
-    expect(EditDetail.current.value, EditDetail.compact);
-    expect(settings.written[EditDetail.settingKey], 'compact');
-
+    expect(find.text('Compact'), findsOneWidget);
     await choose('Card with changes');
     expect(EditDetail.current.value, EditDetail.card);
+    expect(settings.written[EditDetail.settingKey], 'card');
+
+    await choose('Compact');
+    expect(EditDetail.current.value, EditDetail.compact);
     expect(settings.written.containsKey(EditDetail.settingKey), isTrue);
     expect(settings.written[EditDetail.settingKey], isNull);
     await leave(tester);

@@ -11,6 +11,7 @@ import '../kernel/kernel_registry.dart';
 import '../kernel/kernel_types.dart';
 import '../kernel/transcript.dart';
 import '../remote/remote_location.dart';
+import '../workspace/agent_work_path.dart' show agentCdTarget;
 import 'chat_feed.dart';
 import 'chat_models.dart';
 import 'composer/composer_draft.dart';
@@ -1025,6 +1026,19 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     return _filesSeen = files;
   });
   List<String> _filesSeen = const [];
+
+  /// The folders the agent moved into (`cd /x && …`), the last first:
+  /// where a file it names relative to the folder it was in may be.
+  List<String> get foldersVisited => _cached(#foldersVisited, () {
+    final folders = <String>{
+      for (var i = _transcript.length - 1; i >= 0; i--)
+        if (_transcript.itemAt(i) case TerminalItem(:final command))
+          ?agentCdTarget(command),
+    }.toList();
+    if (listEquals(folders, _foldersVisited)) return _foldersVisited;
+    return _foldersVisited = folders;
+  });
+  List<String> _foldersVisited = const [];
 
   /// [path] absolute, on the project's host (a remote project's paths are
   /// its host's).

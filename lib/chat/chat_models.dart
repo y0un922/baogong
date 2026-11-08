@@ -483,12 +483,38 @@ class CodeDiffItem extends ChatItem {
     required this.fileName,
     required this.directory,
     required this.lines,
-    this._added,
-    this._removed,
-  });
+    int? added,
+    int? removed,
+    this.displayTool,
+    this.displayPath,
+    this.editLines,
+    this.diffHunks,
+    this.writeLines,
+    this.writeBytes,
+    this.writeExisted,
+    this.writeComparable = false,
+    this.writeDiffOmitted = false,
+    this.writeOldLines,
+  }) : // Public parameter names also serve the Claude Code translator.
+       // ignore: prefer_initializing_formals
+       _added = added,
+       // ignore: prefer_initializing_formals
+       _removed = removed;
 
   final String fileName;
   final String directory;
+
+  /// Presentation data for the shared pi-tool-display edit/write layout.
+  final String? displayTool;
+  final String? displayPath;
+  final int? editLines;
+  final int? diffHunks;
+  final int? writeLines;
+  final int? writeBytes;
+  final bool? writeExisted;
+  final bool writeComparable;
+  final bool writeDiffOmitted;
+  final int? writeOldLines;
 
   /// The file's path, as the agent gave it.
   String get path => directory.isEmpty ? fileName : '$directory/$fileName';

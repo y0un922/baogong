@@ -1796,6 +1796,17 @@ class CodexKernel
           fileName: p.basename(absolute),
           directory: p.dirname(absolute),
           lines: lines,
+          displayTool: kind == 'add' ? 'write' : 'edit',
+          displayPath: path,
+          editLines: lines
+              .where((line) => line.type == DiffLineType.added)
+              .length,
+          diffHunks: kind == 'add' || kind == 'delete'
+              ? 1
+              : RegExp(r'^@@ ', multiLine: true).allMatches(diff).length,
+          writeLines: kind == 'add' ? lines.length : null,
+          writeBytes: kind == 'add' ? utf8.encode(diff).length : null,
+          writeExisted: kind == 'add' ? false : null,
         ),
       ),
     );

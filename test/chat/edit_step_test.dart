@@ -2,11 +2,184 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/chat/edit_detail.dart';
 import 'package:baocode/chat/widgets/edit_step.dart';
 import 'package:baocode/chat/widgets/step_header.dart';
 import 'package:baocode/ide/ide_code_diff.dart';
 
+CodeDiffItem _edit({
+  String fileName = 'a.dart',
+  String directory = 'lib',
+  List<DiffLine> lines = const [
+    DiffLine(DiffLineType.removed, 3, 'old'),
+    DiffLine(DiffLineType.added, 3, 'new'),
+  ],
+  int? added,
+  int? removed,
+  String? displayTool,
+  bool? writeExisted,
+  int? writeLines,
+  int? writeBytes,
+  int? writeOldLines,
+}) => CodeDiffItem(
+  fileName: fileName,
+  directory: directory,
+  lines: lines,
+  added: added,
+  removed: removed,
+  displayTool: displayTool,
+  writeExisted: writeExisted,
+  writeLines: writeLines,
+  writeBytes: writeBytes,
+  writeOldLines: writeOldLines,
+);
+
+Future<void> _pump(
+  WidgetTester tester,
+  Widget child, {
+  Size size = const Size(800, 1200),
+}) async {
+  await tester.pumpWidget(MaterialApp(home: Scaffold(body: child)));
+  await tester.pump();
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+}
+
 void main() {
+  testWidgets('a compact row shows the file, directory and counts', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      EditStep(
+        item: _edit(fileName: 'auth.dart', directory: 'lib/services'),
+      ),
+    );
+    expect(find.text('Edited'), findsOneWidget);
+    expect(find.text('auth.dart'), findsOneWidget);
+    expect(find.text('lib/services'), findsOneWidget);
+    expect(find.text('+1 -1', findRichText: true), findsOneWidget);
+    expect(find.byType(IdeCodeDiff), findsNothing);
+  });
+
+  testWidgets('a new file is Created, with +lines and size', (tester) async {
+    await _pump(
+      tester,
+      EditStep(
+        item: _edit(
+          fileName: 'note.txt',
+          directory: '',
+          displayTool: 'write',
+          writeExisted: false,
+          writeLines: 2,
+          writeBytes: 8,
+          lines: [
+            DiffLine(DiffLineType.added, 1, 'one'),
+            DiffLine(DiffLineType.added, 2, 'two'),
+          ],
+          added: 2,
+          removed: 0,
+        ),
+      ),
+    );
+    expect(find.text('Created'), findsOneWidget);
+    expect(find.text('2 lines'), findsNothing);
+    expect(find.text('+2', findRichText: true), findsOneWidget);
+    expect(find.text(' · 8 B'), findsOneWidget);
+  });
+
+  testWidgets('an overwrite shows old → new line counts', (tester) async {
+    await _pump(
+      tester,
+      EditStep(
+        item: _edit(
+          displayTool: 'write',
+          writeExisted: true,
+          writeOldLines: 40,
+          writeLines: 48,
+          added: 12,
+          removed: 4,
+        ),
+      ),
+    );
+    expect(find.text('Overwrote'), findsOneWidget);
+    expect(find.text('40 → 48 lines'), findsOneWidget);
+    expect(find.text('+12 -4', findRichText: true), findsOneWidget);
+  });
+
+  testWidgets('consecutive edits of one file share a row marked ×N', (
+    tester,
+  ) async {
+    final first = _edit(added: 2, removed: 1);
+    final second = _edit(added: 4, removed: 2);
+    final third = _edit(added: 1, removed: 0);
+    var expanded = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => EditStep(
+              item: first,
+              also: [second, third],
+              expanded: expanded,
+              onToggle: () => setState(() => expanded = !expanded),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('×3'), findsOneWidget);
+    expect(find.text('+7 -3', findRichText: true), findsOneWidget);
+    expect(find.byType(IdeCodeDiff), findsNothing);
+
+    await tester.tap(find.text('a.dart'));
+    await tester.pump();
+    expect(find.byType(IdeCodeDiff), findsNWidgets(3));
+  });
+
+  testWidgets('opening a long diff clips it and offers Show all', (
+    tester,
+  ) async {
+    final item = CodeDiffItem(
+      fileName: 'a.dart',
+      directory: 'lib',
+      lines: [
+        for (var i = 1; i <= 40; i++)
+          DiffLine(DiffLineType.added, i, 'line $i'),
+      ],
+    );
+    await _pump(tester, EditStep(item: item, expanded: true));
+    expect(find.text('Show all 40 lines'), findsOneWidget);
+    expect(find.byType(StepBody), findsNothing);
+
+    await tester.tap(find.text('Show all 40 lines'));
+    await tester.pump();
+    expect(find.text('Show all 40 lines'), findsNothing);
+    expect(find.byType(StepBody), findsOneWidget);
+  });
+
+  testWidgets('a new file opens as highlighted code, not a green diff', (
+    tester,
+  ) async {
+    const item = CodeDiffItem(
+      fileName: 'note.txt',
+      directory: '',
+      displayTool: 'write',
+      writeExisted: false,
+      writeLines: 2,
+      lines: [
+        DiffLine(DiffLineType.added, 1, 'one'),
+        DiffLine(DiffLineType.added, 2, 'two'),
+      ],
+    );
+    await _pump(tester, const EditStep(item: item, expanded: true));
+    final diff = tester.widget<IdeCodeDiff>(find.byType(IdeCodeDiff));
+    expect(diff.sideBySide, isFalse);
+    expect(diff.original, diff.modified);
+    expect(diff.modified, 'one\ntwo');
+  });
+
   test('the sides number their lines as their files do, across hunks', () {
     final sides = DiffSides(const [
       DiffLine(DiffLineType.context, 142, 'a'),
@@ -52,12 +225,7 @@ void main() {
         DiffLine(DiffLineType.added, 11, 'final b = 3;'),
       ],
     );
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(body: EditStep(item: item)),
-      ),
-    );
-    await tester.pump();
+    await _pump(tester, const EditStep(item: item, expanded: true));
     final diff = tester.widget<IdeCodeDiff>(find.byType(IdeCodeDiff));
     expect(diff.sideBySide, isTrue);
     expect(diff.embedded, isTrue);
@@ -76,12 +244,18 @@ void main() {
       fileName: 'a.dart',
       directory: 'lib',
       lines: [
-        for (var i = 1; i <= 40; i++)
+        for (var i = 1; i <= 40; i++) ...[
           DiffLine(
-            DiffLineType.added,
+            DiffLineType.removed,
             i,
             'final value$i = ${'"${'x' * 120}"'};',
           ),
+          DiffLine(
+            DiffLineType.added,
+            i,
+            'final value$i = ${'"${'y' * 120}"'};',
+          ),
+        ],
       ],
     );
 
@@ -95,7 +269,7 @@ void main() {
               controller: outer,
               children: [
                 const SizedBox(height: 100),
-                EditStep(item: item),
+                EditStep(item: item, expanded: true),
                 const SizedBox(height: 2000),
               ],
             ),
@@ -103,6 +277,8 @@ void main() {
         ),
       );
       await tester.pump();
+      await tester.pump();
+      await tester.tap(find.text('Show all 40 lines'));
       await tester.pump();
       return outer;
     }
@@ -146,47 +322,22 @@ void main() {
       await tester.pumpAndSettle();
       expect(outer.offset, 0);
     });
+  });
 
-    testWidgets('its editors scroll across by bars at its bottom', (
-      tester,
-    ) async {
-      await pumpInList(tester);
-      final diff = tester.widget<IdeCodeDiff>(find.byType(IdeCodeDiff));
-      final editors = diff.horizontal!.value;
-      expect(editors, hasLength(1)); // A new file: the modified alone.
-      final editor = editors.single;
-      expect(editor.max, greaterThan(0));
-      // The bar is at the bottom of what the card shows, not the diff's,
-      // out of view.
-      final shown = tester.getRect(
-        find
-            .descendant(
-              of: find.byType(StepBody),
-              matching: find.byType(Scrollable),
-            )
-            .first,
-      );
-      final bar = find.byWidgetPredicate(
-        (widget) => widget.runtimeType.toString() == '_AcrossBar',
-      );
-      expect(tester.getRect(bar).bottom, shown.bottom);
-      expect(
-        shown.bottom,
-        lessThan(tester.getRect(find.byType(IdeCodeDiff)).bottom),
-      );
-      // Dragged, the editor scrolls across.
-      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      addTearDown(mouse.removePointer);
-      final thumb = find.descendant(
-        of: bar,
-        matching: find.byType(GestureDetector),
-      );
-      await mouse.down(tester.getCenter(thumb));
-      await mouse.moveBy(const Offset(40, 0));
-      await mouse.moveBy(const Offset(40, 0));
-      await mouse.up();
-      await tester.pump();
-      expect(editor.scroll.value.dx, greaterThan(0));
-    });
+  test('diffstat fills all five squares once the total is 5', () {
+    expect(editDiffStatSlots(5, 2), (4, 1));
+    expect(editDiffStatSlots(3, 1), (3, 1));
+    expect(editDiffStatSlots(4, 0), (4, 0));
+    expect(editDiffStatSlots(30, 0), (5, 0));
+    expect(editDiffStatSlots(10, 1), (4, 1));
+    expect(editDiffStatSlots(1, 1), (1, 1));
+    expect(editDiffStatSlots(0, 0), (0, 0));
+  });
+
+  testWidgets('card detail starts with the diff open', (tester) async {
+    EditDetail.current.value = EditDetail.card;
+    addTearDown(() => EditDetail.current.value = EditDetail.compact);
+    await _pump(tester, EditStep(item: _edit()));
+    expect(find.byType(IdeCodeDiff), findsOneWidget);
   });
 }

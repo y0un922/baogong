@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 import '../theme/workbench_theme.dart' show themeColors;
+import 'file_service.dart';
 import 'ide_editor_placeholder.dart';
 
 /// [path]'s pages, one under another, to scroll and zoom. PDFium, loaded
@@ -62,7 +63,19 @@ class _IdePdfPreviewState extends State<IdePdfPreview> {
       _error = null;
     });
     final read = widget.read;
-    if (read == null) return;
+    if (read == null) {
+      // PDFium opens this machine's file itself, and tells a missing one
+      // from a broken one only as an unexpected error.
+      try {
+        await fileByteSize(widget.path);
+      } on IdeFileNotFoundException catch (error) {
+        if (!mounted || load != _load) return;
+        setState(() => _error = error);
+      } catch (_) {
+        // Left to PDFium to say.
+      }
+      return;
+    }
     try {
       final bytes = await read(widget.path);
       if (!mounted || load != _load) return;

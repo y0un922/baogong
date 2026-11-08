@@ -2361,17 +2361,20 @@ void main() {
     expect(tab.request.range, const FileLineRange(12));
   });
 
-  testWidgets('files outside the project do not open; web links stay the '
-      'browser\'s', (tester) async {
+  testWidgets('files in another project open in the side panel; web links '
+      'stay in the browser', (tester) async {
     final (:panel, :session) = await _pumpReply(
       tester,
       '[secrets](../outside/key.pem), [passwd](/etc/passwd), '
       '`/etc/hosts` and [the site](https://baocode.dev).',
       texts: {'/etc/hosts': 'x', '/outside/key.pem': 'x'},
     );
-    expect(_span(tester, 'secrets')?.recognizer, isNull);
-    expect(_span(tester, 'passwd')?.recognizer, isNull);
-    expect(_span(tester, '/etc/hosts')?.recognizer, isNull);
+    expect(_span(tester, 'secrets')?.recognizer, isA<TapGestureRecognizer>());
+    expect(_span(tester, 'passwd')?.recognizer, isA<TapGestureRecognizer>());
+    expect(
+      _span(tester, '/etc/hosts')?.recognizer,
+      isA<TapGestureRecognizer>(),
+    );
     // The web link keeps its own (the browser's), which no file takes.
     expect(_span(tester, 'the site')?.recognizer, isA<TapGestureRecognizer>());
     final scope = tester.element(find.byType(MarkdownView));
@@ -2379,11 +2382,14 @@ void main() {
       FileOpenScope.maybeOf(scope)!.linkRecognizer('https://baocode.dev'),
       isNull,
     );
-    expect(panel.shown, isFalse);
-    expect(_active(panel, session), isNull);
+    _tapSpan(tester, 'secrets');
+    await tester.pumpAndSettle();
+    expect(panel.shown, isTrue);
+    expect(_active(panel, session)?.path, '/outside/key.pem');
+    expect(_edited(tester).text, 'x');
   });
 
-  testWidgets('a read outside the project is not a link', (tester) async {
+  testWidgets('a read outside the project opens its file', (tester) async {
     final panel = AgentSidePanel();
     addTearDown(panel.dispose);
     final existence = FileExistence(null);
@@ -2413,9 +2419,12 @@ void main() {
       ),
     );
     await tester.tap(find.byType(ToolCallRow).first);
-    expect(opened, isEmpty);
+    expect([for (final request in opened) request.path], ['/etc/passwd']);
     await tester.tap(find.byType(ToolCallRow).last);
-    expect([for (final request in opened) request.path], ['/p/a.dart']);
+    expect(
+      [for (final request in opened) request.path],
+      ['/etc/passwd', '/p/a.dart'],
+    );
   });
 
   testWidgets('the side panel is toggled from the title bar, and kept shown '

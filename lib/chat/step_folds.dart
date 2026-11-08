@@ -31,10 +31,11 @@ class StepFold {
 typedef StepRow = ({StepFold? work, StepFold? steps, bool item});
 
 /// How a history folds: each run of at least two quick steps into one line
-/// ("Read 3 files, ran 2 commands"), and each finished turn's work into
-/// one line before its answer ("Worked for 4m 32s"). Edits, subagents and
-/// the agent's words stand apart: they break a run. A plan's card is never
-/// folded.
+/// ("Edited 3 files +48 -12 · read 5 files, ran 2 commands"), and each
+/// finished turn's work into one line before its answer ("Worked for 4m
+/// 32s"). Subagents and the agent's words stand apart: they break a run.
+/// A plan's card is never folded. One edit alone, nothing else to fold
+/// with, stays a compact line.
 ///
 /// Thoughts one after another, nothing between them, show as one (see
 /// [mergeThoughts]): its row is the first's, the others show nothing.
@@ -47,6 +48,8 @@ class StepFolds {
     this._items,
     this._thoughtRuns,
     this._thoughtOf,
+    this._editRuns,
+    this._editOf,
   );
 
   /// Nothing folded.
@@ -54,6 +57,8 @@ class StepFolds {
     const [],
     const [],
     null,
+    const {},
+    const [],
     const {},
     const [],
     const {},
@@ -73,6 +78,8 @@ class StepFolds {
     final turnEnds = <int, int>{};
     final thoughtRuns = <int, int>{};
     final thoughtOf = List<int?>.filled(count, null);
+    final editRuns = <int, int>{};
+    final editOf = List<int?>.filled(count, null);
 
     for (var start = 0; start < count;) {
       if (items[start] is! ThinkingItem) {
@@ -86,6 +93,25 @@ class StepFolds {
       if (end - start >= 2) {
         thoughtRuns[start] = end;
         thoughtOf.fillRange(start + 1, end, start);
+      }
+      start = end;
+    }
+
+    for (var start = 0; start < count;) {
+      if (items[start] is! CodeDiffItem) {
+        start++;
+        continue;
+      }
+      final path = (items[start] as CodeDiffItem).path;
+      var end = start + 1;
+      while (end < count &&
+          items[end] is CodeDiffItem &&
+          (items[end] as CodeDiffItem).path == path) {
+        end++;
+      }
+      if (end - start >= 2) {
+        editRuns[start] = end;
+        editOf.fillRange(start + 1, end, start);
       }
       start = end;
     }
@@ -163,6 +189,8 @@ class StepFolds {
       items,
       thoughtRuns,
       thoughtOf,
+      editRuns,
+      editOf,
     );
   }
 
@@ -175,6 +203,13 @@ class StepFolds {
 
   /// For each thought shown in an earlier one's row, where that run starts.
   final List<int?> _thoughtOf;
+
+  /// Where each run of consecutive edits of the same file ends, by where
+  /// it starts.
+  final Map<int, int> _editRuns;
+
+  /// For each edit shown in an earlier one's row, where that run starts.
+  final List<int?> _editOf;
 
   /// The runs of thoughts as one, as asked for.
   final Map<int, ThinkingItem> _merged = {};
@@ -189,9 +224,21 @@ class StepFolds {
     ]);
   }
 
+  /// Consecutive edits of the same file starting at [index]; empty if it
+  /// is not the first of two or more.
+  List<CodeDiffItem> editGroupAt(int index) {
+    final end = _editRuns[index];
+    if (end == null) return const [];
+    return [for (var i = index; i < end; i++) _items[i] as CodeDiffItem];
+  }
+
   /// Whether item [index] is a thought shown in an earlier one's row.
   bool _mergedAway(int index) =>
       index < _thoughtOf.length && _thoughtOf[index] != null;
+
+  /// Whether item [index] is an edit shown in an earlier one's row.
+  bool _editFollow(int index) =>
+      index < _editOf.length && _editOf[index] != null;
 
   /// The last item row [index] shows: of a run of thoughts it starts, the
   /// run's last.
@@ -229,28 +276,29 @@ class StepFolds {
     final steps = stepsAt(index);
     if (steps == null) return (work: workLine, steps: null, item: own);
     final stepsLine = steps.start == index ? steps : null;
-    // Closed, a run still under way shows its last step as it goes.
+    final liveLast =
+        _rowEnd(index) == steps.end - 1 &&
+        steps.end == _liveEnd &&
+        isUnderWay(shownAt(index, item));
+    // Open, consecutive edits of one file share a row; closed, a run still
+    // under way shows its last step as it goes.
     final shown =
         own &&
-        (isOpen(steps) ||
-            (_rowEnd(index) == steps.end - 1 &&
-                steps.end == _liveEnd &&
-                isUnderWay(shownAt(index, item))));
+        !(_editFollow(index) && isOpen(steps)) &&
+        (isOpen(steps) || liveLast);
     return (work: workLine, steps: stepsLine, item: shown);
   }
 }
 
 /// Whether [item] is a quick step, folded with others like it: a thought,
-/// or a tool call that only looks around or runs something. Not an edit
-/// (shown on its own), a subagent, a message to another agent, a goal
-/// proposed, pictures made, a refused call, nor a command left running in
-/// the background.
+/// a file edit, or a tool call that only looks around or runs something.
+/// Not a subagent, a message to another agent, a goal proposed, pictures
+/// made, a refused call, nor a command left running in the background.
 bool isQuickStep(ChatItem item) => switch (item) {
-  ThinkingItem() => true,
+  ThinkingItem() || CodeDiffItem() => true,
   ToolCallItem(:final kind, :final status) =>
     status != ToolStatus.denied &&
         switch (kind) {
-          ToolKind.edit ||
           ToolKind.agent ||
           ToolKind.message ||
           ToolKind.goal ||
@@ -304,7 +352,14 @@ enum StepAction { read, search, list, fetch, run, browse, use }
 /// The steps of a run, counted by what they did.
 class StepTally {
   StepTally(Iterable<ChatItem> items) {
+    final files = <String>{};
     for (final item in items) {
+      if (item is CodeDiffItem) {
+        files.add(item.path);
+        editAdded += item.added;
+        editRemoved += item.removed;
+        continue;
+      }
       final action = switch (item) {
         ToolCallItem(:final kind) => switch (kind) {
           ToolKind.read => StepAction.read,
@@ -313,6 +368,7 @@ class StepTally {
           ToolKind.web => StepAction.fetch,
           ToolKind.command => StepAction.run,
           ToolKind.browser => StepAction.browse,
+          ToolKind.edit => null,
           _ => StepAction.use,
         },
         TerminalItem(:final command) => commandAction(command),
@@ -321,7 +377,15 @@ class StepTally {
       if (action != null) counts[action] = (counts[action] ?? 0) + 1;
       if (item case ThinkingItem(:final seconds?)) thought += seconds;
     }
+    editFiles = files.length;
   }
+
+  /// Unique files edited in the run.
+  int editFiles = 0;
+
+  /// Lines added and removed across those edits.
+  int editAdded = 0;
+  int editRemoved = 0;
 
   /// By action, in the order the line says them.
   final Map<StepAction, int> counts = {};

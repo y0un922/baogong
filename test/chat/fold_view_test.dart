@@ -109,18 +109,19 @@ void main() {
     expect(_text('Found it.'), findsNothing);
     expect(_text('main.dart'), findsNothing);
 
-    // Open: its words and edit, its run folded on its own.
+    // Open: its words, its runs folded on their own.
     await _toggle(tester, find.byType(WorkFoldLine));
     expect(_text('Found it.'), findsOneWidget);
-    expect(_text('main.dart'), findsOneWidget);
-    expect(_text('b.dart'), findsOneWidget);
     expect(
       _text('Read 1 file, searched 1 pattern · thought 3s'),
       findsOneWidget,
     );
+    expect(_text('Edited 1 file +1 -1 · read 1 file'), findsOneWidget);
+    expect(_text('main.dart'), findsNothing);
     expect(_text('a.dart'), findsNothing);
+    expect(_text('b.dart'), findsNothing);
 
-    await _toggle(tester, find.byType(StepsFoldLine));
+    await _toggle(tester, find.byType(StepsFoldLine).first);
     expect(_text('a.dart'), findsOneWidget);
     expect(_text('grep -rn foo lib'), findsOneWidget);
 

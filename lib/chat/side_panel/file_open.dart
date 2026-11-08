@@ -106,6 +106,7 @@ class FileLinkTarget {
     this.sizeOf,
     this.paths,
     this.roots,
+    this.home,
     this.inPanel = false,
     this.openInIde,
     this.showBrowserTab,
@@ -146,6 +147,9 @@ class FileLinkTarget {
 
   /// How the project's host spells paths; this machine's when null.
   final p.Context? paths;
+
+  /// The project's host's home directory, for `~/file` links.
+  final String? home;
 }
 
 /// Whether a file is in [files], as the listing of its folder says: on a
@@ -228,8 +232,10 @@ class FileExistence extends ChangeNotifier {
   }
 }
 
-/// What the file links under it open: those in [root] (on the project's
-/// host, spelled as [paths]), or a workspace's [roots], through [onOpen].
+/// What the file links under it open, on the project's host (spelled as
+/// [paths]), through [onOpen]. Relative names are tried in [roots] and
+/// [root], then in the folders the agent worked in ([folders], those of
+/// [seen]).
 class FileOpenScope extends InheritedWidget {
   const FileOpenScope({
     super.key,
@@ -238,7 +244,9 @@ class FileOpenScope extends InheritedWidget {
     required this.existence,
     this.paths,
     this.roots = const [],
+    this.home,
     this.seen = const [],
+    this.folders = const [],
     this.local = true,
     this.readBytes,
     this.sizeOf,
@@ -275,6 +283,7 @@ class FileOpenScope extends InheritedWidget {
   final ValueChanged<FileOpenRequest> onOpen;
   final FileExistence existence;
   final p.Context? paths;
+  final String? home;
 
   /// A multi-folder workspace's folders, its files' ([root], the agent's
   /// directory, only holds its settings): a relative path is looked for in
@@ -287,6 +296,14 @@ class FileOpenScope extends InheritedWidget {
   /// name it `a/lib/b.dart`.
   final List<String> seen;
 
+  /// The folders the agent moved into (`cd /x && …`), the last first: a
+  /// path it gave relative to the one it was in is looked for in each.
+  final List<String> folders;
+
+  /// How many of the folders the agent worked in a relative path is looked
+  /// for in, the last worked in first: each is listed to find it.
+  static const _workedInLimit = 16;
+
   static FileOpenScope? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<FileOpenScope>();
 
@@ -294,28 +311,43 @@ class FileOpenScope extends InheritedWidget {
   static FileOpenScope? find(BuildContext context) =>
       context.getInheritedWidgetOfExactType<FileOpenScope>();
 
-  /// [path] (absolute, or relative to [root]) in [root]; null outside it.
-  /// In a workspace, the first of its folders' found to have it; until
-  /// one is, the first's.
+  /// [path] on the project's host. In a workspace, the first folder found
+  /// to have a relative path wins; until one is known, the first candidate.
   String? resolve(String path) {
     final candidates = _candidates(path);
     if (candidates.length < 2) return candidates.firstOrNull;
+    // A tool has already read or changed this file. Its path is more
+    // reliable than a same-named candidate under this project.
+    if (_seen(path) case final file?) return file;
     for (final candidate in candidates) {
       if (existence.known(candidate) == true) return candidate;
     }
     return candidates.first;
   }
 
-  /// Where [path] may be: in each of [roots], then in [root], then the
-  /// file of those [seen] it names.
+  /// Where [path] may be: absolute as written, or the file of [seen] it
+  /// names, then relative to each workspace folder and [root], then to the
+  /// folders the agent worked in (it may have moved out of [root] before
+  /// naming a file it made there with a command). Agents can read and edit
+  /// files outside their starting project, so these candidates must be
+  /// allowed to leave the project too.
   List<String> _candidates(String path) {
+    final context = paths ?? p.context;
+    path = _expandHome(path, context) ?? '';
+    if (path.isEmpty) return const [];
+    if (context.isAbsolute(path)) return [context.normalize(path)];
     final found = <String>{};
-    for (final folder in [...roots, root]) {
-      if (FileLink.resolvePath(path, folder, paths: paths) case final full?) {
-        found.add(full);
-      }
-    }
     if (_seen(path) case final file?) found.add(file);
+    for (final folder in [...roots, root]) {
+      found.add(context.normalize(context.join(folder, path)));
+    }
+    final workedIn = {
+      ...folders,
+      ..._SeenIndex.of(seen, context).folders,
+    }.take(_workedInLimit);
+    for (final folder in workedIn) {
+      found.add(context.normalize(context.join(folder, path)));
+    }
     return [...found];
   }
 
@@ -324,13 +356,17 @@ class FileOpenScope extends InheritedWidget {
   /// `ab.dart`); the last read of those.
   String? _seen(String path) {
     final context = paths ?? p.context;
-    if (path.isEmpty || path.startsWith('~')) return null;
+    path = _expandHome(path, context) ?? '';
+    if (path.isEmpty) return null;
     final normalized = context.normalize(path);
     final index = _SeenIndex.of(seen, context);
+    if (context.isAbsolute(normalized)) {
+      return index.byPath[context.canonicalize(normalized)];
+    }
     final full = context.normalize(context.join(root, path));
     if (index.byPath[context.canonicalize(full)] case final file?) return file;
     final parts = context.split(normalized);
-    if (context.isAbsolute(normalized) || parts.contains('..')) return null;
+    if (parts.contains('..')) return null;
     for (final (:file, :names)
         in index.byName[parts.last] ?? const <_SeenFile>[]) {
       if (names.length <= parts.length) continue;
@@ -343,8 +379,17 @@ class FileOpenScope extends InheritedWidget {
     return null;
   }
 
-  /// Opens [link] if it is in [root]; false if it is not. In a workspace,
-  /// once it is found in one of its folders, if that is not known yet.
+  String? _expandHome(String path, p.Context context) {
+    if (!path.startsWith('~')) return path;
+    if (path.length < 3 || (path[1] != '/' && path.codeUnitAt(1) != 92)) {
+      return null;
+    }
+    final home = this.home;
+    return home == null ? null : context.join(home, path.substring(2));
+  }
+
+  /// Opens [link] on the project's host; false for a path that cannot be
+  /// resolved. In a workspace, asks which folder has it when not yet known.
   bool openLink(FileLink link, {bool diff = false}) {
     final path = resolve(link.path);
     if (path == null) return false;
@@ -370,7 +415,7 @@ class FileOpenScope extends InheritedWidget {
   }
 
   /// What a click on a markdown link to [href] does: opens the file it goes
-  /// to, when that is in [root]; null for any other. A right click has its
+  /// to; null for any other. A right click has its
   /// menu (see [FileLinkMenu]). An image shows enlarged, over [context]'s
   /// window, and a web page here opens in the browser (see [activate]).
   GestureRecognizer? linkRecognizer(String? href, {BuildContext? context}) {
@@ -384,12 +429,15 @@ class FileOpenScope extends InheritedWidget {
   }
 
   /// What a click on inline [code] does: opens the file it names, once
-  /// that is known to exist in [root]; null until then, and for any other.
+  /// that is known to exist or was read by the agent; null until then.
   GestureRecognizer? codeRecognizer(String code, {BuildContext? context}) {
     final link = FileLink.parseText(code);
     if (link == null) return null;
     final path = resolve(link.path);
-    if (path == null || existence.known(path) != true) return null;
+    if (path == null ||
+        (existence.known(path) != true && _seen(link.path) != path)) {
+      return null;
+    }
     return FileLinkRecognizer(
       menuFor(path, () => openLink(link), context: context),
     )..onTap = () => activate(link, path, context);
@@ -539,13 +587,15 @@ class FileOpenScope extends InheritedWidget {
       onOpen != oldWidget.onOpen ||
       existence != oldWidget.existence ||
       paths != oldWidget.paths ||
+      home != oldWidget.home ||
       local != oldWidget.local ||
       readBytes != oldWidget.readBytes ||
       inPanel != oldWidget.inPanel ||
       onOpenInIde != oldWidget.onOpenInIde ||
       onOpenFolder != oldWidget.onOpenFolder ||
       !listEquals(roots, oldWidget.roots) ||
-      !listEquals(seen, oldWidget.seen);
+      !listEquals(seen, oldWidget.seen) ||
+      !listEquals(folders, oldWidget.folders);
 }
 
 /// [FileOpenScope.seen] looked up by path, made once for each list: every
@@ -553,13 +603,16 @@ class FileOpenScope extends InheritedWidget {
 /// the chat is built, and a long session's has thousands of files.
 class _SeenIndex {
   _SeenIndex(List<String> seen, this.context) {
+    final folderSet = <String>{};
     // The last read first, as the files are looked for.
     for (final file in seen.reversed) {
       byPath.putIfAbsent(context.canonicalize(file), () => file);
       final names = context.split(context.normalize(file));
       if (names.isEmpty) continue;
       (byName[names.last] ??= <_SeenFile>[]).add((file: file, names: names));
+      folderSet.add(context.dirname(context.normalize(file)));
     }
+    folders.addAll(folderSet);
   }
 
   static final _made = Expando<_SeenIndex>();
@@ -577,6 +630,9 @@ class _SeenIndex {
 
   /// The files and their names, by the last of those, the last read first.
   final byName = <String, List<_SeenFile>>{};
+
+  /// The folders the files are in, the last read's first.
+  final folders = <String>[];
 }
 
 /// A file of [FileOpenScope.seen], and its names (its folders' and its own).

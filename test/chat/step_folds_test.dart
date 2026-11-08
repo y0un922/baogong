@@ -40,7 +40,7 @@ void main() {
       expect(_folds([_prompt(null), _thought, _read, _thought]), isEmpty);
     });
 
-    test('words, edits, subagents and refused calls break a run', () {
+    test('words, subagents and refused calls break a run', () {
       const denied = ToolCallItem(
         kind: ToolKind.read,
         target: 'x',
@@ -52,19 +52,21 @@ void main() {
         output: '',
         background: true,
       );
-      for (final breaker in <ChatItem>[
-        _words,
-        _edit,
-        agent,
-        denied,
-        background,
-      ]) {
+      for (final breaker in <ChatItem>[_words, agent, denied, background]) {
         expect(
           _folds([_prompt(null), _read, breaker, _grep]),
           isEmpty,
           reason: '${breaker.runtimeType}',
         );
       }
+    });
+
+    test('edits fold with reads and searches', () {
+      expect(_folds([_prompt(null), _read, _edit, _grep]), ['steps 1-4']);
+    });
+
+    test('one edit, however many thoughts, stays as it is', () {
+      expect(_folds([_prompt(null), _thought, _edit, _thought]), isEmpty);
     });
   });
 
@@ -106,7 +108,7 @@ void main() {
           _read,
           _answer,
         ]),
-        ['steps 1-3', 'work 6-8'],
+        ['steps 1-3', 'work 6-8', 'steps 6-8'],
       );
       // Too little after it to fold.
       expect(_folds([_prompt(), _read, _grep, approved, _edit, _answer]), [
@@ -122,6 +124,7 @@ void main() {
     test('its answer is all the words after its last step', () {
       expect(_folds([_prompt(), _edit, _read, _words, _thought, _answer]), [
         'work 1-3',
+        'steps 1-3',
       ]);
     });
 
@@ -135,7 +138,7 @@ void main() {
         _read,
         const UserMessageItem(text: 'Then this', queued: true),
       ];
-      expect(_folds(items, live: true), ['work 1-3']);
+      expect(_folds(items, live: true), ['work 1-3', 'steps 1-3']);
     });
   });
 
@@ -177,6 +180,54 @@ void main() {
         ],
         [true, true, true],
       );
+    });
+
+    test('a closed run under way shows a last edit as it goes', () {
+      const running = ToolCallItem(
+        kind: ToolKind.edit,
+        target: 'a.dart',
+        status: ToolStatus.running,
+      );
+      final live = <ChatItem>[
+        _prompt(null),
+        _read,
+        running,
+        const LiveStatusItem('Planning next move', visible: false),
+      ];
+      final folds = _fold(live, live: true);
+      bool shown(int i) => folds.rowAt(i, live[i], (_) => false).item;
+      expect([for (var i = 1; i < 3; i++) shown(i)], [false, true]);
+    });
+
+    test('an open run merges consecutive edits of the same file', () {
+      const a1 = CodeDiffItem(
+        fileName: 'a.dart',
+        directory: 'lib',
+        lines: [],
+        added: 2,
+        removed: 1,
+      );
+      const a2 = CodeDiffItem(
+        fileName: 'a.dart',
+        directory: 'lib',
+        lines: [],
+        added: 1,
+        removed: 0,
+      );
+      const b = CodeDiffItem(
+        fileName: 'b.dart',
+        directory: 'lib',
+        lines: [],
+        added: 3,
+        removed: 0,
+      );
+      final items = <ChatItem>[_prompt(null), a1, a2, b];
+      final folds = _fold(items);
+      expect(_folds(items), ['steps 1-4']);
+      expect(folds.editGroupAt(1), hasLength(2));
+      expect(folds.editGroupAt(3), isEmpty);
+      bool shown(int i) => folds.rowAt(i, items[i], (_) => true).item;
+      expect([for (var i = 1; i < 4; i++) shown(i)], [true, false, true]);
     });
 
     test('a closed run under way shows the step it is on', () {
@@ -301,6 +352,37 @@ void main() {
       expect(_fold(items).turnEndingAt(2), 0);
       expect(_fold(items).turnEndingAt(3), isNull);
     });
+  });
+
+  test('a run counts unique files edited and their lines', () {
+    final tally = StepTally([
+      const CodeDiffItem(
+        fileName: 'a.dart',
+        directory: 'lib',
+        lines: [],
+        added: 10,
+        removed: 2,
+      ),
+      const CodeDiffItem(
+        fileName: 'a.dart',
+        directory: 'lib',
+        lines: [],
+        added: 5,
+        removed: 1,
+      ),
+      const CodeDiffItem(
+        fileName: 'b.dart',
+        directory: 'lib',
+        lines: [],
+        added: 3,
+        removed: 0,
+      ),
+      _read,
+    ]);
+    expect(tally.editFiles, 2);
+    expect(tally.editAdded, 18);
+    expect(tally.editRemoved, 3);
+    expect(tally.counts, {StepAction.read: 1});
   });
 
   test('a run counts what its steps did; commands by their words', () {

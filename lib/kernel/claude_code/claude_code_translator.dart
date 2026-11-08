@@ -989,6 +989,41 @@ class ClaudeTranslator {
         imageFiles: imageFiles,
       );
     }
+    if (name == 'Edit' ||
+        name == 'MultiEdit' ||
+        name == 'Write' ||
+        name == 'NotebookEdit') {
+      final filePath = path('file_path') ?? path('notebook_path');
+      final isWrite = name == 'Write';
+      final count = isWrite
+          ? _displayLines(_string(input['content'])).length
+          : name == 'MultiEdit'
+          ? _list(input['edits']).whereType<Map>().fold<int>(
+              0,
+              (total, edit) =>
+                  total + _displayLines(_string(edit['new_string'])).length,
+            )
+          : _displayLines(
+              _string(input['new_string']) ?? _string(input['new_source']),
+            ).length;
+      final bytes = utf8.encode(_string(input['content']) ?? '').length;
+      final size = bytes < 1024
+          ? '$bytes B'
+          : bytes < 1024 * 1024
+          ? '${(bytes / 1024).toStringAsFixed(1)} KB'
+          : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+      return ToolCallItem(
+        kind: ToolKind.edit,
+        tool: isWrite ? 'write' : 'edit',
+        target: filePath ?? '',
+        path: filePath,
+        detail: isWrite
+            ? '($count ${count == 1 ? 'line' : 'lines'} • $size)'
+            : '($count ${count == 1 ? 'line' : 'lines'})',
+        status: status,
+        output: output,
+      );
+    }
     return switch (name) {
       'Read' => ToolCallItem(
         kind: ToolKind.read,
@@ -1022,16 +1057,6 @@ class ClaudeTranslator {
         target: base(path('path')),
         path: path('path'),
         status: status,
-      ),
-      'Edit' || 'MultiEdit' || 'Write' || 'NotebookEdit' => ToolCallItem(
-        kind: ToolKind.edit,
-        label: name == 'Write'
-            ? tense('Wrote', 'Writing')
-            : tense('Edited', 'Editing'),
-        target: base(path('file_path') ?? path('notebook_path')),
-        path: path('file_path') ?? path('notebook_path'),
-        status: status,
-        output: output,
       ),
       'Bash' => TerminalItem(
         command: _string(input['command']) ?? '',
@@ -1393,6 +1418,13 @@ class ClaudeTranslator {
     return OriginalByEdits(edits.nonNulls.toList());
   }
 
+  static List<String> _displayLines(String? text) {
+    if (text == null || text.isEmpty) return const [];
+    final lines = text.replaceAll('\r', '').split('\n');
+    if (lines.last.isEmpty) lines.removeLast();
+    return lines;
+  }
+
   /// An edit's result as a diff card and a pending change; false when it
   /// carries no patch to show.
   bool _diff(String id, _Tool tool, Map<String, Object?> result) {
@@ -1462,8 +1494,10 @@ class ClaudeTranslator {
         }
       }
     }
-    if (lines.isEmpty) return false;
+    if (lines.isEmpty && tool.name != 'Write') return false;
     final slash = path.lastIndexOf('/');
+    final writtenContent =
+        _string(tool.input['content']) ?? _string(result['content']) ?? '';
     _put(
       id,
       CodeDiffItem(
@@ -1472,6 +1506,35 @@ class ClaudeTranslator {
         lines: lines,
         added: added,
         removed: removed,
+        displayTool: tool.name == 'Write' ? 'write' : 'edit',
+        displayPath: path,
+        editLines: tool.name == 'MultiEdit'
+            ? _list(tool.input['edits']).whereType<Map>().fold<int>(
+                0,
+                (total, edit) =>
+                    total + _displayLines(_string(edit['new_string'])).length,
+              )
+            : _displayLines(
+                _string(tool.input['new_string']) ??
+                    _string(tool.input['new_source']),
+              ).length,
+        diffHunks: hunks.isEmpty ? 1 : hunks.length,
+        writeLines: tool.name == 'Write'
+            ? _displayLines(writtenContent).length
+            : null,
+        writeBytes: tool.name == 'Write'
+            ? utf8.encode(writtenContent).length
+            : null,
+        writeExisted: tool.name == 'Write'
+            ? result['type'] == 'create'
+                  ? false
+                  : true
+            : null,
+        writeComparable:
+            tool.name == 'Write' && result['originalFile'] is String,
+        writeOldLines: tool.name == 'Write' && result['originalFile'] is String
+            ? _displayLines(_string(result['originalFile'])).length
+            : null,
       ),
       parent: tool.parent,
     );

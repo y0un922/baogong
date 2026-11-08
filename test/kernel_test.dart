@@ -837,6 +837,15 @@ void main() {
       expect((edits['/p/new.txt']! as OriginalText).text, isNull);
       expect((edits['/p/sub.txt']! as OriginalText).text, 'a\n');
       expect(edits['/p/untold.txt'], isNull);
+      final shownEdits = {
+        for (final event in events.whereType<ItemUpserted>())
+          if (event.item case final CodeDiffItem diff) event.id: diff,
+      };
+      expect(shownEdits['e1']?.displayTool, 'edit');
+      expect(shownEdits['e1']?.diffHunks, 1);
+      expect(shownEdits['w1']?.displayTool, 'write');
+      expect(shownEdits['w1']?.writeExisted, false);
+      expect(shownEdits['w1']?.writeLines, 1);
     });
 
     test("a subagent's edits, sent without their patches, are told from "
@@ -6371,6 +6380,12 @@ exec /usr/bin/env "\$@"
           (event.original! as OriginalText).text,
       ];
       expect(originals, [null, 'old\n']);
+      final changes = [
+        for (final event in events.whereType<ItemUpserted>())
+          if (event.item case final CodeDiffItem diff) diff,
+      ];
+      expect(changes.map((change) => change.displayTool), ['write', 'edit']);
+      expect(changes.first.writeExisted, false);
     });
 
     test('a command running when the turn stops shows as failed', () async {

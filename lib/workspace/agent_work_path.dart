@@ -42,7 +42,6 @@ final _cd = RegExp(
 
 /// The folder [command] starts by moving into (`cd /x && …`), when it is
 /// an absolute one.
-@visibleForTesting
 String? agentCdTarget(String command) {
   final match = _cd.firstMatch(command);
   if (match == null) return null;

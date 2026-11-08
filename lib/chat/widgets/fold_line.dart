@@ -9,9 +9,9 @@ import 'agent_step.dart';
 import 'content_image.dart';
 import 'step_header.dart';
 
-/// A run of quick steps, folded: "Read 3 files, ran 2 commands", the
-/// counts standing out; then, fainter, how long it thought. Opens to the
-/// steps.
+/// A run of quick steps, folded: "Edited 3 files +48 -12 · read 5 files,
+/// ran 2 commands", edits first when there are any, the counts standing
+/// out; then, fainter, how long it thought. Opens to the steps.
 class StepsFoldLine extends StatelessWidget {
   const StepsFoldLine({
     super.key,
@@ -29,7 +29,11 @@ class StepsFoldLine extends StatelessWidget {
   final List<ChatImage> images;
 
   /// What the steps did, each phrase with its count in it.
-  static List<(String, int)> _actions(StepTally tally, AppLocalizations l10n) {
+  static List<(String, int)> _actions(
+    StepTally tally,
+    AppLocalizations l10n, {
+    bool capitalize = true,
+  }) {
     final actions = [
       for (final action in StepAction.values)
         if (tally.counts[action] case final count?)
@@ -46,9 +50,11 @@ class StepsFoldLine extends StatelessWidget {
             count,
           ),
     ];
-    // The line starts as a sentence does.
-    if (actions.firstOrNull case (final first, final count)) {
-      actions[0] = (first[0].toUpperCase() + first.substring(1), count);
+    // The line starts as a sentence does, unless edits already did.
+    if (capitalize) {
+      if (actions.firstOrNull case (final first, final count)) {
+        actions[0] = (first[0].toUpperCase() + first.substring(1), count);
+      }
     }
     return actions;
   }
@@ -67,10 +73,26 @@ class StepsFoldLine extends StatelessWidget {
   /// when null).
   static String text(StepTally tally, {AppLocalizations? l10n}) {
     final strings = l10n ?? englishLocalizations;
+    final edited = _editedText(tally, strings);
+    final actions = _actions(tally, strings, capitalize: edited == null);
     return [
-      _actions(tally, strings).map((a) => a.$1).join(strings.stepsSeparator),
+      ?edited,
+      if (actions.isNotEmpty)
+        actions.map((a) => a.$1).join(strings.stepsSeparator),
       ?_thought(tally, strings),
     ].join(' · ');
+  }
+
+  /// "Edited 3 files +48 -12", the run's edits; null when it edited none.
+  static String? _editedText(StepTally tally, AppLocalizations l10n) {
+    if (tally.editFiles <= 0) return null;
+    var phrase = l10n.stepsEdited(tally.editFiles);
+    phrase = phrase[0].toUpperCase() + phrase.substring(1);
+    return [
+      phrase,
+      if (tally.editAdded > 0) '+${tally.editAdded}',
+      if (tally.editRemoved > 0) '-${tally.editRemoved}',
+    ].join(' ');
   }
 
   @override
@@ -78,7 +100,13 @@ class StepsFoldLine extends StatelessWidget {
     final l10n = context.l10n;
     final count = TextStyle(color: AppColors.text, fontWeight: FontWeight.w600);
     final faint = TextStyle(color: AppColors.textFaint);
-    final actions = _actions(tally, l10n);
+    final plusMinus = TextStyle(
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallbacks,
+      fontSize: 11.5,
+    );
+    final edited = _editedText(tally, l10n);
+    final actions = _actions(tally, l10n, capitalize: edited == null);
     return _FoldSemantics(
       expanded: expanded,
       onToggle: onToggle,
@@ -89,8 +117,31 @@ class StepsFoldLine extends StatelessWidget {
         trailingGap: 0,
         trailing: _thumbnails(context, images, expanded: expanded),
         spans: [
+          if (edited != null) ...[
+            ..._withCount(
+              l10n.stepsEdited(tally.editFiles)[0].toUpperCase() +
+                  l10n.stepsEdited(tally.editFiles).substring(1),
+              tally.editFiles,
+              count,
+            ),
+            if (tally.editAdded > 0)
+              TextSpan(
+                text: ' +${tally.editAdded}',
+                style: plusMinus.copyWith(
+                  color: themeColors['chat.linesAddedForeground'],
+                ),
+              ),
+            if (tally.editRemoved > 0)
+              TextSpan(
+                text: ' -${tally.editRemoved}',
+                style: plusMinus.copyWith(
+                  color: themeColors['chat.linesRemovedForeground'],
+                ),
+              ),
+          ],
           for (final (i, (phrase, n)) in actions.indexed) ...[
-            if (i > 0) TextSpan(text: l10n.stepsSeparator),
+            if (i > 0 || edited != null)
+              TextSpan(text: i > 0 ? l10n.stepsSeparator : ' · '),
             ..._withCount(phrase, n, count),
           ],
           if (_thought(tally, l10n) case final thought?)

@@ -1353,6 +1353,35 @@
   "toolSearched": "Searched",
   "toolEditing": "Editing",
   "toolEdited": "Edited",
+  "toolOverwrote": "Overwrote",
+  "@toolOverwrote": {
+    "description": "Verb on a compact file-edit row when the agent wrote over an existing file."
+  },
+  "editCreated": "Created",
+  "@editCreated": {
+    "description": "Verb on a compact file-edit row when the agent wrote a new file."
+  },
+  "editOverwriteLines": "{from} → {to} lines",
+  "@editOverwriteLines": {
+    "description": "A file written over: old line count, then new, on its compact row.",
+    "placeholders": {
+      "from": {
+        "type": "int"
+      },
+      "to": {
+        "type": "int"
+      }
+    }
+  },
+  "editShowAllLines": "{count, plural, =1{Show all 1 line} other{Show all {count} lines}}",
+  "@editShowAllLines": {
+    "description": "Under a clipped edit diff: opens the rest of its lines.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "toolRunning": "Running",
   "toolRan": "Ran",
   "toolFetching": "Fetching",
@@ -1484,6 +1513,15 @@
   "imageCopy": "Copy Image",
   "@imageCopy": {
     "description": "Context menu item of an enlarged image: copies the image to the clipboard."
+  },
+  "stepsEdited": "{count, plural, =1{edited 1 file} other{edited {count} files}}",
+  "@stepsEdited": {
+    "description": "Part of a folded run of steps' line, first when it edited files, e.g. \"Edited 3 files +48 -12\". File count is unique paths.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "stepsRead": "{count, plural, =1{read 1 file} other{read {count} files}}",
   "@stepsRead": {
@@ -5532,7 +5570,7 @@
     }
   },
   "appearanceSettingsEditDetail": "File Edits",
-  "appearanceSettingsEditDetailDescription": "How the agent's edits to files show in the conversation: as a card of the changes, always open; or as one line that opens to them.",
+  "appearanceSettingsEditDetailDescription": "How the agent's edits to files show in the conversation: as one line that opens to the changes, or as a card of the changes, always open.",
   "appearanceSettingsEditDetailCard": "Card with changes",
   "appearanceSettingsEditDetailCompact": "Compact",
   "appearanceSettingsEditDetailLabel": "File edits: {detail}",

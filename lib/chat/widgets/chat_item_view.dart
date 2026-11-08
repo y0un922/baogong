@@ -23,6 +23,7 @@ class ChatItemView extends StatelessWidget {
   const ChatItemView({
     super.key,
     required this.item,
+    this.also = const [],
     this.expanded = false,
     this.onToggle,
     this.onEdit,
@@ -33,6 +34,9 @@ class ChatItemView extends StatelessWidget {
   });
 
   final ChatItem item;
+
+  /// Later consecutive edits of the same file, when [item] is one.
+  final List<CodeDiffItem> also;
   final bool expanded;
   final VoidCallback? onToggle;
 
@@ -143,6 +147,7 @@ class ChatItemView extends StatelessWidget {
         ),
       final CodeDiffItem diff => EditStep(
         item: diff,
+        also: also,
         expanded: expanded,
         onToggle: onToggle,
       ),
@@ -257,13 +262,23 @@ String chatItemPlainText(
             printed,
         ],
       ].join('\n'),
-    CodeDiffItem(:final fileName, :final lines) => [
+    CodeDiffItem(:final fileName, :final directory, :final lines) => [
       [
-        // A card shows only the file's name over its lines, always open.
-        if (EditDetail.current.value == EditDetail.compact)
-          StepHeader.text(strings.toolEdited, fileName)
+        if (item.displayTool == 'write' && item.writeExisted != true)
+          strings.editCreated
+        else if (item.displayTool == 'write' && item.writeExisted == true)
+          strings.toolOverwrote
         else
-          fileName,
+          strings.toolEdited,
+        fileName,
+        if (directory.isNotEmpty) directory,
+        if (item.displayTool == 'write' &&
+            item.writeExisted == true &&
+            (item.writeOldLines != null || item.writeLines != null))
+          strings.editOverwriteLines(
+            item.writeOldLines ?? 0,
+            item.writeLines ?? 0,
+          ),
         if (item.added > 0) '+${item.added}',
         if (item.removed > 0) '-${item.removed}',
       ].join(' '),

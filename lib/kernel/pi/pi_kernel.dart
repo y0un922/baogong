@@ -18,6 +18,9 @@ import '../kernel_types.dart';
 import '../output_meter.dart';
 import '../queued_messages.dart';
 import 'pi_transport.dart';
+import 'pi_write_snapshot_stub.dart'
+    if (dart.library.io) 'pi_write_snapshot_io.dart'
+    as write_snapshot;
 
 /// Adapts pi's RPC mode (`pi --mode rpc`) to [AgentKernel]. pi asks no
 /// leave to use its tools, so nothing is approved here; what its
@@ -1048,7 +1051,12 @@ class PiKernel
   /// Tools at work, as they were called.
   final Map<
     String,
-    ({String name, Map<String, Object?> args, DateTime started})
+    ({
+      String name,
+      Map<String, Object?> args,
+      DateTime started,
+      write_snapshot.WriteSnapshot? previous,
+    })
   >
   _tools = {};
 
@@ -1353,7 +1361,14 @@ class PiKernel
     final id = message['toolCallId'] as String;
     final name = message['toolName'] as String? ?? '';
     final args = (message['args'] as Map?)?.cast<String, Object?>() ?? {};
-    _tools[id] = (name: name, args: args, started: DateTime.now());
+    _tools[id] = (
+      name: name,
+      args: args,
+      started: DateTime.now(),
+      previous: name == 'write' && args['path'] is String
+          ? write_snapshot.readBeforeWrite(_absolute(args['path'] as String))
+          : null,
+    );
     if ((name, args['questions']) case (
       'ask_user_question',
       final List questions,
@@ -1398,7 +1413,13 @@ class PiKernel
     if (_questionnaires.remove(id)?.dialogId case final requestId?) {
       _resolveDialog(requestId);
     }
-    final item = _finishedTool(name, args, result, failed: failed);
+    final item = _finishedTool(
+      name,
+      args,
+      result,
+      failed: failed,
+      previous: tool?.previous,
+    );
     emit(ItemUpserted(nextSeq, id, item));
     if (failed || item is! CodeDiffItem) return;
     final patch = (result['details'] as Map?)?['patch'] as String?;
@@ -1409,9 +1430,18 @@ class PiKernel
           path: _absolute(args['path'] as String? ?? ''),
           added: item.added,
           removed: item.removed,
+          kind: name == 'write' && tool?.previous?.existed == false
+              ? FileChangeKind.added
+              : FileChangeKind.modified,
         ),
         turnId: _turn,
-        original: patch == null ? null : OriginalByPatch(patch),
+        original: patch != null
+            ? OriginalByPatch(patch)
+            : name == 'write' && tool?.previous?.existed == false
+            ? const OriginalText(null)
+            : name == 'write' && tool?.previous?.content != null
+            ? OriginalText(tool!.previous!.content)
+            : null,
       ),
     );
   }
@@ -1423,22 +1453,51 @@ class PiKernel
     Map<String, Object?> args,
     Map<String, Object?> result, {
     required bool failed,
+    write_snapshot.WriteSnapshot? previous,
   }) {
     final path = args['path'] as String?;
     if (!failed && path != null) {
       if (name == 'edit') {
         if ((result['details'] as Map?)?['patch'] case final String patch) {
-          return _diff(path, _patchLines(patch));
+          return _diff(
+            path,
+            _patchLines(patch),
+            tool: 'edit',
+            editLines: _editLineCount(args),
+            hunks: RegExp(r'^@@ ', multiLine: true).allMatches(patch).length,
+          );
         }
       } else if (name == 'write') {
         final content = args['content'] as String? ?? '';
-        final lines = content.endsWith('\n')
-            ? content.substring(0, content.length - 1).split('\n')
-            : content.split('\n');
-        return _diff(path, [
-          for (final (index, line) in lines.indexed)
-            DiffLine(DiffLineType.added, index + 1, line),
-        ]);
+        final lines = _contentLines(content);
+        final old = previous?.content == null
+            ? null
+            : _contentLines(previous!.content!);
+        final omitted =
+            old != null &&
+            (old.length > 4000 ||
+                lines.length > 4000 ||
+                old.length * lines.length > 1000000);
+        return _diff(
+          path,
+          omitted
+              ? const []
+              : old == null
+              ? [
+                  for (final (index, line) in lines.indexed)
+                    DiffLine(DiffLineType.added, index + 1, line),
+                ]
+              : _writeDiff(old, lines),
+          tool: 'write',
+          added: omitted ? lines.length : null,
+          removed: omitted ? old.length : null,
+          writeLines: lines.length,
+          writeBytes: utf8.encode(content).length,
+          writeExisted: previous?.existed,
+          writeComparable: old != null,
+          writeDiffOmitted: omitted,
+          writeOldLines: old?.length,
+        );
       }
     }
     final exitCode = switch (result['structuredContent']) {
@@ -1531,9 +1590,24 @@ class PiKernel
           status: status,
         );
       case 'edit' || 'write':
+        final count = name == 'write'
+            ? _contentLines(arg('content')).length
+            : _editLineCount(args);
+        final bytes = utf8.encode(arg('content')).length;
+        final size = bytes < 1024
+            ? '$bytes B'
+            : bytes < 1024 * 1024
+            ? '${(bytes / 1024).toStringAsFixed(1)} KB'
+            : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
         return ToolCallItem(
           kind: ToolKind.edit,
-          target: p.basename(path),
+          label: name,
+          tool: name,
+          input: args,
+          target: write_snapshot.displayPath(path),
+          detail: name == 'write'
+              ? '($count ${count == 1 ? 'line' : 'lines'} • $size)'
+              : '($count ${count == 1 ? 'line' : 'lines'})',
           path: _absolute(path),
           output: output,
           status: status,
@@ -1551,13 +1625,95 @@ class PiKernel
     }
   }
 
-  CodeDiffItem _diff(String path, List<DiffLine> lines) {
+  CodeDiffItem _diff(
+    String path,
+    List<DiffLine> lines, {
+    String? tool,
+    int? added,
+    int? removed,
+    int? editLines,
+    int? hunks,
+    int? writeLines,
+    int? writeBytes,
+    bool? writeExisted,
+    bool writeComparable = false,
+    bool writeDiffOmitted = false,
+    int? writeOldLines,
+  }) {
     final absolute = _absolute(path);
     return CodeDiffItem(
       fileName: p.basename(absolute),
       directory: p.dirname(absolute),
       lines: lines,
+      added: added,
+      removed: removed,
+      displayTool: tool,
+      displayPath: write_snapshot.displayPath(path),
+      editLines: editLines,
+      diffHunks: hunks,
+      writeLines: writeLines,
+      writeBytes: writeBytes,
+      writeExisted: writeExisted,
+      writeComparable: writeComparable,
+      writeDiffOmitted: writeDiffOmitted,
+      writeOldLines: writeOldLines,
     );
+  }
+
+  static List<String> _contentLines(String content) {
+    if (content.isEmpty) return const [];
+    final lines = content.replaceAll('\r', '').split('\n');
+    if (lines.last.isEmpty) lines.removeLast();
+    return lines;
+  }
+
+  static int _editLineCount(Map<String, Object?> args) {
+    int count(Object? value) {
+      if (value is! Map) return 0;
+      if (value['lines'] case final List lines) {
+        return lines.whereType<String>().length;
+      }
+      if (value['lines'] case final String lines) {
+        return _contentLines(lines).length;
+      }
+      return _contentLines(value['newText'] as String? ?? '').length;
+    }
+
+    if (args['edits'] case final List edits when edits.isNotEmpty) {
+      return edits.fold(0, (total, edit) => total + count(edit));
+    }
+    return count(args);
+  }
+
+  /// The write display plugin compares old and new lines by LCS. Bound the
+  /// matrix as it does so a large generated file cannot stall the UI.
+  static List<DiffLine> _writeDiff(List<String> old, List<String> next) {
+    final matrix = List.generate(
+      old.length + 1,
+      (_) => List<int>.filled(next.length + 1, 0),
+    );
+    for (var i = old.length - 1; i >= 0; i--) {
+      for (var j = next.length - 1; j >= 0; j--) {
+        matrix[i][j] = old[i] == next[j]
+            ? matrix[i + 1][j + 1] + 1
+            : math.max(matrix[i + 1][j], matrix[i][j + 1]);
+      }
+    }
+    final diff = <DiffLine>[];
+    var i = 0, j = 0;
+    while (i < old.length || j < next.length) {
+      if (i < old.length && j < next.length && old[i] == next[j]) {
+        diff.add(DiffLine(DiffLineType.context, j + 1, next[j]));
+        i++;
+        j++;
+      } else if (i < old.length &&
+          (j == next.length || matrix[i + 1][j] >= matrix[i][j + 1])) {
+        diff.add(DiffLine(DiffLineType.removed, i + 1, old[i++]));
+      } else {
+        diff.add(DiffLine(DiffLineType.added, j + 1, next[j++]));
+      }
+    }
+    return diff;
   }
 
   /// The lines of a unified diff, numbered as in the file.

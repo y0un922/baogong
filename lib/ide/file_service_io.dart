@@ -14,8 +14,15 @@ class LocalIdeFileService extends LocalFiles implements IdeFileService {
   LocalIdeFileService(super.root);
 }
 
-/// How many bytes the file at [path] takes.
-Future<int> fileByteSize(String path) => File(path).length();
+/// How many bytes the file at [path] takes; [IdeFileNotFoundException]
+/// when there is no such file.
+Future<int> fileByteSize(String path) async {
+  try {
+    return await File(path).length();
+  } on PathNotFoundException {
+    throw IdeFileNotFoundException(path);
+  }
+}
 
 Future<void> uploadTo(
   IdeFileService files,

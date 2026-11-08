@@ -94,7 +94,7 @@ class ToolCallRow extends StatelessWidget {
         };
 
   /// The file read or written, where the chat's files open (see
-  /// [FileOpenScope]) and it is in the project.
+  /// [FileOpenScope]), including files in other projects on the same host.
   FileOpenRequest? _file(FileOpenScope? files) {
     final path = this.path;
     if (files == null || path == null) return null;

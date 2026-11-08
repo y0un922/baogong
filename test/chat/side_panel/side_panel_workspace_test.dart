@@ -63,6 +63,8 @@ final _files = _Files({
   '$_site/index.html': '<html>',
   '$_api/main.go': 'package main',
   '$_api/new.go': 'package main',
+  '/code/another/main.go': 'package another',
+  '/elsewhere/a.go': 'package elsewhere',
 });
 
 /// A conversation in the workspace `web` of [roots], its side panel shown
@@ -411,9 +413,9 @@ void main() {
       await pumpEventQueue();
       expect(files.resolve('main.go'), '$_api/main.go');
       expect(files.resolve('index.html'), '$_site/index.html');
-      // An absolute path in any folder; none outside them.
+      // An absolute path on the same host can also be outside the workspace.
       expect(files.resolve('$_api/new.go'), '$_api/new.go');
-      expect(files.resolve('/elsewhere/a.go'), isNull);
+      expect(files.resolve('/elsewhere/a.go'), '/elsewhere/a.go');
     });
 
     test('a link opens where it is found, though not known before', () async {
@@ -425,6 +427,16 @@ void main() {
       await pumpEventQueue();
       expect(opened.single.path, '$_api/new.go');
       expect(opened.single.range, FileLineRange(3));
+    });
+
+    test('links to another project resolve as absolute or ../ paths', () async {
+      final opened = <FileOpenRequest>[];
+      final files = scope(opened);
+      expect(files.openLink(const FileLink('/elsewhere/a.go')), isTrue);
+      expect(opened.single.path, '/elsewhere/a.go');
+      expect(files.openLink(const FileLink('../another/main.go')), isTrue);
+      await pumpEventQueue();
+      expect(opened.last.path, '/code/another/main.go');
     });
   });
 }

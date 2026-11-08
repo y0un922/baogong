@@ -2234,9 +2234,13 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     }
     Widget? shown;
     if (row.item) {
+      final group = item is CodeDiffItem
+          ? _folds.editGroupAt(index)
+          : const <CodeDiffItem>[];
       final view = ChatItemView(
         key: item is LiveStatusItem ? _statusKey : ValueKey(index),
         item: item,
+        also: group.length > 1 ? group.sublist(1) : const [],
         expanded: _isExpanded(index),
         onToggle: () => _toggle(index),
         onEdit: item is UserMessageItem ? () => _startEditing(index) : null,

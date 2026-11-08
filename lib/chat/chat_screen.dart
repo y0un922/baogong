@@ -946,7 +946,9 @@ class _ChatScreenState extends State<ChatScreen>
             onShowBrowserTab: links.showBrowserTab,
             onOpenFolder: links.openFolder,
             roots: links.roots?.call() ?? const [],
+            home: links.home ?? widget.fileMentions?.home,
             seen: _session.filesSeen,
+            folders: _session.foldersVisited,
             local: switch (_session.kernelContext.cwd) {
               final cwd? => !RemoteLocation.isRemote(cwd),
               null => true,

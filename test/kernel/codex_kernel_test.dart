@@ -640,6 +640,12 @@ void main() {
         'diff: /project/a.txt +1 -0',
         'text: ok',
       ]);
+      final diff = transcript.liveItems
+          .map((entry) => entry.$2)
+          .whereType<CodeDiffItem>()
+          .single;
+      expect(diff.displayTool, 'edit');
+      expect(diff.displayPath, '/project/a.txt');
       final edited = events.whereType<FileEdited>().single;
       expect(edited.change.path, '/project/a.txt');
       expect(edited.turnId, 't1');

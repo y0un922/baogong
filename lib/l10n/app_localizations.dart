@@ -4304,6 +4304,30 @@ abstract class AppLocalizations {
   /// **'Edited'**
   String get toolEdited;
 
+  /// Verb on a compact file-edit row when the agent wrote over an existing file.
+  ///
+  /// In en, this message translates to:
+  /// **'Overwrote'**
+  String get toolOverwrote;
+
+  /// Verb on a compact file-edit row when the agent wrote a new file.
+  ///
+  /// In en, this message translates to:
+  /// **'Created'**
+  String get editCreated;
+
+  /// A file written over: old line count, then new, on its compact row.
+  ///
+  /// In en, this message translates to:
+  /// **'{from} → {to} lines'**
+  String editOverwriteLines(int from, int to);
+
+  /// Under a clipped edit diff: opens the rest of its lines.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Show all 1 line} other{Show all {count} lines}}'**
+  String editShowAllLines(int count);
+
   /// No description provided for @toolRunning.
   ///
   /// In en, this message translates to:
@@ -4639,6 +4663,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Copy Image'**
   String get imageCopy;
+
+  /// Part of a folded run of steps' line, first when it edited files, e.g. "Edited 3 files +48 -12". File count is unique paths.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{edited 1 file} other{edited {count} files}}'**
+  String stepsEdited(int count);
 
   /// Part of a folded run of steps' line, e.g. "Read 3 files, ran 2 commands".
   ///
@@ -12690,7 +12720,7 @@ abstract class AppLocalizations {
   /// No description provided for @appearanceSettingsEditDetailDescription.
   ///
   /// In en, this message translates to:
-  /// **'How the agent\'s edits to files show in the conversation: as a card of the changes, always open; or as one line that opens to them.'**
+  /// **'How the agent\'s edits to files show in the conversation: as one line that opens to the changes, or as a card of the changes, always open.'**
   String get appearanceSettingsEditDetailDescription;
 
   /// No description provided for @appearanceSettingsEditDetailCard.
