@@ -8,7 +8,8 @@ import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
 import 'package:bao_editor/textmate/textmate_syntax.dart';
-import 'package:bao_markdown/bao_markdown.dart' show MdClipboard;
+import 'package:bao_markdown/bao_markdown.dart'
+    show MarkdownEditor, MdClipboard;
 
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
 
@@ -69,6 +70,7 @@ import 'keybindings/keymap.dart';
 import 'keybindings/vscode_import.dart';
 import 'l10n/l10n.dart';
 import 'models/featured_upstreams.dart';
+import 'models/magpie_follow.dart';
 import 'models/model_icons.dart';
 import 'models/model_providers.dart';
 import 'models/model_runtime.dart';
@@ -78,6 +80,7 @@ import 'notifications/attention_host.dart';
 import 'notifications/attention_settings.dart';
 import 'platform/memory_budget.dart';
 import 'platform/native_md_clipboard.dart';
+import 'platform/app_binding.dart';
 import 'platform/app_platform.dart';
 import 'platform/data_dir.dart';
 import 'platform/error_log.dart';
@@ -119,6 +122,7 @@ import 'theme/pixel_snapped_text_scaler.dart';
 import 'theme/ui_zoom.dart';
 import 'theme/window_blur.dart';
 import 'theme/workbench_theme.dart';
+import 'theme/theme_transition.dart';
 import 'update/update_controller.dart';
 import 'update/update_platform.dart';
 import 'update/update_service.dart';
@@ -152,7 +156,7 @@ Future<void> main(List<String> arguments) async {
     if (resolution.ok) {
       DataDirectory.current = resolution.directory;
     } else {
-      WidgetsFlutterBinding.ensureInitialized();
+      AppBinding.ensureInitialized();
       DataDirectory.current = await recoverDataDirectory(resolution);
     }
     // What goes wrong unseen from here on, kept for the user to send.
@@ -169,11 +173,12 @@ Future<void> main(List<String> arguments) async {
   unawaited(reapClaudeProcesses());
   unawaited(reapLspProcesses());
   unawaited(reapPtyProcesses());
-  WidgetsFlutterBinding.ensureInitialized();
+  AppBinding.ensureInitialized();
   MemoryBudget.apply();
   if (!kIsWeb) {
     AppEventWatch.start();
     FrameWatch.start();
+    MarkdownEditor.onInputLost = (message) => appEvent('input', message);
   }
   // The Windows app's own logs and the macOS app's hang reports go beside
   // them.
@@ -350,6 +355,10 @@ Future<void> main(List<String> arguments) async {
         http: IoForgeHttp(),
         read: () => files.storage.get<List<Object?>>(forgeAccountsKey),
         write: (json) => files.storage.set(forgeAccountsKey, json),
+        readCertificates: () =>
+            files.storage.get<Map<Object?, Object?>>(forgeCertificatesKey),
+        writeCertificates: (json) =>
+            files.storage.set(forgeCertificatesKey, json),
       ),
     );
     StashForge.current = stash.forge;
@@ -384,6 +393,7 @@ Future<void> main(List<String> arguments) async {
     ..restore(
       setting: colorTheme.colorThemeSetting,
       data: colorTheme.colorThemeData,
+      autoDetectColorScheme: colorTheme.autoDetectColorScheme,
     )
     ..storage = colorTheme
     // A theme of an extension applies once they are read.
@@ -529,16 +539,17 @@ void followSettingsFiles(SettingsFiles files) {
   // Settings → General → Claude Code: the core sessions run on (BaoCode's
   // own, or the CLI), read as each agent starts. Unset, the CLI where it
   // is installed (looked for on the app's PATH, then the shell's), else
-  // the built-in core, which suggests the CLI.
+  // the built-in core.
   ClaudeCore.cliInstalled = localClaudeInstalled;
   unawaited(lookForLocalClaude());
   ClaudeCore.current = () =>
       ClaudeCore.parse(files.settings[ClaudeCore.settingKey]);
   ClaudeCore.changes = files.settings;
-  ClaudeCore.pick = (core) =>
-      files.settings.update(ClaudeCore.settingKey, core.name);
   // Settings → Models: the upstreams, kept in settings.json.
   ModelProviders.current = ModelProviders.settings(files.settings);
+  // The upstream that follows magpie: its models got again as it starts,
+  // and now and then.
+  MagpieFollow.current = MagpieFollow()..start();
   // Claude Code's own models as it last listed them: in the picker
   // before a session on them starts.
   ClaudeCodeKernel.modelCache = files.storage;
@@ -816,7 +827,8 @@ class BaoCodeApp extends StatefulWidget {
   State<BaoCodeApp> createState() => _BaoCodeAppState();
 }
 
-class _BaoCodeAppState extends State<BaoCodeApp> {
+class _BaoCodeAppState extends State<BaoCodeApp>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final Workspace _workspace =
       widget.workspace ??
       (Workspace(preferences: PreferenceStore.file())..load());
@@ -873,6 +885,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
         stopLspProcesses(),
         ?widget.themeExtensions?.dispose(),
         stopPtyProcesses(),
+        ?_settings.link?.stopAdvertising(),
       ]);
       // The remote hosts' servers end, and all they run with them.
       await SshHosts.instance.closeAll();
@@ -882,12 +895,43 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
   );
 
   final WorkbenchThemeService _themes = WorkbenchThemeService.instance;
+  late final _themeTransition = ColorThemeTransition(vsync: this);
   bool? _darkAppearance;
+
+  void _transitionTheme(WorkbenchColors colors, VoidCallback apply) {
+    _themeTransition.change(
+      from: AppColors.windowCanvas,
+      to: AppColors.usesSystemMaterial
+          ? Colors.transparent
+          : colors['sideBar.background'],
+      apply: apply,
+      animate:
+          !identical(colors.theme, _themes.colorTheme) &&
+          !WidgetsBinding
+              .instance
+              .platformDispatcher
+              .accessibilityFeatures
+              .disableAnimations,
+    );
+  }
+
+  @override
+  void didChangeAccessibilityFeatures() {
+    if (WidgetsBinding
+        .instance
+        .platformDispatcher
+        .accessibilityFeatures
+        .disableAnimations) {
+      _themeTransition.finish();
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _lifecycle;
+    WidgetsBinding.instance.addObserver(this);
+    _themes.transition = _transitionTheme;
     _themes.addListener(_colorThemeChanged);
     _colorThemeChanged();
     _locale.addListener(_windows.relabel);
@@ -898,13 +942,28 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
     );
   }
 
+  @override
+  void didChangePlatformBrightness() {
+    unawaited(
+      _themes
+          .setPlatformBrightness(
+            WidgetsBinding.instance.platformDispatcher.platformBrightness,
+          )
+          .catchError((Object error) {
+            debugPrint('System color theme not applied: $error');
+          }),
+    );
+  }
+
   /// The terminals take the theme's colors (`getXtermTheme`); the window's
-  /// own parts follow its type.
+  /// own parts follow its type. The panel's on a card as the editors are,
+  /// of their color: without `terminal.background`, theirs.
   void _colorThemeChanged() {
     final colors = _themes.colors;
     terminalColorTheme.value = TerminalColorTheme.resolve(
       colors.get,
       type: colors.type,
+      inEditor: true,
     );
     editorTerminalColorTheme.value = TerminalColorTheme.resolve(
       colors.get,
@@ -919,6 +978,9 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _themes.transition = null;
+    _themeTransition.dispose();
     _themes.removeListener(_colorThemeChanged);
     _locale.removeListener(_windows.relabel);
     _settings.files?.settings.removeListener(_windows.settingsChanged);
@@ -976,6 +1038,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
     title: 'Baogong',
     debugShowCheckedModeBanner: false,
     theme: buildAppTheme(),
+    themeAnimationDuration: Duration.zero,
     scrollBehavior: const BaoScrollBehavior(),
     builder: (context, child) => ValueListenableBuilder<int>(
       valueListenable: CodeFont.uiScale,
@@ -984,9 +1047,10 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
         // icons and gaps grow with the text they hold.
         final zoom = percent / 100;
         final media = UiZoom.zoomed(MediaQuery.of(context), zoom);
-        // The traffic lights, level with the title bar as it grows.
+        // The traffic lights in the middle of the title bar, as it grows.
         WindowControls.setTitleBarDrop(
-          AppMetrics.titleBarHeight * (zoom - 1) / 2,
+          (AppMetrics.titleBarHeight * zoom - AppMetrics.nativeTitleBarHeight) /
+              2,
           viewId: window.viewId,
         );
         // Windows blurs glyphs drawn at a fractional pixel size.
@@ -1005,7 +1069,10 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
           ),
         );
       },
-      child: child,
+      child: _themeTransition.wrap(
+        child ?? const SizedBox.shrink(),
+        canvas: AppColors.windowCanvas,
+      ),
     ),
     locale: _locale.locale,
     supportedLocales: AppLocale.supportedLocales,

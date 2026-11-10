@@ -102,6 +102,10 @@ class AgentSetup {
   final Map<String, String> settings;
 }
 
+/// How the sidebar orders the projects not pinned: by their latest agent's
+/// time, or as the user dragged them.
+enum ProjectSort { recent, manual }
+
 /// What an agent needs from the user, most urgent first.
 enum ThreadStatus {
   /// Stopped on a question only the user can answer.
@@ -152,6 +156,16 @@ class AgentThread {
 
   bool get isOpen => _session != null;
 
+  /// Its kept session was talked in elsewhere (in a terminal) since it was
+  /// read here, its conversation idle: to be read anew (see
+  /// [Workspace.reload]).
+  bool get goneOnElsewhere => _goneOnElsewhere;
+  bool _goneOnElsewhere = false;
+
+  /// Since when its conversation here has been idle: what is said in its
+  /// session after that is said elsewhere. Null while it runs.
+  DateTime? _quietSince;
+
   /// Its session's id: none for a new agent until its first message.
   String? get id => (isOpen ? session.sessionId : null) ?? record?.id;
   String? get _id => id;
@@ -199,7 +213,15 @@ class AgentThread {
 
   ThreadStatus get status {
     final session = _session;
-    if (session?.pendingInteraction != null) return ThreadStatus.needsInput;
+    // A plan awaiting and a pending request both wait on the user, and
+    // are told of the same way: a turn that ended on its own (what the
+    // agent did about a background subagent's report) still needs their
+    // say-so to go on. Not before the turn that put the plan is over: it
+    // runs till then.
+    if (session?.pendingInteraction != null ||
+        (session?.canStartPlan ?? false)) {
+      return ThreadStatus.needsInput;
+    }
     if (session?.isStreaming ?? false) return ThreadStatus.running;
     if (unread) return ThreadStatus.unread;
     return ThreadStatus.idle;
@@ -375,7 +397,14 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       final project = _project(folder);
       // A remote project's sessions are its host's: no catalog lists them
       // with this machine's, so they are asked for there (not waited for).
-      if (RemoteLocation.isRemote(folder)) unawaited(_listKept(project));
+      // Not one taken off the sidebar (its host removed, say): that would
+      // connect, and ask to sign in, at each start; listed once back.
+      if (!RemoteLocation.isRemote(folder)) continue;
+      if (isHidden(project)) {
+        _unlisted.add(folder);
+      } else {
+        unawaited(_listKept(project));
+      }
     }
     // Only once all were read: what one failed to list is not gone. Nor
     // while remote projects' sessions are still to be listed (or cannot
@@ -407,6 +436,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   Future<void> _refresh() async {
     if (_loading) return;
     final before = _threads.length;
+    var goneOn = false;
     for (final kernel in kernels) {
       final List<ProjectRecord> records;
       try {
@@ -424,11 +454,67 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
             ..insert(0, project);
         }
         for (final session in record.sessions) {
+          if (_noteGoneOn(session)) goneOn = true;
           _addKept(kernel, project, session);
         }
       }
     }
-    if (_threads.length != before) notifyListeners();
+    if (_threads.length != before || goneOn) notifyListeners();
+  }
+
+  /// A message of the conversation's own may be timed a moment after its
+  /// turn is seen to end.
+  static const _ownMessageLag = Duration(seconds: 5);
+
+  /// Notes the conversation of [record] that was talked in elsewhere since
+  /// it was read here (see [AgentThread.goneOnElsewhere]); whether one
+  /// newly was.
+  bool _noteGoneOn(SessionRecord record) {
+    var noted = false;
+    for (final thread in _threads) {
+      if (thread.record?.id != record.id || thread._goneOnElsewhere) continue;
+      final quiet = thread._quietSince;
+      if (thread.isOpen &&
+          quiet != null &&
+          record.updatedAt.isAfter(quiet.add(_ownMessageLag))) {
+        thread._goneOnElsewhere = true;
+        noted = true;
+      }
+    }
+    return noted;
+  }
+
+  /// Whether [thread]'s kept session can be read anew now: not while its
+  /// agent is at work or waits on the user, what they would lose.
+  bool canReload(AgentThread thread) =>
+      !_disposed &&
+      thread.record != null &&
+      thread.isOpen &&
+      _threads.contains(thread) &&
+      !thread.session.isStreaming &&
+      thread.session.pendingInteraction == null;
+
+  /// Reads [thread]'s kept session anew, in its place: what was said in it
+  /// elsewhere since it was read here (gone on with in a terminal) shows.
+  /// The thread stays the same, its marks, draft and place with it; only
+  /// its conversation is opened again, the one before stopped.
+  void reload(AgentThread thread) {
+    if (!canReload(thread)) return;
+    final was = thread.session;
+    // What is typed and not yet saved goes on in the conversation read anew
+    // (none where it was never typed in, e.g. followed from the phone).
+    if (was.draft.content != null) _draftChanged(thread);
+    if (_listeners.remove(thread) case final listener?) {
+      was.removeListener(listener);
+    }
+    thread._session = null;
+    thread._goneOnElsewhere = false;
+    // Opened anew, and listened to (see [_listen]).
+    thread.session;
+    was
+      ..stop()
+      ..dispose();
+    notifyListeners();
   }
 
   /// Opens [path] as a project (if not yet) and a new agent in it.
@@ -496,6 +582,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     }
     if (_threads.length != before) notifyListeners();
   }
+
+  /// Remote projects whose sessions were not asked for, being off the
+  /// sidebar as the app started: asked for once listed again ([_unhide]).
+  final Set<String> _unlisted = {};
 
   /// The listeners of the hosts that could not be reached to list their
   /// projects' sessions, by project.
@@ -1434,8 +1524,16 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
+  /// The folder the app keeps its own things in (the bots'), whose every
+  /// folder is its own: never listed, even one whose bot is gone.
+  String? appFolderRoot;
+
   /// Whether [path] is a folder the app keeps for itself: never listed.
-  bool isAppFolder(String path) => agentSetup?.call(path) != null;
+  bool isAppFolder(String path) {
+    if (agentSetup?.call(path) != null) return true;
+    final root = appFolderRoot;
+    return root != null && (path == root || p.isWithin(root, path));
+  }
 
   /// [settings] with those of the app's folder [cwd] over them.
   Map<String, String> _setUp(String? cwd, Map<String, String> settings) =>
@@ -1453,6 +1551,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   void _unhide(String path) {
     if (_hiddenProjects.remove(path) != null) _save();
+    _listUnlisted(path);
+  }
+
+  /// Lists the sessions of the remote project at [path], back on the
+  /// sidebar, if they were not asked for (see [_unlisted]).
+  void _listUnlisted(String path) {
+    if (_unlisted.remove(path)) unawaited(_listKept(_project(path)));
   }
 
   /// The order the user dragged projects in, by path.
@@ -1478,9 +1583,23 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
-  /// The projects the sidebar lists, in its order: those pinned first;
-  /// then those not dragged yet (e.g. new), most recent first; then as the
-  /// user ordered them.
+  /// How the projects not pinned are ordered: as chosen; else by their
+  /// agents' time, unless the user dragged some already (from before there
+  /// was a choice: their order kept).
+  ProjectSort get projectSort =>
+      _projectSort ??
+      (_projectOrder.isEmpty ? ProjectSort.recent : ProjectSort.manual);
+  ProjectSort? _projectSort;
+  set projectSort(ProjectSort sort) {
+    if (sort == _projectSort) return;
+    _projectSort = sort;
+    _save();
+    notifyListeners();
+  }
+
+  /// The projects the sidebar lists, in its order: those pinned first; then
+  /// by [projectSort] the others, their latest agent's first or as the user
+  /// dragged them (those not dragged yet, e.g. new, before).
   List<Project> get sidebarProjects {
     final shown = [
       for (final project in _projects)
@@ -1491,11 +1610,14 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       for (final project in shown)
         if (pinRank[project.path] != null) project,
     ]..sort((a, b) => pinRank[a.path]!.compareTo(pinRank[b.path]!));
-    final rank = {for (final (i, path) in _projectOrder.indexed) path: i};
     final rest = [
       for (final project in shown)
         if (pinRank[project.path] == null) project,
     ];
+    if (projectSort == ProjectSort.recent) {
+      return [...pinned, ..._byActivity(rest)];
+    }
+    final rank = {for (final (i, path) in _projectOrder.indexed) path: i};
     final ranked = [
       for (final project in rest)
         if (rank[project.path] != null) project,
@@ -1506,6 +1628,27 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         if (rank[project.path] == null) project,
       ...ranked,
     ];
+  }
+
+  /// [projects] by their latest agent's time, the most recent first; those
+  /// with none yet (their agents not read yet, say) after, as they were.
+  List<Project> _byActivity(List<Project> projects) {
+    final latest = <Project, DateTime>{};
+    for (final thread in _threads) {
+      // Only one asked something: a new agent, still empty, is no activity.
+      if (thread.id == null) continue;
+      final time = latest[thread.project];
+      if (time == null || thread.updatedAt.isAfter(time)) {
+        latest[thread.project] = thread.updatedAt;
+      }
+    }
+    final at = {for (final (i, project) in projects.indexed) project: i};
+    return [...projects]..sort((a, b) {
+      final (ta, tb) = (latest[a], latest[b]);
+      if (ta != null && tb != null && ta != tb) return tb.compareTo(ta);
+      if ((ta == null) != (tb == null)) return ta == null ? 1 : -1;
+      return at[a]!.compareTo(at[b]!);
+    });
   }
 
   // --- SSH hosts ------------------------------------------------------------
@@ -1535,7 +1678,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       // Taken off with the host: at the time it went, the last.
       final removed = hidden.values.reduce((a, b) => a.isAfter(b) ? a : b);
       hidden.forEach((path, since) {
-        if (since == removed) _hiddenProjects.remove(path);
+        if (since == removed) {
+          _hiddenProjects.remove(path);
+          _listUnlisted(path);
+        }
       });
     }
     _save();
@@ -1667,7 +1813,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Moves [project] in [sidebarProjects] to just before [before], or
   /// last, among those pinned or among the rest, as it is (last there when
   /// [before] is of the others): all listed are in the user's order from
-  /// then on.
+  /// then on, [ProjectSort.manual] (one not pinned dragged).
   void moveProject(Project project, {Project? before}) {
     final pinned = isPinnedProject(project);
     final order = [
@@ -1685,6 +1831,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     kept
       ..clear()
       ..addAll([...paths, ...rest]);
+    if (!pinned) _projectSort = ProjectSort.manual;
     _save();
     notifyListeners();
   }
@@ -2317,7 +2464,11 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _draftTimer = Timer(const Duration(milliseconds: 500), _writeDrafts);
   }
 
-  void _writeDrafts() => unawaited(_draftStore?.write({..._drafts}));
+  void _writeDrafts() => unawaited(
+    _draftStore?.write({..._drafts}).catchError((Object error) {
+      debugPrint('Workspace drafts not kept: $error');
+    }),
+  );
 
   static Map<String, Object?> _encodeDraft(ComposerDraft draft) => {
     'text': draft.content,
@@ -2393,12 +2544,54 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   bool _colorThemeStored = false;
 
   @override
-  void storeColorTheme({required String setting, String? data}) {
+  bool get autoDetectColorScheme => _autoDetectColorScheme;
+  bool _autoDetectColorScheme = false;
+
+  @override
+  Future<void> storeColorTheme({
+    required String setting,
+    String? data,
+    bool autoDetectColorScheme = false,
+    bool cacheOnly = false,
+  }) async {
+    if (cacheOnly) {
+      await _restoring;
+      if (_colorThemeData == data) return;
+      final old = _colorThemeData;
+      _colorThemeData = data;
+      try {
+        await _writePreferences();
+      } catch (_) {
+        if (_colorThemeData == data) _colorThemeData = old;
+        rethrow;
+      }
+      return;
+    }
+    final old = (
+      _colorTheme,
+      _colorThemeData,
+      _autoDetectColorScheme,
+      _colorThemeStored,
+    );
     _colorTheme = setting;
     _colorThemeData = data;
+    _autoDetectColorScheme = autoDetectColorScheme;
     _colorThemeStored = true;
-    // Not before what was kept is read: that would be written over.
-    unawaited(_restoring.then((_) => _save()));
+    try {
+      // Not before what was kept is read: that would be written over.
+      await _restoring;
+      await _writePreferences();
+    } catch (_) {
+      if (_colorTheme == setting &&
+          _colorThemeData == data &&
+          _autoDetectColorScheme == autoDetectColorScheme) {
+        _colorTheme = old.$1;
+        _colorThemeData = old.$2;
+        _autoDetectColorScheme = old.$3;
+        _colorThemeStored = old.$4;
+      }
+      rethrow;
+    }
   }
 
   /// What was kept, read once [load] has read it.
@@ -2450,6 +2643,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       };
       if (sidebar['grouping'] case final String grouping) {
         _sidebarGrouping = grouping;
+      }
+      if (sidebar['projectSort'] case final String sort) {
+        _projectSort = ProjectSort.values.asNameMap()[sort];
       }
       _collapsedGroups.addAll(list('collapsed'));
       _showArchived = sidebar['showArchived'] == true;
@@ -2562,6 +2758,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _sidePanelView = panel.cast<String, Object?>();
     }
     if (!_colorThemeStored) {
+      _autoDetectColorScheme = kept['autoDetectColorScheme'] == true;
       if (kept['colorTheme'] case final String setting) _colorTheme = setting;
       if (kept['colorThemeData'] case final String data) {
         _colorThemeData = data;
@@ -2570,7 +2767,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   void _save() => unawaited(
-    _store?.write({
+    _writePreferences().catchError((Object error) {
+      debugPrint('Workspace preferences not kept: $error');
+    }),
+  );
+
+  Future<void> _writePreferences() async {
+    await _store?.write({
       'kernel': _preferredKernel.id,
       'editor': _preferredEditor.name,
       'layout': _layout.name,
@@ -2580,6 +2783,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       'ignoredRecommendations': [..._ignoredRecommendations],
       'sidebar': {
         'grouping': ?_sidebarGrouping,
+        'projectSort': ?_projectSort?.name,
         'collapsed': [..._collapsedGroups],
         'showArchived': _showArchived,
         'pinned': [..._pinned],
@@ -2640,8 +2844,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       'sidePanel': ?_sidePanelView,
       'colorTheme': ?_colorTheme,
       'colorThemeData': ?_colorThemeData,
-    }),
-  );
+      if (_autoDetectColorScheme) 'autoDetectColorScheme': true,
+    });
+  }
 
   /// The panes to save: as kept, until [load] has shown them again.
   Object? _chatViewToSave() {
@@ -2718,6 +2923,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     // Named while closed: its CLI keeps the name once running.
     if (_names[thread.record?.id] case final name?) thread.session.rename(name);
     _followDraft(thread);
+    thread._quietSince = DateTime.now();
     void listener() => _sync(thread);
     _listeners[thread] = listener;
     thread.session.addListener(listener);
@@ -2730,6 +2936,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (!_threads.contains(thread)) return;
     final session = thread.session;
     _noteLimit(thread);
+    if (session.isStreaming) {
+      thread._quietSince = null;
+      thread._goneOnElsewhere = false;
+    } else {
+      thread._quietSince ??= DateTime.now();
+    }
     // Renamed in Claude Code (/rename): named so here too.
     if (session.takeRenamed() case final title?) rename(thread, title);
     // An agent of the app's own (a bot's) is named by it, not by what it
@@ -2862,16 +3074,24 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// The agents shown side by side, the grid's cells, the one focused and
   /// where the lines are; an agent by its session's id, a new one by its
-  /// folder.
+  /// folder. Each pane's other tabs too, by id: those under it ([ChatGrid.
+  /// under]'s order) and all its tabs in their order.
   Map<String, Object?>? get _chatView {
     if (_grid.isEmpty) return null;
     final panes = _grid.panes;
     final focused = _selected;
+    List<List<String>> ids(List<AgentThread> Function(AgentThread) of) => [
+      for (final pane in panes) [for (final thread in of(pane)) ?thread.id],
+    ];
     return {
       'panes': [
         for (final thread in panes) thread.id ?? {'new': thread.project.path},
       ],
       'cells': [for (final pane in _grid.cells) panes.indexOf(pane)],
+      if (panes.any((pane) => _grid.under(pane).isNotEmpty)) ...{
+        'under': ids(_grid.under),
+        'tabs': ids(_grid.tabs),
+      },
       if (focused != null && panes.contains(focused))
         'focused': panes.indexOf(focused),
       'columnRatios': _grid.columnRatios,
@@ -2928,6 +3148,25 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     }
     if (cells.isEmpty) return;
     _grid.restore([for (final cell in cells.cells) shown[cell]!]);
+    // Each pane's other tabs, those whose agent is gone left out.
+    List<AgentThread> keptTabs(String key, int pane) => [
+      if (kept[key] case final List<Object?> lists)
+        if (lists.elementAtOrNull(pane) case final List<Object?> ids)
+          for (final id in ids.whereType<String>())
+            ?_threads
+                .where(
+                  (t) =>
+                      t.id == id && !t.archived && !isAppFolder(t.project.path),
+                )
+                .firstOrNull,
+    ];
+    for (final MapEntry(key: pane, value: thread) in shown.entries) {
+      _grid.restoreTabs(
+        thread,
+        keptTabs('tabs', pane),
+        keptTabs('under', pane),
+      );
+    }
     if (kept['columnsFirst'] case final bool columnsFirst) {
       _grid.columnsFirst = columnsFirst;
     }
@@ -2975,9 +3214,43 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void select(AgentThread thread) {
     // A bot's: the phone's, never shown here.
     if (isAppFolder(thread.project.path)) return;
+    if (_selected case final before? when !identical(before, thread)) {
+      if (!identical(_agentsBack.lastOrNull, before)) _agentsBack.add(before);
+      if (_agentsBack.length > _agentsKept) _agentsBack.removeAt(0);
+      _agentsForward.clear();
+    }
     _focus(thread);
     _followInSidebar(thread);
     notifyListeners();
+  }
+
+  /// The agents selected before the one in front, the latest last, and
+  /// those gone back from: where the mouse's back and forward buttons go
+  /// (#516), as a browser's history.
+  final List<AgentThread> _agentsBack = [];
+  final List<AgentThread> _agentsForward = [];
+  static const _agentsKept = 50;
+
+  /// Selects the agent before, or (not [back]) the one gone back from; not
+  /// those archived or deleted since. Whether there was one.
+  bool navigate({required bool back}) {
+    final from = back ? _agentsBack : _agentsForward;
+    final to = back ? _agentsForward : _agentsBack;
+    while (from.isNotEmpty) {
+      final thread = from.removeLast();
+      if (identical(thread, _selected) ||
+          thread.archived ||
+          !_threads.contains(thread) ||
+          !_projects.contains(thread.project)) {
+        continue;
+      }
+      if (_selected case final here?) to.add(here);
+      _focus(thread);
+      _followInSidebar(thread);
+      notifyListeners();
+      return true;
+    }
+    return false;
   }
 
   void _focus(AgentThread thread) {
@@ -3252,9 +3525,34 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Copies [thread]'s conversation into a new agent of its project (see
   /// [ChatSession.fork]): listed, with [thread]'s settings, not shown. Null
-  /// when it could not be (its conversation says why).
-  Future<AgentThread?> fork(AgentThread thread) =>
-      _fork(thread, '${thread.localizedTitle(l10n())} (fork)');
+  /// when it could not be (its conversation says why). [message], when not
+  /// empty, is sent there once what it copied is read (`/fork …`).
+  Future<AgentThread?> fork(
+    AgentThread thread, {
+    ComposerMessage? message,
+  }) async {
+    final forked = await _fork(
+      thread,
+      '${thread.localizedTitle(l10n())} (fork)',
+    );
+    if (forked != null && message != null && !message.isEmpty) {
+      unawaited(_sendOnceRead(forked, message));
+    }
+    return forked;
+  }
+
+  /// Sends [message] in [thread] after what it copied, read as it opens:
+  /// else it would come first.
+  Future<void> _sendOnceRead(
+    AgentThread thread,
+    ComposerMessage message,
+  ) async {
+    final session = thread.session;
+    if (session.loadingHistory) await _historyRead(session);
+    if (_disposed || !_threads.contains(thread)) return;
+    session.send(message);
+    notifyListeners();
+  }
 
   /// [fork], the copy titled [title].
   Future<AgentThread?> _fork(AgentThread thread, String title) async {
@@ -3565,17 +3863,44 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       return;
     }
     if (titler == null || !session.canRename) return;
+    final model = session.selected(KernelChoiceKind.model);
     unawaited(
-      titler!(
-        text,
-        model: session.selected(KernelChoiceKind.model),
-        location: thread.project.path,
-      ).then((title) {
-        if (title == null || thread._named) return;
-        if (_disposed || !_threads.contains(thread)) return;
-        _retitle(thread, title);
-      }),
+      _idOf(thread)
+          .then(
+            (id) => titler!(
+              text,
+              model: model,
+              location: thread.project.path,
+              session: id,
+            ),
+          )
+          .then((title) {
+            if (title == null || thread._named) return;
+            if (_disposed || !_threads.contains(thread)) return;
+            _retitle(thread, title);
+          }),
     );
+  }
+
+  /// [thread]'s id, once its agent has told it (a new one's, as it
+  /// starts), or null a while on: what its title's call is kept under.
+  Future<String?> _idOf(AgentThread thread) {
+    if (thread.id case final id?) return Future.value(id);
+    if (!thread.isOpen) return Future.value();
+    final session = thread.session;
+    final told = Completer<String?>();
+    void listener() {
+      if (thread.id case final id? when !told.isCompleted) told.complete(id);
+    }
+
+    session.addListener(listener);
+    final timeout = Timer(const Duration(seconds: 5), () {
+      if (!told.isCompleted) told.complete();
+    });
+    return told.future.whenComplete(() {
+      timeout.cancel();
+      session.removeListener(listener);
+    });
   }
 
   void rename(AgentThread thread, String title) {
@@ -3605,6 +3930,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       text,
       model: session.selected(KernelChoiceKind.model),
       location: thread.project.path,
+      session: thread.id,
     );
   }
 

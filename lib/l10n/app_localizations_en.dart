@@ -1511,37 +1511,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidePanelTerminal => 'Terminal';
 
   @override
-  String get sidePanelBrowser => 'Browser';
-
-  @override
-  String get browserNotConnected =>
-      'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.';
-
-  @override
-  String get browserNoSharedTab =>
-      'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.';
-
-  @override
   String get browserOtherApp => 'Another Baogong is connected to the browser.';
-
-  @override
-  String get browserSharedTabs => 'Shared Tabs';
-
-  @override
-  String get browserReload => 'Reload';
-
-  @override
-  String get browserShowInBrowser => 'Show in Browser';
-
-  @override
-  String get browserDetached =>
-      'The browser stopped letting Baogong see this tab.';
-
-  @override
-  String get browserReconnect => 'Reconnect';
-
-  @override
-  String get browserShowInPanel => 'Show in Side Panel';
 
   @override
   String get browserWatchTitle => 'Watching you in the browser';
@@ -1697,10 +1667,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidePanelHide => 'Hide side panel';
 
   @override
-  String get sidePanelMoveLeft => 'Move to the Left of the Conversation';
+  String get chatLayout => 'Layout';
 
   @override
-  String get sidePanelMoveRight => 'Move to the Right of the Conversation';
+  String get chatLayoutSidebarChatPanel => 'Sidebar · Chat · Panel';
+
+  @override
+  String get chatLayoutSidebarPanelChat => 'Sidebar · Panel · Chat';
+
+  @override
+  String get chatLayoutPanelChatSidebar => 'Panel · Chat · Sidebar';
+
+  @override
+  String get chatLayoutChatPanelSidebar => 'Chat · Panel · Sidebar';
 
   @override
   String get sidePanelChanges => 'Changes';
@@ -1839,6 +1818,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sidebarByStatus => 'By status';
+
+  @override
+  String get sidebarProjectSortRecent => 'Recent activity';
+
+  @override
+  String get sidebarProjectSortManual => 'Manual';
 
   @override
   String get sidebarTimeNow => 'now';
@@ -2073,6 +2058,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get btwCommandDetail =>
       'Ask in a conversation of its own, beside this one';
+
+  @override
+  String get forkCommandDetail => 'Fork this conversation and open the copy';
+
+  @override
+  String get forkUnavailable =>
+      'This conversation can\'t be forked: it needs a message first, and its agent has to support forking.';
 
   @override
   String get sidebarFoldAsides => 'Hide /btw Conversations';
@@ -2344,10 +2336,21 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get chatAgentMessageSent => 'sent';
+
+  @override
+  String chatAgentMessageSemantics(String agent) {
+    return 'Message from subagent $agent';
+  }
+
+  @override
   String get chatOpensItsConversation => 'Opens its conversation';
 
   @override
   String get chatLoadEarlier => 'Load earlier messages';
+
+  @override
+  String get chatReload => 'Reload (continued elsewhere)';
 
   @override
   String get chatStop => 'Stop';
@@ -2774,6 +2777,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String turnWorked(String duration) {
     return 'Worked for $duration';
+  }
+
+  @override
+  String turnStopped(String duration) {
+    return 'Stopped after $duration';
   }
 
   @override
@@ -3742,7 +3750,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get generalSettingsClaudeCoreDescription =>
-      'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with Baogong, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.';
+      'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with Baogong, and uses only the models added in Settings → Models. By default, the CLI where this machine has Claude Code, else the built-in core; the CLI, picked where there is none, is downloaded for you. Changes apply to new sessions.';
 
   @override
   String get generalSettingsClaudeCoreBuiltin => 'Built-in';
@@ -3979,8 +3987,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get themeHighContrastThemes => 'high contrast themes';
 
   @override
-  String get themeSelectPlaceholder =>
-      'Select Color Theme (detect system color mode disabled)';
+  String get themeAuto => 'Auto';
+
+  @override
+  String get themeFollowSystem => 'Follow system';
+
+  @override
+  String get themeSelectPlaceholder => 'Select Color Theme';
 
   @override
   String get dateNow => 'now';
@@ -5331,6 +5344,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String wbSelectedLines(int lines, int count) {
+    return '($lines lines, $count selected)';
+  }
+
+  @override
   String get wbGoToLineColumn => 'Go to Line/Column';
 
   @override
@@ -6126,7 +6144,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get claudePathMissing =>
-      'None found yet: Claude Code is downloaded as the first conversation starts.';
+      'None found yet: with the Claude Code CLI picked, it is downloaded as the first conversation starts.';
 
   @override
   String get generalSettingsIdeWindows => 'Fast Ide Windows';
@@ -6672,6 +6690,32 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get modelsMagpieJoin => 'Connect magpie';
+
+  @override
+  String get modelsMagpieBadge => 'Follows magpie';
+
+  @override
+  String get modelsMagpieGateway => 'magpie Gateway';
+
+  @override
+  String get modelsMagpieGatewayDescription =>
+      'Models, accounts and routing are set up in magpie, and this list follows it. New routing groups, image models and the models magpie gives Claude Code are turned on as they come; tick any other below.';
+
+  @override
+  String get modelsMagpieRunning => 'Running';
+
+  @override
+  String get modelsMagpieNotRunning => 'magpie isn\'t running';
+
+  @override
+  String get modelsMagpieNotRunningDetail =>
+      'Open magpie, or run magpie serve. Sessions on its models fail until it runs.';
+
+  @override
+  String get modelsMagpieSync => 'Sync Models';
+
+  @override
   String get modelsNewProviderName => 'New Upstream';
 
   @override
@@ -6719,6 +6763,52 @@ class AppLocalizationsEn extends AppLocalizations {
       'Opens ChatGPT\'s sign-in page in the browser.';
 
   @override
+  String get modelsAccountsImport => 'Import';
+
+  @override
+  String get modelsAccountsImportTitle => 'Import Accounts';
+
+  @override
+  String get modelsAccountsImportFile => 'Choose File…';
+
+  @override
+  String get modelsAccountsImportDescription =>
+      'Enter account credentials as JSON or choose a JSON file.';
+
+  @override
+  String get modelsAccountsPaste => 'Enter JSON…';
+
+  @override
+  String get modelsAccountsPastePlaceholder =>
+      'Type or paste your JSON credentials here.';
+
+  @override
+  String get modelsAccountsImportConfirm => 'Import these ChatGPT credentials?';
+
+  @override
+  String get modelsAccountsImportConfirmDetail =>
+      'BaoCode will keep the credentials securely without changing the original file or actively refreshing tokens during import. Renewing them later may rotate the refresh token and require the original tool to sign in again. Only import credentials you are authorized to use.';
+
+  @override
+  String get modelsAccountsImportFailed =>
+      'The credentials could not be read or imported.';
+
+  @override
+  String modelsAccountsImportSummary(int count) {
+    return 'Accounts imported: $count';
+  }
+
+  @override
+  String modelsAccountsImportKept(int count) {
+    return 'Already here, kept as signed in: $count';
+  }
+
+  @override
+  String modelsAccountsImportItemFailed(int index, String error) {
+    return 'Entry $index: $error';
+  }
+
+  @override
   String get modelsAccountSigningIn => 'Waiting for sign-in…';
 
   @override
@@ -6734,7 +6824,12 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get modelsRefreshQuota => 'Refresh Quota';
+  String get modelsRefreshQuota => 'Refresh All Quotas';
+
+  @override
+  String modelsAccountRefreshQuota(String name) {
+    return 'Refresh quota for $name';
+  }
 
   @override
   String get modelsAccountRemove => 'Remove account';
@@ -7119,7 +7214,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsRoleSubagentDescription =>
-      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit). It may be another upstream\'s: Baogong\'s local proxy sends its requests there.';
+      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, the built-in Explore and Plan and those defined as inherit too, over the one its definition or the agent\'s call names. It may be another upstream\'s: Baogong\'s local proxy sends its requests there.';
 
   @override
   String get modelsRoleMissing =>
@@ -8231,6 +8326,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String remoteStatusSystem(String platform) {
+    return 'System: $platform';
+  }
+
+  @override
   String remoteStatusTooltipLost(String host) {
     return 'The connection to $host is lost: click to reconnect now';
   }
@@ -9021,6 +9121,31 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mobilePairCopyLink => 'Copy Link';
 
   @override
+  String get mobilePairQrHint =>
+      'Click to copy the link, to paste on the phone';
+
+  @override
+  String get mobileGetApp => 'Get the Phone App';
+
+  @override
+  String get mobileGetAppDescription =>
+      'Scan with the phone\'s camera: the same downloads as on baocode.dev.';
+
+  @override
+  String get mobileGetAndroidDetail => 'The APK; it keeps itself up to date';
+
+  @override
+  String get mobileGetIos => 'iPhone and iPad';
+
+  @override
+  String get mobileGetIosDetail => 'The beta, on TestFlight';
+
+  @override
+  String mobileGetOpen(String url) {
+    return 'Click to open $url';
+  }
+
+  @override
   String get mobilePairCopied => 'Copied';
 
   @override
@@ -9142,6 +9267,37 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get mobileRelayModePinnedDescription =>
       'Only the one picked: one of BaoCode\'s, or a custom address.';
+
+  @override
+  String get mobileRelayModeDirect => 'Direct Only';
+
+  @override
+  String get mobileRelayModeDirectDescription =>
+      'No relay: phones connect straight to this computer. It needs a public address, or the port below forwarded to it.';
+
+  @override
+  String get mobileDirectPort => 'Direct Port';
+
+  @override
+  String get mobileDirectPortDescription =>
+      'The UDP port phones connect to. Forward it to this computer at the router, and allow it in the firewall.';
+
+  @override
+  String get mobileDirectPortInvalid => 'A port from 1024 to 65535.';
+
+  @override
+  String get mobileDirectAddress => 'Direct Address';
+
+  @override
+  String get mobileDirectAddressDescription =>
+      'It goes in the pairing code and in every connection after.';
+
+  @override
+  String get mobileDirectAddressNone =>
+      'No public address yet: check again once this computer is online, or forward the port to it if it is behind a router.';
+
+  @override
+  String get mobileStatusDirect => 'On, direct only';
 
   @override
   String get mobilePathLan => 'Same network';
@@ -9873,7 +10029,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get accountsDescription =>
-      'Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.';
+      'Sign in to GitHub, GitLab or Gitee to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.';
 
   @override
   String get accountsSignedIn => 'Signed in';
@@ -9883,14 +10039,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get accountsKeptLocally =>
-      'Tokens are kept in this computer\'s keychain and are sent only to the GitHub or GitLab they are for. Nothing is posted without your confirmation.';
+      'Tokens are kept in this computer\'s keychain and are sent only to the GitHub, GitLab or Gitee they are for. Nothing is posted without your confirmation.';
 
   @override
   String get accountsGitHubHosts =>
       'github.com, or your company\'s GitHub Enterprise';
 
   @override
-  String get accountsGitLabHosts => 'gitlab.com, or a self-managed GitLab';
+  String get accountsGitLabHosts =>
+      'gitlab.com, or a self-managed GitLab (http:// or https://, with its port)';
+
+  @override
+  String get accountsGiteeHosts => 'gitee.com, with a personal access token';
 
   @override
   String get accountsSignInBrowser => 'Sign in with Browser';
@@ -9931,7 +10091,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get accountsSignIn => 'Sign In';
 
   @override
-  String get accountsHost => 'Host';
+  String get accountsHost => 'Server';
 
   @override
   String get accountsToken => 'Token';
@@ -9945,6 +10105,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'A personal access token with the api scope.';
 
   @override
+  String get accountsTokenGiteeScopes =>
+      'A personal access token with the user_info, projects, pull_requests, issues and notes scopes.';
+
+  @override
   String accountsTokenCreate(String host) {
     return 'Create a Token on $host';
   }
@@ -9952,6 +10116,21 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get accountsTokenRefused =>
       'The token was not accepted. Check that it is complete and has not expired.';
+
+  @override
+  String get accountsCertificateTitle => 'Untrusted Certificate';
+
+  @override
+  String accountsCertificateDetail(
+    String host,
+    String issuer,
+    String fingerprint,
+  ) {
+    return 'The certificate of $host cannot be verified ($issuer).\n\nSHA-256 fingerprint:\n$fingerprint\n\nTrusting it lets BaoCode reach this server, and only the certificate with this fingerprint is accepted. You are asked again if the certificate changes.';
+  }
+
+  @override
+  String get accountsCertificateTrust => 'Trust and Continue';
 
   @override
   String accountsBrowserTitle(String forge) {
@@ -10111,7 +10290,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashImportNotALink =>
-      'Not a GitHub or GitLab issue or pull request link.';
+      'Not a GitHub, GitLab or Gitee issue or pull request link.';
 
   @override
   String stashImportSignIn(String forge) {
@@ -10138,7 +10317,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashImportNoRepos =>
-      'No project has a GitHub or GitLab remote. Paste an issue link above.';
+      'No project has a GitHub, GitLab or Gitee remote. Paste an issue link above.';
 
   @override
   String get stashImportNone => 'No open issues here.';
@@ -10186,7 +10365,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashWelcomeTrack =>
-      'Cards show their conversations live, and the GitHub and GitLab issues and pull requests they link to stay in sync.';
+      'Cards show their conversations live, and the GitHub, GitLab and Gitee issues and pull requests they link to stay in sync.';
 
   @override
   String get stashWelcomeStart => 'Get Started';
@@ -10283,6 +10462,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get browserSettingsAppOld =>
       'The extension is newer than this Baogong. Update Baogong.';
+
+  @override
+  String get browserSettingsNoFileAccess => 'File access is off';
+
+  @override
+  String get browserSettingsNoFileAccessDescription =>
+      'Agents can\'t open local HTML files or upload files. In chrome://extensions, click Details on BaoCode and turn on Allow access to file URLs.';
 
   @override
   String get browserSettingsInstall => 'Get the Extension';
@@ -10473,16 +10659,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelSetUp => 'Set Up a Model';
-
-  @override
-  String get claudeCoreHint =>
-      'This chat runs on Baogong\'s built-in core. We recommend the Claude Code core for the fullest experience; it\'s downloaded for you if needed.';
-
-  @override
-  String get claudeCoreHintSwitch => 'Switch to Claude Code';
-
-  @override
-  String get claudeCoreHintLater => 'Not Now';
 
   @override
   String get remoteAddServer => 'Add SSH Server...';
@@ -10948,7 +11124,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashSettingsIssueSyncDescription =>
-      'A project that is a Git repository on GitHub or GitLab (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.';
+      'A project that is a Git repository on GitHub, GitLab or Gitee (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.';
 
   @override
   String get stashIssueSyncMine => 'Only those assigned to or opened by me';
@@ -11690,6 +11866,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get diffUnified => 'Unified Viewer';
 
   @override
+  String get gitDetailsLayout => 'Details Position';
+
+  @override
+  String get gitDetailsLayoutAuto => 'Right When Wide Enough';
+
+  @override
+  String get gitDetailsLayoutBeside => 'Right';
+
+  @override
+  String get gitDetailsLayoutBelow => 'Bottom';
+
+  @override
   String get diffIgnoreWhitespace => 'Ignore Whitespace at Line Ends';
 
   @override
@@ -12351,6 +12539,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gitCommitTab => 'Commit';
+
+  @override
+  String get gitCommitPanelFold => 'Fold';
+
+  @override
+  String get gitCommitPanelUnfold => 'Unfold';
 
   @override
   String get gitStashSelected => 'Stash Selected Files…';
@@ -13060,6 +13254,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get ustatFieldUpstreamLatency => 'Upstream answered';
 
   @override
+  String get ustatCallAsking => 'Requesting';
+
+  @override
+  String get ustatCallAnswering => 'Answering';
+
+  @override
+  String get ustatCallCancelled => 'Cancelled';
+
+  @override
   String get ustatFieldFirstToken => 'First token';
 
   @override
@@ -13160,6 +13363,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get ustatSpaceEmpty => 'Nothing kept yet';
+
+  @override
+  String get ustatLoading => 'Reading the calls…';
 
   @override
   String get ustatClearEllipsis => 'Clear…';
@@ -13499,7 +13705,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get ustatPricesDetail =>
-      'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included.';
+      'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included, unless a price is set from a date on.';
 
   @override
   String get ustatPricesAgentHint =>
@@ -13609,6 +13815,150 @@ class AppLocalizationsEn extends AppLocalizations {
       'Claude Code\'s own models without a price of yours are priced at Anthropic\'s API prices: the grey figures.';
 
   @override
+  String ustatPriceRuleTiers(int count) {
+    return '$count tiers by prompt length';
+  }
+
+  @override
+  String get ustatPriceRuleSchedule => 'peak and off-peak hours';
+
+  @override
+  String ustatPriceRuleFast(String factor) {
+    return 'fast mode ×$factor';
+  }
+
+  @override
+  String get ustatPriceRuleServiceTiers => 'by service tier';
+
+  @override
+  String get ustatPriceRuleGeo => 'by region';
+
+  @override
+  String ustatPriceRulePerCall(String amount) {
+    return '$amount a call';
+  }
+
+  @override
+  String get ustatPriceRuleTools => 'tools priced a use';
+
+  @override
+  String ustatPriceRuleVersions(int count) {
+    return '$count prices by date';
+  }
+
+  @override
+  String ustatPriceRuleRate(String factor) {
+    return 'upstream rate ×$factor';
+  }
+
+  @override
+  String ustatPriceRuleTime(String factor) {
+    return 'time of week ×$factor';
+  }
+
+  @override
+  String ustatPriceRuleFees(String amount) {
+    return 'fees $amount';
+  }
+
+  @override
+  String get ustatFees => 'Fees';
+
+  @override
+  String get ustatPricedBy => 'Priced by';
+
+  @override
+  String get ustatUpstreamRates => 'Upstream rates';
+
+  @override
+  String get ustatUpstreamRatesDetail =>
+      'The models of these upstreams without a price of their own: the same model\'s price elsewhere, times the rate.';
+
+  @override
+  String get ustatUpstreamRateClear => 'Clear the rate';
+
+  @override
   String get ustatContextUnpickHint =>
       'Click again to unpick: back to the context as it is now';
+
+  @override
+  String get localRunTitle => 'Run on this computer';
+
+  @override
+  String localRunReason(String host, String system) {
+    return 'The agent on $host wants to run this command on your computer ($system), not on $host.';
+  }
+
+  @override
+  String localRunAlways(String host) {
+    return 'Always allow for $host';
+  }
+
+  @override
+  String get remoteLocalAccess => 'Allow Remote Agents to Act on This Computer';
+
+  @override
+  String get remoteLocalAccessDetail =>
+      'Agents on these hosts may run commands on this computer (asking you each time), copy files both ways and forward ports.';
+
+  @override
+  String get remoteLocalAccessNoAsking => 'Runs commands without asking';
+
+  @override
+  String get remoteLocalAccessAskAgain => 'Ask Each Time';
+
+  @override
+  String get sidePanelPorts => 'Ports';
+
+  @override
+  String portsEmpty(String host) {
+    return 'No ports are forwarded. A server on $host that prints its http://localhost address is forwarded here on its own.';
+  }
+
+  @override
+  String get portsAdd => 'Forward a Port';
+
+  @override
+  String get portsCopy => 'Copy Address';
+
+  @override
+  String get portsOpen => 'Open in Browser';
+
+  @override
+  String get portsStop => 'Stop Forwarding';
+
+  @override
+  String portsHostToHere(String host) {
+    return '$host → this computer';
+  }
+
+  @override
+  String portsHereToHost(String host) {
+    return 'This computer → $host';
+  }
+
+  @override
+  String get portsAuto => 'Auto';
+
+  @override
+  String get portsPort => 'Port';
+
+  @override
+  String get portsListen => 'Listen on (optional)';
+
+  @override
+  String get portsForward => 'Forward';
+
+  @override
+  String portsCopied(String address) {
+    return 'Copied $address';
+  }
+
+  @override
+  String branchBarFolder(String path) {
+    return '$path\nClick to copy its path';
+  }
+
+  @override
+  String get branchBarPathCopied => 'Path copied';
 }

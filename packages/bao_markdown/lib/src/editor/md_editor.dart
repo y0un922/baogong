@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show precisionErrorTolerance;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, precisionErrorTolerance;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -109,6 +110,10 @@ class MarkdownEditor extends StatefulWidget {
 
   /// How its lines' text is aligned (a table's cell's, as its column).
   final TextAlign textAlign;
+
+  /// Told when an editor with the keyboard found itself cut off from the
+  /// platform's input and attached again: the app writes it down.
+  static void Function(String message)? onInputLost;
 
   @override
   State<MarkdownEditor> createState() => MarkdownEditorState();
@@ -1140,6 +1145,7 @@ class MarkdownEditorState extends State<MarkdownEditor>
 
   void _tapDown(TapDragDownDetails details) {
     if (!_focus.hasPrimaryFocus) _focus.requestFocus();
+    _ensureInput('a click');
     final counted = details.consecutiveTapCount;
     final last = _tapAt;
     _tapAt = details.globalPosition;
@@ -1377,6 +1383,19 @@ class MarkdownEditorState extends State<MarkdownEditor>
       ..show()
       ..setEditingState(_remote);
     _imeGeometrySoon();
+  }
+
+  /// Attaches again where the editor has the keyboard but not the
+  /// platform's input: typed letters (an input method's too) would go
+  /// nowhere, and a click, focus not changing, would not bring it back.
+  void _ensureInput(String by) {
+    if (widget.readOnly || !_focus.hasPrimaryFocus || _hasInput) return;
+    MarkdownEditor.onInputLost?.call(
+      '${_connection == null ? 'closed' : 'taken by another client'}; '
+      'attached again on $by',
+    );
+    _connection = null;
+    _openInput();
   }
 
   void _closeInput() {
@@ -1783,6 +1802,7 @@ class MarkdownEditorState extends State<MarkdownEditor>
   KeyEventResult _key(FocusNode node, KeyEvent event) {
     // Not one for a widget in it with the keyboard (a table's cell).
     if (!_focus.hasPrimaryFocus) return KeyEventResult.ignored;
+    if (event is KeyDownEvent) _ensureInput('a key');
     final own = widget.onKey?.call(event);
     if (own != null && own != KeyEventResult.ignored) return own;
     if (event is KeyUpEvent || widget.readOnly || controller.isComposing) {
@@ -1810,6 +1830,42 @@ class MarkdownEditorState extends State<MarkdownEditor>
                   .kind !=
               MdLineKind.item) {
         _insert('\t');
+      }
+      return KeyEventResult.handled;
+    }
+    // Home and End to the line's ends, Shift selecting to them, as an
+    // editor has them: macOS's defaults scroll the document instead, and
+    // select to its ends with Shift. The numpad's 7 and 1 are Home and End
+    // with NumLock off, which Windows tells as numpad7 and numpad1 and the
+    // defaults don't map; with NumLock on they are digits, and stay digits.
+    // A digit comes with its character: the lock modes alone can't say,
+    // as on Windows they miss a NumLock already on when the app starts
+    // (2MSCSKQ2: the numpad's 1 typed nothing).
+    final mac = defaultTargetPlatform == TargetPlatform.macOS;
+    final numpad =
+        (defaultTargetPlatform == TargetPlatform.windows ||
+            defaultTargetPlatform == TargetPlatform.linux) &&
+        event.character == null &&
+        !keyboard.lockModesEnabled.contains(KeyboardLockMode.numLock);
+    final forward = switch (key) {
+      LogicalKeyboardKey.home when mac => false,
+      LogicalKeyboardKey.end when mac => true,
+      LogicalKeyboardKey.numpad7 when numpad => false,
+      LogicalKeyboardKey.numpad1 when numpad => true,
+      _ => null,
+    };
+    if (forward != null &&
+        !keyboard.isMetaPressed &&
+        !keyboard.isAltPressed &&
+        !(mac && keyboard.isControlPressed)) {
+      final selection = controller.selection;
+      if (selection.isValid) {
+        final (start, end) = _visualLine(selection.extentOffset);
+        // Ctrl with the numpad's, as with Home and End: the document's ends.
+        final to = keyboard.isControlPressed
+            ? (forward ? controller.length : 0)
+            : (forward ? end : start);
+        _moveTo(to, extend: keyboard.isShiftPressed);
       }
       return KeyEventResult.handled;
     }
@@ -2321,9 +2377,12 @@ class MarkdownEditorState extends State<MarkdownEditor>
   Widget build(BuildContext context) {
     _reveal = _computeReveal();
     final lines = controller.lines;
+    final behavior = ScrollConfiguration.of(context);
     Widget scroll = CustomScrollView(
       key: _scrollKey,
       controller: scrollController,
+      // Its scrollbar outside the text's cursor: built below.
+      scrollBehavior: behavior.copyWith(scrollbars: false),
       physics: widget.physics,
       shrinkWrap: widget.shrinkWrap,
       slivers: [
@@ -2370,52 +2429,62 @@ class MarkdownEditorState extends State<MarkdownEditor>
       child: Focus(
         focusNode: _focus,
         onKeyEvent: _key,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.text,
-          child: RawGestureDetector(
-            behavior: HitTestBehavior.translucent,
-            gestures: {
-              _MouseSelect: GestureRecognizerFactoryWithHandlers<_MouseSelect>(
-                () => _MouseSelect(_allows),
-                (recognizer) => recognizer
-                  ..dragStartBehavior = DragStartBehavior.down
-                  ..onTapDown = _tapDown
-                  ..onTapUp = _tapUp
-                  ..onDragStart = _dragStart
-                  ..onDragUpdate = _dragUpdate
-                  ..onDragEnd = _dragEnd
-                  ..onCancel = _dragCancel,
-              ),
-              _TouchTap: GestureRecognizerFactoryWithHandlers<_TouchTap>(
-                () => _TouchTap(_allows),
-                (recognizer) => recognizer.onTapUp = (details) {
-                  if (!_focus.hasPrimaryFocus) _focus.requestFocus();
-                  final at = offsetAt(details.globalPosition);
-                  if (at == null || (widget.onClick?.call(at) ?? false)) {
-                    return;
-                  }
-                  _moveTo(at, extend: false);
-                },
-              ),
-              _TouchHold: GestureRecognizerFactoryWithHandlers<_TouchHold>(
-                () => _TouchHold(_allows),
-                (recognizer) => recognizer.onLongPressStart = (details) {
-                  if (!_focus.hasPrimaryFocus) _focus.requestFocus();
-                  final at = offsetAt(details.globalPosition);
-                  if (at == null) return;
-                  final (start, end) = _wordAt(at);
-                  _select(TextSelection(baseOffset: start, extentOffset: end));
-                },
-              ),
-            },
-            child: NotificationListener<ScrollNotification>(
-              onNotification: (_) {
-                _imeGeometrySoon();
-                return false;
+        // The scrollbar the app's (none where it has none), over the text
+        // but not under its cursor: an arrow there, not the I-beam.
+        child: behavior.buildScrollbar(
+          context,
+          MouseRegion(
+            cursor: SystemMouseCursors.text,
+            child: RawGestureDetector(
+              behavior: HitTestBehavior.translucent,
+              gestures: {
+                _MouseSelect:
+                    GestureRecognizerFactoryWithHandlers<_MouseSelect>(
+                      () => _MouseSelect(_allows),
+                      (recognizer) => recognizer
+                        ..dragStartBehavior = DragStartBehavior.down
+                        ..onTapDown = _tapDown
+                        ..onTapUp = _tapUp
+                        ..onDragStart = _dragStart
+                        ..onDragUpdate = _dragUpdate
+                        ..onDragEnd = _dragEnd
+                        ..onCancel = _dragCancel,
+                    ),
+                _TouchTap: GestureRecognizerFactoryWithHandlers<_TouchTap>(
+                  () => _TouchTap(_allows),
+                  (recognizer) => recognizer.onTapUp = (details) {
+                    if (!_focus.hasPrimaryFocus) _focus.requestFocus();
+                    _ensureInput('a tap');
+                    final at = offsetAt(details.globalPosition);
+                    if (at == null || (widget.onClick?.call(at) ?? false)) {
+                      return;
+                    }
+                    _moveTo(at, extend: false);
+                  },
+                ),
+                _TouchHold: GestureRecognizerFactoryWithHandlers<_TouchHold>(
+                  () => _TouchHold(_allows),
+                  (recognizer) => recognizer.onLongPressStart = (details) {
+                    if (!_focus.hasPrimaryFocus) _focus.requestFocus();
+                    final at = offsetAt(details.globalPosition);
+                    if (at == null) return;
+                    final (start, end) = _wordAt(at);
+                    _select(
+                      TextSelection(baseOffset: start, extentOffset: end),
+                    );
+                  },
+                ),
               },
-              child: scroll,
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (_) {
+                  _imeGeometrySoon();
+                  return false;
+                },
+                child: scroll,
+              ),
             ),
           ),
+          ScrollableDetails.vertical(controller: scrollController),
         ),
       ),
     );

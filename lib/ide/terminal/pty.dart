@@ -77,6 +77,10 @@ Map<String, String> terminalBaseEnvironment(
 /// `terminal.integrated.shellIntegration.enabled`; see
 /// shell_integration/shell_integration_files.dart); fails with
 /// [PtyException] on the web.
+///
+/// A login shell it knows (bash, zsh, fish) starts from the app's own
+/// environment and reads the user's files as they are now; any other keeps
+/// the one resolved at start, not to lose what the login files set.
 Future<PtyLaunch> terminalLaunch(
   String root, {
   int columns = 80,

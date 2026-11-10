@@ -29,19 +29,22 @@ import 'package:baocode/chat/widgets/markdown_view.dart';
 import 'package:baocode/chat/widgets/tool_call_row.dart';
 import 'package:baocode/ide/file_service.dart';
 import 'package:baocode/ide/git/ide_git_commit_panel.dart';
+import 'package:baocode/ide/ide_diff_options.dart';
 import 'package:baocode/ide/git/commit_message.dart';
 import 'package:baocode/ide/git/git_model.dart';
 import 'package:baocode/ide/git/git_repository.dart';
 import 'package:baocode/ide/git/ide_git_log_view.dart';
 import 'package:baocode/ide/ide_code_diff.dart';
+import 'package:baocode/ide/editor_word_wrap.dart';
 import 'package:baocode/ide/ide_code_editor.dart';
 import 'package:baocode/ide/ide_explorer.dart';
+import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/ide/ide_list.dart';
-import 'package:baocode/ide/ide_tab_bar.dart';
 import 'package:baocode/ide/markdown/markdown_preview.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
 import 'package:baocode/ide/terminal/terminal_service.dart';
 import 'package:baocode/ide/terminal/terminal_view.dart';
+import 'package:baocode/ide/tab_reorder.dart';
 import 'package:baocode/ide/tab_strip_scroll.dart';
 import 'package:baocode/chat/side_panel/terminal_preview.dart';
 import 'package:baocode/chat/panels/activity_strip.dart';
@@ -52,6 +55,7 @@ import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/theme/material_file_icons.dart';
 import 'package:baocode/usage/usage_ledger.dart';
 import 'package:baocode/usage/usage_record.dart';
+import 'package:baocode/workspace/islands.dart';
 import 'package:baocode/workspace/preference_store.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -66,6 +70,9 @@ import '../../ide/terminal/fake_terminal.dart';
 import '../../workspace/chat_window_keys_test.dart' show press;
 import '../../workspace_test.dart' show pumpLoaded;
 import '../../kernel_ui_test.dart' show pumpScripted;
+
+import 'package:baocode/theme/svg_icons.dart';
+import 'package:baocode/chat/side_panel/chat_layout_picker.dart';
 
 /// A project's files, in memory.
 class _Files implements IdeFileService {
@@ -142,6 +149,7 @@ Future<({AgentSidePanel panel, ChatSession session, _Files files})> _pumpChat(
   IdeGitWorktreeChoice Function(IdeGitRepository git)? worktreesOf,
   double titleBarInset = 0,
   Widget? leading,
+  bool roomComing = false,
 }) async {
   _bigWindow(tester);
   final session = ChatSession(
@@ -157,6 +165,7 @@ Future<({AgentSidePanel panel, ChatSession session, _Files files})> _pumpChat(
     _app(
       AgentSidePanelArea(
         panel: panel,
+        roomComing: roomComing,
         builder: (context) => AgentSidePanelView(
           notifications: IdeNotifications(),
           panel: panel,
@@ -183,8 +192,9 @@ Future<({AgentSidePanel panel, ChatSession session, _Files files})> _pumpChat(
   await tester.pumpAndSettle();
   // The turn's work, and its run of steps, open.
   for (final fold in [WorkFoldLine, StepsFoldLine]) {
-    if (find.byType(fold).evaluate().isNotEmpty) {
-      await tester.tap(find.byType(fold).first);
+    final n = find.byType(fold).evaluate().length;
+    for (var i = 0; i < n; i++) {
+      await tester.tap(find.byType(fold).at(i));
       await tester.pumpAndSettle();
     }
   }
@@ -555,6 +565,47 @@ void main() {
     }
 
     await check(const FileOpenRequest('/p/a.dart', diff: true));
+  });
+
+  testWidgets('text only shown wraps as the editors do, toggled in its bar', (
+    tester,
+  ) async {
+    addTearDown(() => EditorWordWrap.on.value = false);
+    final long = List.filled(60, 'word').join(' ');
+    final files = _Files({'/p/paste.txt': 'one\n$long\nthree'});
+    await tester.pumpWidget(
+      _app(
+        FilePreview(
+          request: const FileOpenRequest('/p/paste.txt', readOnly: true),
+          files: files,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final sideways = find.byWidgetPredicate(
+      (widget) =>
+          widget is SingleChildScrollView &&
+          widget.scrollDirection == Axis.horizontal,
+    );
+    expect(sideways, findsOneWidget);
+    final oneLine = tester.getSize(find.text('one')).height;
+    expect(tester.getSize(find.text(long)).height, closeTo(oneLine, 0.1));
+
+    await tester.tap(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is IdeActionButton && widget.icon == Codicons.wordWrap,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(EditorWordWrap.on.value, isTrue);
+    expect(sideways, findsNothing);
+    // The long line on rows of its own, the next under them.
+    expect(tester.getSize(find.text(long)).height, greaterThan(oneLine * 2));
+    expect(
+      tester.getTopLeft(find.text('three')).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(find.text(long)).dy),
+    );
   });
 
   testWidgets('short preview lines do not create horizontal overflow', (
@@ -991,8 +1042,12 @@ void main() {
     );
     await tester.pump();
     final rail = find.byKey(const ValueKey('side-panel-rail'));
-    Finder usage() =>
-        find.descendant(of: rail, matching: find.byIcon(Codicons.graph));
+    Finder usage() => find.descendant(
+      of: rail,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is AppIcon && widget.icon == SvgIcons.usage,
+      ),
+    );
     expect(usage(), findsNothing);
     expect(
       find.descendant(of: rail, matching: find.byIcon(Codicons.terminal)),
@@ -1645,7 +1700,7 @@ void main() {
       fake.callsTo('diff').single,
       containsAllInOrder(['HEAD', '--', 'lib/main.dart', 'lib/staged.dart']),
     );
-    expect(panel.scmOf(git).message.text, 'Stage the staged file');
+    expect(panel.scmOf(session, git).message.text, 'Stage the staged file');
 
     await tester.tap(commit);
     await tester.pumpAndSettle();
@@ -1659,7 +1714,57 @@ void main() {
       'lib/main.dart',
       'lib/staged.dart',
     ]);
-    expect(panel.scmOf(git).message.text, isEmpty);
+    expect(panel.scmOf(session, git).message.text, isEmpty);
+  });
+
+  test('each conversation has its own Git log and changes of a repository, '
+      'the favorite branches the same', () {
+    final git = FakeGit('/p').repository();
+    addTearDown(git.dispose);
+    final panel = AgentSidePanel();
+    addTearDown(panel.dispose);
+    final one = Object();
+    final other = Object();
+    final scm = panel.scmOf(one, git);
+    expect(panel.scmOf(one, git), same(scm));
+    expect(panel.scmOf(other, git), isNot(same(scm)));
+    scm.log.selected = 'c1';
+    expect(panel.scmOf(other, git).log.selected, isNull);
+    scm.log.toggleFavorite(git, 'refs/heads/main');
+    expect(
+      panel.scmOf(other, git).log.isFavorite(git, 'refs/heads/main'),
+      isTrue,
+    );
+  });
+
+  testWidgets('under the log, the changes fold to their tabs\' row, and '
+      'unfold from it', (tester) async {
+    // Under it as picked: the panel is wide enough to have them beside.
+    IdeDiffOptions.instance.detailsLayout = IdeGitDetailsLayout.below;
+    addTearDown(IdeDiffOptions.instance.reset);
+    final fake = FakeGit('/p')
+      ..status = '## main\x00 M lib/main.dart\x00'
+      ..log = '';
+    final git = fake.repository();
+    addTearDown(git.dispose);
+    final (:panel, :session, files: _) = await _pumpChat(tester, git: git);
+    panel.showSection(session, SidePanelSection.changes);
+    await tester.pumpAndSettle();
+    final changes = find.byType(IdeGitCommitPanel);
+    final open = tester.getSize(changes).height;
+    expect(find.text('Commit and Push'), findsOneWidget);
+
+    await tester.tap(find.text('Fold'));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(changes).height, IdeGitCommitPanel.foldedHeight);
+    expect(find.text('Commit and Push'), findsNothing);
+    expect(panel.scmOf(session, git).log.detailsFolded, isTrue);
+
+    // Anywhere on the row.
+    await tester.tapAt(tester.getCenter(changes));
+    await tester.pumpAndSettle();
+    expect(find.text('Fold'), findsOneWidget);
+    expect(tester.getSize(changes).height, open);
   });
 
   testWidgets('dragging the panel\'s edge past where it goes over the '
@@ -1718,7 +1823,10 @@ void main() {
 
   testWidgets('a room short a while only (the sidebar giving way) does not '
       'put the panel over the conversations', (tester) async {
-    final (:panel, :session, files: _) = await _pumpChat(tester);
+    final (:panel, :session, files: _) = await _pumpChat(
+      tester,
+      roomComing: true,
+    );
     tester.view.physicalSize = const Size(1600, 800);
     panel.show();
     await tester.pumpAndSettle();
@@ -1750,42 +1858,72 @@ void main() {
     expect(_scrim, findsOneWidget);
   });
 
-  testWidgets('moved to the conversations\' left: its page, tab and width '
-      'kept, its edge toward them dragged; kept for the next run (#145)', (
-    tester,
-  ) async {
+  testWidgets('shown where the room is short for good, the panel is over '
+      'the conversations at once, not beside them first', (tester) async {
     final (:panel, :session, files: _) = await _pumpChat(tester);
-    panel.open(session, const FileOpenRequest('/p/lib/main.dart'));
-    await tester.pumpAndSettle();
-    final width = tester.getSize(find.byType(AgentSidePanelView)).width;
-    expect(tester.getTopRight(find.byType(AgentSidePanelView)).dx, 1600);
-
-    await tester.tap(find.byKey(const ValueKey('side-panel-move')));
-    await tester.pumpAndSettle();
-    expect(panel.atLeft, isTrue);
-    final view = find.byType(AgentSidePanelView);
-    expect(tester.getTopLeft(view).dx, 0);
-    expect(tester.getSize(view).width, width);
-    expect(find.byType(FilePreview), findsOneWidget);
-    // The conversations at its right, up to the sash's line.
-    expect(tester.getTopLeft(find.byType(ChatScreen)).dx, width + 1);
-
-    // Its right edge dragged right: wider.
-    final sash = find.byKey(const ValueKey('side-panel-sash'));
-    expect(tester.getTopLeft(sash).dx, width);
-    await tester.drag(sash, const Offset(100, 0));
-    await tester.pumpAndSettle();
-    expect(panel.width, closeTo(width + 100, 1));
-
-    final kept = AgentSidePanel(state: panel.toJson());
-    addTearDown(kept.dispose);
-    expect(kept.atLeft, isTrue);
-
-    panel.atLeft = false;
-    await tester.pumpAndSettle();
-    expect(tester.getTopRight(view).dx, 1600);
-    expect(panel.toJson(), isNot(contains('atLeft')));
+    await tester.pump(AgentSidePanelArea.overlayDelay);
+    tester.view.physicalSize = const Size(600, 800);
+    await tester.pump();
+    panel.show();
+    await tester.pump();
+    expect(_scrim, findsOneWidget);
+    expect(find.byType(ChatScreen), findsOneWidget);
+    expect(
+      tester.getSize(find.byType(AgentSidePanelView)).width,
+      greaterThan(600 - AgentSidePanelArea.minChat),
+    );
   });
+
+  testWidgets(
+    'moved to the conversations\' left from the layouts: its page, tab and width '
+    'kept, its edge toward them dragged; kept for the next run (#145)',
+    (tester) async {
+      final (:panel, :session, files: _) = await _pumpChat(tester);
+      panel.open(session, const FileOpenRequest('/p/lib/main.dart'));
+      await tester.pumpAndSettle();
+      final width = tester.getSize(find.byType(AgentSidePanelView)).width;
+      expect(tester.getTopRight(find.byType(AgentSidePanelView)).dx, 1600);
+
+      // From the layouts, by the panel's Layout button.
+      await tester.tap(find.byKey(const ValueKey('side-panel-layout')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatLayoutPicker), findsOneWidget);
+      await tester.tap(find.text('Sidebar · Panel · Chat'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatLayoutPicker), findsNothing);
+      expect(panel.layout, ChatLayout.sidebarPanelChat);
+      expect(panel.atLeft, isTrue);
+      final view = find.byType(AgentSidePanelView);
+      expect(tester.getTopLeft(view).dx, 0);
+      expect(tester.getSize(view).width, width);
+      expect(find.byType(FilePreview), findsOneWidget);
+      // The conversations at its right, past the gap the sash is in.
+      expect(
+        tester.getTopLeft(find.byType(ChatScreen)).dx,
+        width + AgentSidePanelArea.sashWidth,
+      );
+
+      // Its right edge dragged right: wider.
+      final sash = find.byKey(const ValueKey('side-panel-sash'));
+      expect(tester.getTopLeft(sash).dx, width);
+      await tester.drag(sash, const Offset(100, 0));
+      await tester.pumpAndSettle();
+      expect(panel.width, closeTo(width + 100, 1));
+
+      final kept = AgentSidePanel(state: panel.toJson());
+      addTearDown(kept.dispose);
+      expect(kept.layout, ChatLayout.sidebarPanelChat);
+      // As an earlier run kept it.
+      final earlier = AgentSidePanel(state: {'atLeft': true});
+      addTearDown(earlier.dispose);
+      expect(earlier.layout, ChatLayout.sidebarPanelChat);
+
+      panel.atLeft = false;
+      await tester.pumpAndSettle();
+      expect(tester.getTopRight(view).dx, 1600);
+      expect(panel.toJson(), isNot(contains('layout')));
+    },
+  );
 
   testWidgets('at the window\'s top left, its tabs clear of the traffic '
       'lights, the sidebar\'s toggle by them (#227)', (tester) async {
@@ -1812,7 +1950,11 @@ void main() {
       ..open(insetSession, const FileOpenRequest('/p/lib/main.dart'));
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.byKey(toggle)).dx, 78);
-    expect(tester.getTopLeft(find.text('Files')).dx, files + 78 + 22 + 6);
+    // Not flush with the card's edge then: clear of its corner.
+    expect(
+      tester.getTopLeft(find.text('Files')).dx,
+      files + 78 + 22 + 6 + IslandTab.lead,
+    );
   });
 
   testWidgets('hidden at their left, its rail is at the conversations\' top '
@@ -1889,6 +2031,40 @@ void main() {
       await mouse.removePointer();
     },
   );
+
+  testWidgets('a file tab dragged along the tabs goes where it is let go', (
+    tester,
+  ) async {
+    final (:panel, :session, files: _) = await _pumpChat(tester);
+    for (final name in ['a', 'b', 'c']) {
+      panel.open(session, FileOpenRequest('/p/$name.dart'));
+    }
+    await tester.pumpAndSettle();
+    Finder tab(String name) => find.descendant(
+      of: find.byType(TabStripScroll),
+      matching: find.text(name),
+    );
+    List<String> names() => [
+      for (final tab in panel.tabsOf(session).files) p.basename(tab.path),
+    ];
+    expect(names(), ['a.dart', 'b.dart', 'c.dart']);
+
+    final start = tester.getCenter(tab('a.dart'));
+    final end = tester.getCenter(tab('c.dart')) + const Offset(30, 0);
+    final gesture = await tester.startGesture(
+      start,
+      kind: PointerDeviceKind.mouse,
+    );
+    for (var i = 1; i <= 8; i++) {
+      await gesture.moveTo(Offset.lerp(start, end, i / 8)!);
+      await tester.pump();
+    }
+    expect(find.byType(TabDropLine), findsOneWidget);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(names(), ['b.dart', 'c.dart', 'a.dart']);
+    expect(find.byType(TabDropLine), findsNothing);
+  });
 
   testWidgets(
     'background rows open multiple terminal tabs, poll output and stop through the kernel',
@@ -2086,7 +2262,7 @@ void main() {
       await press(tester, key, meta: true, shift: shift, alt: alt);
       await tester.pumpAndSettle();
       expect(
-        tester.widget<IdeEditorTab>(find.byKey(ValueKey(section))).active,
+        tester.widget<IslandTab>(find.byKey(ValueKey(section))).active,
         isTrue,
       );
     }
@@ -2122,14 +2298,28 @@ void main() {
       'shows its changes in the side panel', (tester) async {
     final (:panel, :session, files: _) = await _pumpChat(tester);
     final edit = find.byType(EditStep).last;
+    expect(_active(panel, session), isNull);
+
+    // Compact by default: open the row to show the diff in place.
+    await tester.tap(
+      find.descendant(of: edit, matching: find.text('main.dart')),
+    );
+    await tester.pumpAndSettle();
     expect(
       find.descendant(of: edit, matching: find.byType(StepBody)),
       findsOne,
     );
-    expect(_active(panel, session), isNull);
 
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(
+      location: tester.getCenter(
+        find.descendant(of: edit, matching: find.byType(FileIcon)),
+      ),
+    );
+    await tester.pump();
     await tester.tap(
-      find.descendant(of: edit, matching: find.byType(FileIcon)),
+      find.descendant(of: edit, matching: find.byIcon(Codicons.diff)),
     );
     await tester.pumpAndSettle();
 
@@ -2365,11 +2555,11 @@ void main() {
       'stay in the browser', (tester) async {
     final (:panel, :session) = await _pumpReply(
       tester,
-      '[secrets](../outside/key.pem), [passwd](/etc/passwd), '
+      '[key](../outside/key.pem), [passwd](/etc/passwd), '
       '`/etc/hosts` and [the site](https://baocode.dev).',
       texts: {'/etc/hosts': 'x', '/outside/key.pem': 'x'},
     );
-    expect(_span(tester, 'secrets')?.recognizer, isA<TapGestureRecognizer>());
+    expect(_span(tester, 'key')?.recognizer, isA<TapGestureRecognizer>());
     expect(_span(tester, 'passwd')?.recognizer, isA<TapGestureRecognizer>());
     expect(
       _span(tester, '/etc/hosts')?.recognizer,
@@ -2382,7 +2572,7 @@ void main() {
       FileOpenScope.maybeOf(scope)!.linkRecognizer('https://baocode.dev'),
       isNull,
     );
-    _tapSpan(tester, 'secrets');
+    _tapSpan(tester, 'key');
     await tester.pumpAndSettle();
     expect(panel.shown, isTrue);
     expect(_active(panel, session)?.path, '/outside/key.pem');
@@ -2549,18 +2739,21 @@ void main() {
       final chat = tester.getRect(find.byType(ChatScreen));
       final rail = tester.getRect(find.byType(SidePanelRail));
       final composer = tester.getRect(find.byType(ChatComposer));
-      expect(chat.right, 1400);
-      expect(rail.right, 1400 - AgentSidePanelArea.railRight);
+      // A gap from the window's edge, its card's.
+      expect(chat.right, 1400 - Islands.gap);
+      expect(rail.right, chat.right - AgentSidePanelArea.railRight);
       expect(composer.right, lessThan(rail.left));
       // Room enough: the column in the middle, as without the rail.
       expect(composer.center.dx, closeTo(chat.center.dx, 0.5));
-      // Just under the conversation's title bar; at the top under
-      // Windows' header.
+      // As far under the row along the top of its card as in from its
+      // right; that row at the top under Windows' header, none over it.
       expect(
         rail.top - chat.top,
-        defaultTargetPlatform == TargetPlatform.windows
-            ? 12
-            : AppMetrics.titleBarHeight + 4,
+        (defaultTargetPlatform == TargetPlatform.windows
+                ? 0
+                : AppMetrics.titleBarHeight) +
+            ChatScreen.cardHeaderHeight +
+            AgentSidePanelArea.railRight,
       );
 
       // A narrow window has no room to spare: no rail.
@@ -2572,6 +2765,48 @@ void main() {
       TargetPlatform.macOS,
       TargetPlatform.windows,
     }),
+  );
+
+  testWidgets(
+    'the panel at the left, the conversation\'s buttons on its card are '
+    'before its title, their left edge on the rail\'s under them',
+    (tester) async {
+      final workspace = await pumpLoaded(tester);
+      await tester.pumpAndSettle();
+      workspace.select(
+        workspace.threads.firstWhere((thread) => thread.record != null),
+      );
+      await tester.pumpAndSettle();
+      tester
+              .widget<AgentSidePanelArea>(find.byType(AgentSidePanelArea))
+              .panel
+              .atLeft =
+          true;
+      await tester.pumpAndSettle();
+      final chat = tester.getRect(find.byType(ChatScreen));
+      final rail = tester.getRect(find.byType(SidePanelRail));
+      final toggle = tester.getRect(
+        find.descendant(
+          of: find.byType(ChatScreen),
+          matching: find.byType(SidePanelToggle),
+        ),
+      );
+      final title = tester.getRect(
+        find
+            .descendant(
+              of: find.byType(ChatScreen),
+              matching: find.text(
+                tester.widget<ChatScreen>(find.byType(ChatScreen)).title,
+              ),
+            )
+            .first,
+      );
+      expect(rail.left, chat.left + AgentSidePanelArea.railRight);
+      // The side panel's nearest the edge, over its rail; then the title.
+      expect(toggle.left, rail.left);
+      expect(title.left, greaterThan(toggle.right));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
   );
 
   test('Close Editor on the terminal page hides the panel: its tabs are '
@@ -2948,10 +3183,10 @@ void main() {
     }
 
     // Between the tabs and the buttons.
-    final move = find.byKey(const ValueKey('side-panel-move'));
+    final move = find.byKey(const ValueKey('side-panel-layout'));
     await dragFrom(tester.getCenter(move) - const Offset(60, 0));
     expect(drags, 1);
-    await dragFrom(tester.getCenter(find.byType(IdeEditorTab).first));
+    await dragFrom(tester.getCenter(find.byType(IslandTab).first));
     expect(drags, 1);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }

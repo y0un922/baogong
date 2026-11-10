@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/proxy/model_proxy.dart';
+import 'package:baocode/models/upstream.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// An upstream on this machine: answers each request with [reply], and
@@ -561,50 +562,56 @@ void main() {
       expect(promptCacheKey(request(jsonEncode({'device_id': 'd'}))), isNull);
     });
 
-    test('#307 falls back on the session header for a user_id the user set',
-        () {
-      final key = promptCacheKey(
-        request(jsonEncode({'device_id': 'd', 'session_id': session})),
-      );
-      expect(promptCacheKey(request('abcdefghijk'), header: session), key);
-      expect(promptCacheKey(const {}, header: session), key);
-      // The body's own session is taken over the header.
-      expect(
-        promptCacheKey(
-          request(jsonEncode({'session_id': session})),
-          header: 'other',
-        ),
-        key,
-      );
-      expect(sessionId(request('abcdefghijk'), header: ' '), isNull);
-    });
+    test(
+      '#307 falls back on the session header for a user_id the user set',
+      () {
+        final key = promptCacheKey(
+          request(jsonEncode({'device_id': 'd', 'session_id': session})),
+        );
+        expect(promptCacheKey(request('abcdefghijk'), header: session), key);
+        expect(promptCacheKey(const {}, header: session), key);
+        // The body's own session is taken over the header.
+        expect(
+          promptCacheKey(
+            request(jsonEncode({'session_id': session})),
+            header: 'other',
+          ),
+          key,
+        );
+        expect(sessionId(request('abcdefghijk'), header: ' '), isNull);
+      },
+    );
 
-    test('#307 an overridden user_id still sends the key, by the header',
-        () async {
-      provider = provider.copyWith(protocol: ProviderProtocol.openaiResponses);
-      upstream.reply = (_) => (200, const []);
-      final body = {
-        'model': 'gpt-5',
-        'stream': true,
-        'metadata': {'user_id': 'abcdefghijk'},
-        'messages': [
-          {'role': 'user', 'content': 'hi'},
-        ],
-      };
-      await post(
-        await messages(),
-        body,
-        headers: {
-          'authorization': 'Bearer tok',
-          'x-claude-code-session-id': session,
-        },
-      );
-      expect(
-        (upstream.requests.last.body! as Map)['prompt_cache_key'],
-        promptCacheKey(body, header: session),
-      );
-      expect(promptCacheKey(body, header: session), isNotNull);
-    });
+    test(
+      '#307 an overridden user_id still sends the key, by the header',
+      () async {
+        provider = provider.copyWith(
+          protocol: ProviderProtocol.openaiResponses,
+        );
+        upstream.reply = (_) => (200, const []);
+        final body = {
+          'model': 'gpt-5',
+          'stream': true,
+          'metadata': {'user_id': 'abcdefghijk'},
+          'messages': [
+            {'role': 'user', 'content': 'hi'},
+          ],
+        };
+        await post(
+          await messages(),
+          body,
+          headers: {
+            'authorization': 'Bearer tok',
+            'x-claude-code-session-id': session,
+          },
+        );
+        expect(
+          (upstream.requests.last.body! as Map)['prompt_cache_key'],
+          promptCacheKey(body, header: session),
+        );
+        expect(promptCacheKey(body, header: session), isNotNull);
+      },
+    );
 
     for (final protocol in [
       ProviderProtocol.openaiChat,
@@ -819,6 +826,36 @@ void main() {
       expect(errors.last, isNull);
     });
 
+    test('a long session\'s request, megabytes, read and sent off the UI '
+        'isolate, goes as it came; one that is not JSON is refused', () async {
+      anthropic.reply = (_) => (200, const ['event: message_stop', '']);
+      final body = {
+        'model': 'claude-opus-4-5',
+        'stream': true,
+        'max_tokens': 100,
+        'messages': [
+          for (var i = 0; i < 40; i++)
+            {
+              'role': i.isEven ? 'user' : 'assistant',
+              'content': '长会话 $i ' * 4000,
+            },
+        ],
+      };
+      final url = await on('an');
+      final answer = await post(url, body, headers: {'x-api-key': 'tok'});
+      expect(answer.status, 200);
+      expect(anthropic.requests.single.body, body);
+
+      final client = HttpClient();
+      addTearDown(client.close);
+      final broken = await client.postUrl(url);
+      broken.headers.set('x-api-key', 'tok');
+      broken.add(utf8.encode('{"messages": "${'x' * 400000}'));
+      final refused = await broken.close();
+      expect(refused.statusCode, 400);
+      expect(await utf8.decodeStream(refused), contains('not JSON'));
+    });
+
     test('a model of another upstream goes there, by its own name', () async {
       upstream.reply = (_) => (
         200,
@@ -894,6 +931,47 @@ void main() {
       expect(counted.status, 200);
       expect(anthropic.requests.last.path, '/v1/messages/count_tokens');
       expect((jsonDecode(counted.text) as Map)['input_tokens'], greaterThan(0));
+    });
+
+    test('OpenCode is told no session, nor an empty list of tools', () async {
+      final opencode = ModelProxy(
+        provider: (id) => ModelProvider(
+          id: 'oc',
+          name: 'OpenCode',
+          baseUrl: 'http://opencode.ai/inference/anthropic',
+          auth: ProviderAuth.apiKey,
+        ),
+        key: (id) async => 'sk-$id',
+        findProxy: (_) => 'PROXY ${Uri.parse(anthropic.base).authority}',
+        token: 'tok',
+      );
+      addTearDown(opencode.close);
+      anthropic.reply = (_) => (200, const ['event: message_stop', '']);
+      const headers = {
+        'x-api-key': 'tok',
+        sessionHeaderName: 's1',
+        'x-session-id': 's1',
+      };
+      final body = {
+        'model': 'deepseek-v4.1-flash',
+        'messages': [],
+        'tools': [],
+      };
+      await post(
+        Uri.parse('${(await opencode.endpoint('oc')).baseUrl}/v1/messages'),
+        body,
+        headers: headers,
+      );
+      await post(await on('an'), body, headers: headers);
+      final [toOpencode, toClaude] = anthropic.requests;
+      expect(toOpencode.path, '/inference/anthropic/v1/messages');
+      for (final name in openCodeUntold) {
+        expect(toOpencode.headers.containsKey(name), isFalse, reason: name);
+      }
+      expect((toOpencode.body! as Map).containsKey('tools'), isFalse);
+      expect(toClaude.headers[sessionHeaderName], 's1');
+      expect(toClaude.headers['x-session-id'], 's1');
+      expect((toClaude.body! as Map)['tools'], isEmpty);
     });
 
     test('Anthropic\'s API at an address of its own: the endpoint\'s query '

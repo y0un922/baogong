@@ -2972,65 +2972,11 @@ abstract class AppLocalizations {
   /// **'Terminal'**
   String get sidePanelTerminal;
 
-  /// The side panel's browser page, there once the browser plugin is installed.
-  ///
-  /// In en, this message translates to:
-  /// **'Browser'**
-  String get sidePanelBrowser;
-
-  /// No description provided for @browserNotConnected.
-  ///
-  /// In en, this message translates to:
-  /// **'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.'**
-  String get browserNotConnected;
-
-  /// No description provided for @browserNoSharedTab.
-  ///
-  /// In en, this message translates to:
-  /// **'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.'**
-  String get browserNoSharedTab;
-
   /// No description provided for @browserOtherApp.
   ///
   /// In en, this message translates to:
   /// **'Another Baogong is connected to the browser.'**
   String get browserOtherApp;
-
-  /// No description provided for @browserSharedTabs.
-  ///
-  /// In en, this message translates to:
-  /// **'Shared Tabs'**
-  String get browserSharedTabs;
-
-  /// No description provided for @browserReload.
-  ///
-  /// In en, this message translates to:
-  /// **'Reload'**
-  String get browserReload;
-
-  /// No description provided for @browserShowInBrowser.
-  ///
-  /// In en, this message translates to:
-  /// **'Show in Browser'**
-  String get browserShowInBrowser;
-
-  /// No description provided for @browserDetached.
-  ///
-  /// In en, this message translates to:
-  /// **'The browser stopped letting Baogong see this tab.'**
-  String get browserDetached;
-
-  /// No description provided for @browserReconnect.
-  ///
-  /// In en, this message translates to:
-  /// **'Reconnect'**
-  String get browserReconnect;
-
-  /// No description provided for @browserShowInPanel.
-  ///
-  /// In en, this message translates to:
-  /// **'Show in Side Panel'**
-  String get browserShowInPanel;
 
   /// The card in the conversation while an agent watches the user do something in their browser (browser_watch), recording it.
   ///
@@ -3140,17 +3086,35 @@ abstract class AppLocalizations {
   /// **'Hide side panel'**
   String get sidePanelHide;
 
-  /// No description provided for @sidePanelMoveLeft.
+  /// No description provided for @chatLayout.
   ///
   /// In en, this message translates to:
-  /// **'Move to the Left of the Conversation'**
-  String get sidePanelMoveLeft;
+  /// **'Layout'**
+  String get chatLayout;
 
-  /// No description provided for @sidePanelMoveRight.
+  /// No description provided for @chatLayoutSidebarChatPanel.
   ///
   /// In en, this message translates to:
-  /// **'Move to the Right of the Conversation'**
-  String get sidePanelMoveRight;
+  /// **'Sidebar · Chat · Panel'**
+  String get chatLayoutSidebarChatPanel;
+
+  /// No description provided for @chatLayoutSidebarPanelChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Sidebar · Panel · Chat'**
+  String get chatLayoutSidebarPanelChat;
+
+  /// No description provided for @chatLayoutPanelChatSidebar.
+  ///
+  /// In en, this message translates to:
+  /// **'Panel · Chat · Sidebar'**
+  String get chatLayoutPanelChatSidebar;
+
+  /// No description provided for @chatLayoutChatPanelSidebar.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat · Panel · Sidebar'**
+  String get chatLayoutChatPanelSidebar;
 
   /// The side panel's tab listing the files the agent changed.
   ///
@@ -3415,6 +3379,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'By status'**
   String get sidebarByStatus;
+
+  /// Sidebar menu: projects ordered by their latest agent, the most recent first.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent activity'**
+  String get sidebarProjectSortRecent;
+
+  /// Sidebar menu: projects in the order the user dragged them.
+  ///
+  /// In en, this message translates to:
+  /// **'Manual'**
+  String get sidebarProjectSortManual;
 
   /// Compact relative time in the agents list.
   ///
@@ -3751,6 +3727,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Ask in a conversation of its own, beside this one'**
   String get btwCommandDetail;
+
+  /// The /fork command in the composer's command list: the conversation is copied into a new one (as the sidebar's Fork), which opens; what follows the command is sent there.
+  ///
+  /// In en, this message translates to:
+  /// **'Fork this conversation and open the copy'**
+  String get forkCommandDetail;
+
+  /// Shown when /fork is sent in a conversation that cannot be copied (nothing sent yet, or its kernel cannot fork).
+  ///
+  /// In en, this message translates to:
+  /// **'This conversation can\'t be forked: it needs a message first, and its agent has to support forking.'**
+  String get forkUnavailable;
 
   /// The arrow on a sidebar row with conversations asked beside it (/btw) listed under it: no longer lists them.
   ///
@@ -4196,6 +4184,18 @@ abstract class AppLocalizations {
   /// **'Subagent {description}, {status}'**
   String chatSubagentSemantics(String description, String status);
 
+  /// No description provided for @chatAgentMessageSent.
+  ///
+  /// In en, this message translates to:
+  /// **'sent'**
+  String get chatAgentMessageSent;
+
+  /// No description provided for @chatAgentMessageSemantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Message from subagent {agent}'**
+  String chatAgentMessageSemantics(String agent);
+
   /// No description provided for @chatOpensItsConversation.
   ///
   /// In en, this message translates to:
@@ -4207,6 +4207,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Load earlier messages'**
   String get chatLoadEarlier;
+
+  /// Over a kept conversation, once its session was talked in elsewhere (e.g. in a terminal) since it was read: reads it anew.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload (continued elsewhere)'**
+  String get chatReload;
 
   /// No description provided for @chatStop.
   ///
@@ -4825,6 +4831,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Worked for {duration}'**
   String turnWorked(String duration);
+
+  /// A turn the user stopped, its work folded, e.g. "Stopped after 4m 32s".
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped after {duration}'**
+  String turnStopped(String duration);
 
   /// Over a round of planning's card in the conversation.
   ///
@@ -6311,7 +6323,7 @@ abstract class AppLocalizations {
   /// No description provided for @generalSettingsClaudeCoreDescription.
   ///
   /// In en, this message translates to:
-  /// **'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with Baogong, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.'**
+  /// **'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with Baogong, and uses only the models added in Settings → Models. By default, the CLI where this machine has Claude Code, else the built-in core; the CLI, picked where there is none, is downloaded for you. Changes apply to new sessions.'**
   String get generalSettingsClaudeCoreDescription;
 
   /// Claude Code core choice: BaoCode's own agent core, written in Dart and run inside the app.
@@ -6710,10 +6722,22 @@ abstract class AppLocalizations {
   /// **'high contrast themes'**
   String get themeHighContrastThemes;
 
+  /// No description provided for @themeAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get themeAuto;
+
+  /// No description provided for @themeFollowSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow system'**
+  String get themeFollowSystem;
+
   /// No description provided for @themeSelectPlaceholder.
   ///
   /// In en, this message translates to:
-  /// **'Select Color Theme (detect system color mode disabled)'**
+  /// **'Select Color Theme'**
   String get themeSelectPlaceholder;
 
   /// A time within half a minute of now.
@@ -8625,6 +8649,12 @@ abstract class AppLocalizations {
   /// **'({count} selected)'**
   String wbSelectedCount(int count);
 
+  /// No description provided for @wbSelectedLines.
+  ///
+  /// In en, this message translates to:
+  /// **'({lines} lines, {count} selected)'**
+  String wbSelectedLines(int lines, int count);
+
   /// No description provided for @wbGoToLineColumn.
   ///
   /// In en, this message translates to:
@@ -9852,7 +9882,7 @@ abstract class AppLocalizations {
   /// No description provided for @claudePathMissing.
   ///
   /// In en, this message translates to:
-  /// **'None found yet: Claude Code is downloaded as the first conversation starts.'**
+  /// **'None found yet: with the Claude Code CLI picked, it is downloaded as the first conversation starts.'**
   String get claudePathMissing;
 
   /// No description provided for @generalSettingsIdeWindows.
@@ -10815,6 +10845,54 @@ abstract class AppLocalizations {
   /// **'Could not import from pi: {error}'**
   String modelsImportPiFailed(String error);
 
+  /// No description provided for @modelsMagpieJoin.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect magpie'**
+  String get modelsMagpieJoin;
+
+  /// No description provided for @modelsMagpieBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'Follows magpie'**
+  String get modelsMagpieBadge;
+
+  /// No description provided for @modelsMagpieGateway.
+  ///
+  /// In en, this message translates to:
+  /// **'magpie Gateway'**
+  String get modelsMagpieGateway;
+
+  /// No description provided for @modelsMagpieGatewayDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Models, accounts and routing are set up in magpie, and this list follows it. New routing groups, image models and the models magpie gives Claude Code are turned on as they come; tick any other below.'**
+  String get modelsMagpieGatewayDescription;
+
+  /// No description provided for @modelsMagpieRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get modelsMagpieRunning;
+
+  /// No description provided for @modelsMagpieNotRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'magpie isn\'t running'**
+  String get modelsMagpieNotRunning;
+
+  /// No description provided for @modelsMagpieNotRunningDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Open magpie, or run magpie serve. Sessions on its models fail until it runs.'**
+  String get modelsMagpieNotRunningDetail;
+
+  /// No description provided for @modelsMagpieSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync Models'**
+  String get modelsMagpieSync;
+
   /// No description provided for @modelsNewProviderName.
   ///
   /// In en, this message translates to:
@@ -10869,6 +10947,78 @@ abstract class AppLocalizations {
   /// **'Opens ChatGPT\'s sign-in page in the browser.'**
   String get modelsAddAccountDescription;
 
+  /// No description provided for @modelsAccountsImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get modelsAccountsImport;
+
+  /// No description provided for @modelsAccountsImportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import Accounts'**
+  String get modelsAccountsImportTitle;
+
+  /// No description provided for @modelsAccountsImportFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose File…'**
+  String get modelsAccountsImportFile;
+
+  /// No description provided for @modelsAccountsImportDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter account credentials as JSON or choose a JSON file.'**
+  String get modelsAccountsImportDescription;
+
+  /// No description provided for @modelsAccountsPaste.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter JSON…'**
+  String get modelsAccountsPaste;
+
+  /// No description provided for @modelsAccountsPastePlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Type or paste your JSON credentials here.'**
+  String get modelsAccountsPastePlaceholder;
+
+  /// No description provided for @modelsAccountsImportConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Import these ChatGPT credentials?'**
+  String get modelsAccountsImportConfirm;
+
+  /// No description provided for @modelsAccountsImportConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode will keep the credentials securely without changing the original file or actively refreshing tokens during import. Renewing them later may rotate the refresh token and require the original tool to sign in again. Only import credentials you are authorized to use.'**
+  String get modelsAccountsImportConfirmDetail;
+
+  /// No description provided for @modelsAccountsImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The credentials could not be read or imported.'**
+  String get modelsAccountsImportFailed;
+
+  /// No description provided for @modelsAccountsImportSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts imported: {count}'**
+  String modelsAccountsImportSummary(int count);
+
+  /// No description provided for @modelsAccountsImportKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Already here, kept as signed in: {count}'**
+  String modelsAccountsImportKept(int count);
+
+  /// No description provided for @modelsAccountsImportItemFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Entry {index}: {error}'**
+  String modelsAccountsImportItemFailed(int index, String error);
+
   /// No description provided for @modelsAccountSigningIn.
   ///
   /// In en, this message translates to:
@@ -10896,8 +11046,14 @@ abstract class AppLocalizations {
   /// No description provided for @modelsRefreshQuota.
   ///
   /// In en, this message translates to:
-  /// **'Refresh Quota'**
+  /// **'Refresh All Quotas'**
   String get modelsRefreshQuota;
+
+  /// No description provided for @modelsAccountRefreshQuota.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh quota for {name}'**
+  String modelsAccountRefreshQuota(String name);
 
   /// No description provided for @modelsAccountRemove.
   ///
@@ -11514,7 +11670,7 @@ abstract class AppLocalizations {
   /// No description provided for @modelsRoleSubagentDescription.
   ///
   /// In en, this message translates to:
-  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit). It may be another upstream\'s: Baogong\'s local proxy sends its requests there.'**
+  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, the built-in Explore and Plan and those defined as inherit too, over the one its definition or the agent\'s call names. It may be another upstream\'s: Baogong\'s local proxy sends its requests there.'**
   String get modelsRoleSubagentDescription;
 
   /// Under a role that picks another upstream's model, once that upstream or model is gone.
@@ -13305,6 +13461,12 @@ abstract class AppLocalizations {
   /// **'Connected to {host} over {kind}'**
   String remoteStatusTooltip(String kind, String host);
 
+  /// No description provided for @remoteStatusSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'System: {platform}'**
+  String remoteStatusSystem(String platform);
+
   /// No description provided for @remoteStatusTooltipLost.
   ///
   /// In en, this message translates to:
@@ -14601,6 +14763,48 @@ abstract class AppLocalizations {
   /// **'Copy Link'**
   String get mobilePairCopyLink;
 
+  /// No description provided for @mobilePairQrHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Click to copy the link, to paste on the phone'**
+  String get mobilePairQrHint;
+
+  /// No description provided for @mobileGetApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Get the Phone App'**
+  String get mobileGetApp;
+
+  /// No description provided for @mobileGetAppDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan with the phone\'s camera: the same downloads as on baocode.dev.'**
+  String get mobileGetAppDescription;
+
+  /// No description provided for @mobileGetAndroidDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The APK; it keeps itself up to date'**
+  String get mobileGetAndroidDetail;
+
+  /// No description provided for @mobileGetIos.
+  ///
+  /// In en, this message translates to:
+  /// **'iPhone and iPad'**
+  String get mobileGetIos;
+
+  /// No description provided for @mobileGetIosDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The beta, on TestFlight'**
+  String get mobileGetIosDetail;
+
+  /// No description provided for @mobileGetOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Click to open {url}'**
+  String mobileGetOpen(String url);
+
   /// No description provided for @mobilePairCopied.
   ///
   /// In en, this message translates to:
@@ -14798,6 +15002,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Only the one picked: one of BaoCode\'s, or a custom address.'**
   String get mobileRelayModePinnedDescription;
+
+  /// No description provided for @mobileRelayModeDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct Only'**
+  String get mobileRelayModeDirect;
+
+  /// No description provided for @mobileRelayModeDirectDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'No relay: phones connect straight to this computer. It needs a public address, or the port below forwarded to it.'**
+  String get mobileRelayModeDirectDescription;
+
+  /// No description provided for @mobileDirectPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct Port'**
+  String get mobileDirectPort;
+
+  /// No description provided for @mobileDirectPortDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The UDP port phones connect to. Forward it to this computer at the router, and allow it in the firewall.'**
+  String get mobileDirectPortDescription;
+
+  /// No description provided for @mobileDirectPortInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'A port from 1024 to 65535.'**
+  String get mobileDirectPortInvalid;
+
+  /// No description provided for @mobileDirectAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct Address'**
+  String get mobileDirectAddress;
+
+  /// No description provided for @mobileDirectAddressDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'It goes in the pairing code and in every connection after.'**
+  String get mobileDirectAddressDescription;
+
+  /// No description provided for @mobileDirectAddressNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No public address yet: check again once this computer is online, or forward the port to it if it is behind a router.'**
+  String get mobileDirectAddressNone;
+
+  /// No description provided for @mobileStatusDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'On, direct only'**
+  String get mobileStatusDirect;
 
   /// No description provided for @mobilePathLan.
   ///
@@ -16074,7 +16332,7 @@ abstract class AppLocalizations {
   /// No description provided for @accountsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.'**
+  /// **'Sign in to GitHub, GitLab or Gitee to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.'**
   String get accountsDescription;
 
   /// No description provided for @accountsSignedIn.
@@ -16092,7 +16350,7 @@ abstract class AppLocalizations {
   /// No description provided for @accountsKeptLocally.
   ///
   /// In en, this message translates to:
-  /// **'Tokens are kept in this computer\'s keychain and are sent only to the GitHub or GitLab they are for. Nothing is posted without your confirmation.'**
+  /// **'Tokens are kept in this computer\'s keychain and are sent only to the GitHub, GitLab or Gitee they are for. Nothing is posted without your confirmation.'**
   String get accountsKeptLocally;
 
   /// No description provided for @accountsGitHubHosts.
@@ -16104,8 +16362,14 @@ abstract class AppLocalizations {
   /// No description provided for @accountsGitLabHosts.
   ///
   /// In en, this message translates to:
-  /// **'gitlab.com, or a self-managed GitLab'**
+  /// **'gitlab.com, or a self-managed GitLab (http:// or https://, with its port)'**
   String get accountsGitLabHosts;
+
+  /// No description provided for @accountsGiteeHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'gitee.com, with a personal access token'**
+  String get accountsGiteeHosts;
 
   /// No description provided for @accountsSignInBrowser.
   ///
@@ -16170,7 +16434,7 @@ abstract class AppLocalizations {
   /// No description provided for @accountsHost.
   ///
   /// In en, this message translates to:
-  /// **'Host'**
+  /// **'Server'**
   String get accountsHost;
 
   /// No description provided for @accountsToken.
@@ -16191,6 +16455,12 @@ abstract class AppLocalizations {
   /// **'A personal access token with the api scope.'**
   String get accountsTokenGitLabScopes;
 
+  /// No description provided for @accountsTokenGiteeScopes.
+  ///
+  /// In en, this message translates to:
+  /// **'A personal access token with the user_info, projects, pull_requests, issues and notes scopes.'**
+  String get accountsTokenGiteeScopes;
+
   /// No description provided for @accountsTokenCreate.
   ///
   /// In en, this message translates to:
@@ -16202,6 +16472,28 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The token was not accepted. Check that it is complete and has not expired.'**
   String get accountsTokenRefused;
+
+  /// Title of the dialog asking whether to trust a forge server's certificate.
+  ///
+  /// In en, this message translates to:
+  /// **'Untrusted Certificate'**
+  String get accountsCertificateTitle;
+
+  /// What a self-signed or privately issued forge certificate is, before the user confirms it.
+  ///
+  /// In en, this message translates to:
+  /// **'The certificate of {host} cannot be verified ({issuer}).\n\nSHA-256 fingerprint:\n{fingerprint}\n\nTrusting it lets BaoCode reach this server, and only the certificate with this fingerprint is accepted. You are asked again if the certificate changes.'**
+  String accountsCertificateDetail(
+    String host,
+    String issuer,
+    String fingerprint,
+  );
+
+  /// Button that trusts the certificate shown, and only that one.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust and Continue'**
+  String get accountsCertificateTrust;
 
   /// No description provided for @accountsBrowserTitle.
   ///
@@ -16470,7 +16762,7 @@ abstract class AppLocalizations {
   /// No description provided for @stashImportNotALink.
   ///
   /// In en, this message translates to:
-  /// **'Not a GitHub or GitLab issue or pull request link.'**
+  /// **'Not a GitHub, GitLab or Gitee issue or pull request link.'**
   String get stashImportNotALink;
 
   /// No description provided for @stashImportSignIn.
@@ -16518,7 +16810,7 @@ abstract class AppLocalizations {
   /// No description provided for @stashImportNoRepos.
   ///
   /// In en, this message translates to:
-  /// **'No project has a GitHub or GitLab remote. Paste an issue link above.'**
+  /// **'No project has a GitHub, GitLab or Gitee remote. Paste an issue link above.'**
   String get stashImportNoRepos;
 
   /// No description provided for @stashImportNone.
@@ -16596,7 +16888,7 @@ abstract class AppLocalizations {
   /// No description provided for @stashWelcomeTrack.
   ///
   /// In en, this message translates to:
-  /// **'Cards show their conversations live, and the GitHub and GitLab issues and pull requests they link to stay in sync.'**
+  /// **'Cards show their conversations live, and the GitHub, GitLab and Gitee issues and pull requests they link to stay in sync.'**
   String get stashWelcomeTrack;
 
   /// No description provided for @stashWelcomeStart.
@@ -16748,6 +17040,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The extension is newer than this Baogong. Update Baogong.'**
   String get browserSettingsAppOld;
+
+  /// No description provided for @browserSettingsNoFileAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'File access is off'**
+  String get browserSettingsNoFileAccess;
+
+  /// No description provided for @browserSettingsNoFileAccessDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Agents can\'t open local HTML files or upload files. In chrome://extensions, click Details on BaoCode and turn on Allow access to file URLs.'**
+  String get browserSettingsNoFileAccessDescription;
 
   /// No description provided for @browserSettingsInstall.
   ///
@@ -17072,24 +17376,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Set Up a Model'**
   String get modelSetUp;
-
-  /// No description provided for @claudeCoreHint.
-  ///
-  /// In en, this message translates to:
-  /// **'This chat runs on Baogong\'s built-in core. We recommend the Claude Code core for the fullest experience; it\'s downloaded for you if needed.'**
-  String get claudeCoreHint;
-
-  /// No description provided for @claudeCoreHintSwitch.
-  ///
-  /// In en, this message translates to:
-  /// **'Switch to Claude Code'**
-  String get claudeCoreHintSwitch;
-
-  /// No description provided for @claudeCoreHintLater.
-  ///
-  /// In en, this message translates to:
-  /// **'Not Now'**
-  String get claudeCoreHintLater;
 
   /// No description provided for @remoteAddServer.
   ///
@@ -17892,7 +18178,7 @@ abstract class AppLocalizations {
   /// No description provided for @stashSettingsIssueSyncDescription.
   ///
   /// In en, this message translates to:
-  /// **'A project that is a Git repository on GitHub or GitLab (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.'**
+  /// **'A project that is a Git repository on GitHub, GitLab or Gitee (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.'**
   String get stashSettingsIssueSyncDescription;
 
   /// No description provided for @stashIssueSyncMine.
@@ -19029,6 +19315,30 @@ abstract class AppLocalizations {
   /// **'Unified Viewer'**
   String get diffUnified;
 
+  /// No description provided for @gitDetailsLayout.
+  ///
+  /// In en, this message translates to:
+  /// **'Details Position'**
+  String get gitDetailsLayout;
+
+  /// No description provided for @gitDetailsLayoutAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Right When Wide Enough'**
+  String get gitDetailsLayoutAuto;
+
+  /// No description provided for @gitDetailsLayoutBeside.
+  ///
+  /// In en, this message translates to:
+  /// **'Right'**
+  String get gitDetailsLayoutBeside;
+
+  /// No description provided for @gitDetailsLayoutBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom'**
+  String get gitDetailsLayoutBelow;
+
   /// No description provided for @diffIgnoreWhitespace.
   ///
   /// In en, this message translates to:
@@ -20120,6 +20430,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Commit'**
   String get gitCommitTab;
+
+  /// No description provided for @gitCommitPanelFold.
+  ///
+  /// In en, this message translates to:
+  /// **'Fold'**
+  String get gitCommitPanelFold;
+
+  /// No description provided for @gitCommitPanelUnfold.
+  ///
+  /// In en, this message translates to:
+  /// **'Unfold'**
+  String get gitCommitPanelUnfold;
 
   /// No description provided for @gitStashSelected.
   ///
@@ -21297,6 +21619,24 @@ abstract class AppLocalizations {
   /// **'Upstream answered'**
   String get ustatFieldUpstreamLatency;
 
+  /// A call under way, nothing of its answer yet
+  ///
+  /// In en, this message translates to:
+  /// **'Requesting'**
+  String get ustatCallAsking;
+
+  /// A call under way, its answer coming
+  ///
+  /// In en, this message translates to:
+  /// **'Answering'**
+  String get ustatCallAnswering;
+
+  /// A call Claude Code gave up on before it was answered in full (it timed out, or was interrupted)
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get ustatCallCancelled;
+
   /// No description provided for @ustatFieldFirstToken.
   ///
   /// In en, this message translates to:
@@ -21476,6 +21816,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Nothing kept yet'**
   String get ustatSpaceEmpty;
+
+  /// No description provided for @ustatLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading the calls…'**
+  String get ustatLoading;
 
   /// No description provided for @ustatClearEllipsis.
   ///
@@ -21954,7 +22300,7 @@ abstract class AppLocalizations {
   /// No description provided for @ustatPricesDetail.
   ///
   /// In en, this message translates to:
-  /// **'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included.'**
+  /// **'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included, unless a price is set from a date on.'**
   String get ustatPricesDetail;
 
   /// No description provided for @ustatPricesAgentHint.
@@ -22113,11 +22459,239 @@ abstract class AppLocalizations {
   /// **'Claude Code\'s own models without a price of yours are priced at Anthropic\'s API prices: the grey figures.'**
   String get ustatPriceClaudeDefault;
 
+  /// No description provided for @ustatPriceRuleTiers.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} tiers by prompt length'**
+  String ustatPriceRuleTiers(int count);
+
+  /// No description provided for @ustatPriceRuleSchedule.
+  ///
+  /// In en, this message translates to:
+  /// **'peak and off-peak hours'**
+  String get ustatPriceRuleSchedule;
+
+  /// No description provided for @ustatPriceRuleFast.
+  ///
+  /// In en, this message translates to:
+  /// **'fast mode ×{factor}'**
+  String ustatPriceRuleFast(String factor);
+
+  /// No description provided for @ustatPriceRuleServiceTiers.
+  ///
+  /// In en, this message translates to:
+  /// **'by service tier'**
+  String get ustatPriceRuleServiceTiers;
+
+  /// No description provided for @ustatPriceRuleGeo.
+  ///
+  /// In en, this message translates to:
+  /// **'by region'**
+  String get ustatPriceRuleGeo;
+
+  /// No description provided for @ustatPriceRulePerCall.
+  ///
+  /// In en, this message translates to:
+  /// **'{amount} a call'**
+  String ustatPriceRulePerCall(String amount);
+
+  /// No description provided for @ustatPriceRuleTools.
+  ///
+  /// In en, this message translates to:
+  /// **'tools priced a use'**
+  String get ustatPriceRuleTools;
+
+  /// No description provided for @ustatPriceRuleVersions.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} prices by date'**
+  String ustatPriceRuleVersions(int count);
+
+  /// No description provided for @ustatPriceRuleRate.
+  ///
+  /// In en, this message translates to:
+  /// **'upstream rate ×{factor}'**
+  String ustatPriceRuleRate(String factor);
+
+  /// No description provided for @ustatPriceRuleTime.
+  ///
+  /// In en, this message translates to:
+  /// **'time of week ×{factor}'**
+  String ustatPriceRuleTime(String factor);
+
+  /// No description provided for @ustatPriceRuleFees.
+  ///
+  /// In en, this message translates to:
+  /// **'fees {amount}'**
+  String ustatPriceRuleFees(String amount);
+
+  /// No description provided for @ustatFees.
+  ///
+  /// In en, this message translates to:
+  /// **'Fees'**
+  String get ustatFees;
+
+  /// No description provided for @ustatPricedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Priced by'**
+  String get ustatPricedBy;
+
+  /// No description provided for @ustatUpstreamRates.
+  ///
+  /// In en, this message translates to:
+  /// **'Upstream rates'**
+  String get ustatUpstreamRates;
+
+  /// No description provided for @ustatUpstreamRatesDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The models of these upstreams without a price of their own: the same model\'s price elsewhere, times the rate.'**
+  String get ustatUpstreamRatesDetail;
+
+  /// No description provided for @ustatUpstreamRateClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear the rate'**
+  String get ustatUpstreamRateClear;
+
   /// No description provided for @ustatContextUnpickHint.
   ///
   /// In en, this message translates to:
   /// **'Click again to unpick: back to the context as it is now'**
   String get ustatContextUnpickHint;
+
+  /// No description provided for @localRunTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Run on this computer'**
+  String get localRunTitle;
+
+  /// No description provided for @localRunReason.
+  ///
+  /// In en, this message translates to:
+  /// **'The agent on {host} wants to run this command on your computer ({system}), not on {host}.'**
+  String localRunReason(String host, String system);
+
+  /// No description provided for @localRunAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Always allow for {host}'**
+  String localRunAlways(String host);
+
+  /// No description provided for @remoteLocalAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow Remote Agents to Act on This Computer'**
+  String get remoteLocalAccess;
+
+  /// No description provided for @remoteLocalAccessDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Agents on these hosts may run commands on this computer (asking you each time), copy files both ways and forward ports.'**
+  String get remoteLocalAccessDetail;
+
+  /// No description provided for @remoteLocalAccessNoAsking.
+  ///
+  /// In en, this message translates to:
+  /// **'Runs commands without asking'**
+  String get remoteLocalAccessNoAsking;
+
+  /// No description provided for @remoteLocalAccessAskAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask Each Time'**
+  String get remoteLocalAccessAskAgain;
+
+  /// No description provided for @sidePanelPorts.
+  ///
+  /// In en, this message translates to:
+  /// **'Ports'**
+  String get sidePanelPorts;
+
+  /// No description provided for @portsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No ports are forwarded. A server on {host} that prints its http://localhost address is forwarded here on its own.'**
+  String portsEmpty(String host);
+
+  /// No description provided for @portsAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward a Port'**
+  String get portsAdd;
+
+  /// No description provided for @portsCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Address'**
+  String get portsCopy;
+
+  /// No description provided for @portsOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in Browser'**
+  String get portsOpen;
+
+  /// No description provided for @portsStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop Forwarding'**
+  String get portsStop;
+
+  /// No description provided for @portsHostToHere.
+  ///
+  /// In en, this message translates to:
+  /// **'{host} → this computer'**
+  String portsHostToHere(String host);
+
+  /// No description provided for @portsHereToHost.
+  ///
+  /// In en, this message translates to:
+  /// **'This computer → {host}'**
+  String portsHereToHost(String host);
+
+  /// No description provided for @portsAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get portsAuto;
+
+  /// No description provided for @portsPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Port'**
+  String get portsPort;
+
+  /// No description provided for @portsListen.
+  ///
+  /// In en, this message translates to:
+  /// **'Listen on (optional)'**
+  String get portsListen;
+
+  /// No description provided for @portsForward.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward'**
+  String get portsForward;
+
+  /// No description provided for @portsCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied {address}'**
+  String portsCopied(String address);
+
+  /// Hover of the project folder shown under the chat in place of a Git branch (no repository): its path, then that a click copies it.
+  ///
+  /// In en, this message translates to:
+  /// **'{path}\nClick to copy its path'**
+  String branchBarFolder(String path);
+
+  /// Hover of the project folder under the chat once clicked: its path was copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Path copied'**
+  String get branchBarPathCopied;
 }
 
 class _AppLocalizationsDelegate

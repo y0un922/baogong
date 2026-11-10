@@ -1474,36 +1474,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidePanelTerminal => '终端';
 
   @override
-  String get sidePanelBrowser => '浏览器';
-
-  @override
-  String get browserNotConnected =>
-      '没有连接浏览器。在 Chrome（或 Edge、Brave、Arc）中添加 BaoCode 扩展后，agent 就能使用你共享给它的标签页。';
-
-  @override
-  String get browserNoSharedTab =>
-      '还没有共享的标签页。让 agent 打开网页，或在浏览器工具栏点 BaoCode 按钮共享当前标签页。';
-
-  @override
   String get browserOtherApp => '另一个包工头已连接浏览器。';
-
-  @override
-  String get browserSharedTabs => '共享的标签页';
-
-  @override
-  String get browserReload => '重新加载';
-
-  @override
-  String get browserShowInBrowser => '在浏览器中显示';
-
-  @override
-  String get browserDetached => '浏览器已停止让包工头查看这个标签页。';
-
-  @override
-  String get browserReconnect => '重新连接';
-
-  @override
-  String get browserShowInPanel => '在侧边栏查看';
 
   @override
   String get browserWatchTitle => '正在看你在浏览器里操作';
@@ -1658,10 +1629,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidePanelHide => '隐藏侧栏';
 
   @override
-  String get sidePanelMoveLeft => '移到对话左侧';
+  String get chatLayout => '布局';
 
   @override
-  String get sidePanelMoveRight => '移到对话右侧';
+  String get chatLayoutSidebarChatPanel => '侧栏 · 对话 · 面板';
+
+  @override
+  String get chatLayoutSidebarPanelChat => '侧栏 · 面板 · 对话';
+
+  @override
+  String get chatLayoutPanelChatSidebar => '面板 · 对话 · 侧栏';
+
+  @override
+  String get chatLayoutChatPanelSidebar => '对话 · 面板 · 侧栏';
 
   @override
   String get sidePanelChanges => '变更';
@@ -1797,6 +1777,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sidebarByStatus => '按状态';
+
+  @override
+  String get sidebarProjectSortRecent => '最近活动';
+
+  @override
+  String get sidebarProjectSortManual => '手动';
 
   @override
   String get sidebarTimeNow => '刚刚';
@@ -2003,6 +1989,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get btwCommandDetail => '在旁边另开一个对话提问';
+
+  @override
+  String get forkCommandDetail => 'Fork 当前对话并打开新对话';
+
+  @override
+  String get forkUnavailable => '此对话暂不能 Fork：要先发过消息，且所用的智能体支持 Fork。';
 
   @override
   String get sidebarFoldAsides => '收起 /btw 子对话';
@@ -2258,10 +2250,21 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get chatAgentMessageSent => '发来消息';
+
+  @override
+  String chatAgentMessageSemantics(String agent) {
+    return '来自子智能体 $agent 的消息';
+  }
+
+  @override
   String get chatOpensItsConversation => '打开其对话';
 
   @override
   String get chatLoadEarlier => '加载更早的消息';
+
+  @override
+  String get chatReload => '重新加载（在别处有新消息）';
 
   @override
   String get chatStop => '停止';
@@ -2675,6 +2678,11 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String turnWorked(String duration) {
     return '已处理 $duration';
+  }
+
+  @override
+  String turnStopped(String duration) {
+    return '处理 $duration 后停止';
   }
 
   @override
@@ -3589,7 +3597,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get generalSettingsClaudeCoreDescription =>
-      'Claude Code CLI：Anthropic 官方程序，沿用本机的登录和配置，用 Claude 订阅请选它。内置：包工头自带，只用 设置 → 模型 里添加的模型。默认用 CLI，本机没有时会自动下载。改动对新开的会话生效。';
+      'Claude Code CLI：Anthropic 官方程序，沿用本机的登录和配置，用 Claude 订阅请选它。内置：包工头自带，只用 设置 → 模型 里添加的模型。默认：本机装有 Claude Code 时用 CLI，没有时用内置内核；选 CLI 而本机没有时会自动下载。改动对新开的会话生效。';
 
   @override
   String get generalSettingsClaudeCoreBuiltin => '内置';
@@ -3820,7 +3828,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get themeHighContrastThemes => '高对比度主题';
 
   @override
-  String get themeSelectPlaceholder => '选择颜色主题(检测系统颜色模式已禁用)';
+  String get themeAuto => '自动';
+
+  @override
+  String get themeFollowSystem => '跟随系统';
+
+  @override
+  String get themeSelectPlaceholder => '选择颜色主题';
 
   @override
   String get dateNow => '现在';
@@ -4984,6 +4998,11 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String wbSelectedLines(int lines, int count) {
+    return '(已选择 $lines 行，$count 个字符)';
+  }
+
+  @override
   String get wbGoToLineColumn => '转到行/列';
 
   @override
@@ -5732,7 +5751,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get claudePathMissing => '尚未找到：开始第一个对话时会自动下载 Claude Code。';
+  String get claudePathMissing => '尚未找到：选用 Claude Code CLI 后，开始第一个对话时会自动下载。';
 
   @override
   String get generalSettingsIdeWindows => 'Fast Ide 窗口';
@@ -6264,6 +6283,32 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get modelsMagpieJoin => '接入 magpie';
+
+  @override
+  String get modelsMagpieBadge => '跟随 magpie';
+
+  @override
+  String get modelsMagpieGateway => 'magpie 网关';
+
+  @override
+  String get modelsMagpieGatewayDescription =>
+      '模型、账号和路由都在 magpie 里管理，这里的列表跟着它自动更新。新出现的路由组、图片模型，以及 magpie 给 Claude Code 选的模型会自动启用，其他的在下面勾选。';
+
+  @override
+  String get modelsMagpieRunning => '运行中';
+
+  @override
+  String get modelsMagpieNotRunning => 'magpie 未运行';
+
+  @override
+  String get modelsMagpieNotRunningDetail =>
+      '打开 magpie，或运行 magpie serve。它没运行时，用它的模型的会话会失败。';
+
+  @override
+  String get modelsMagpieSync => '同步模型';
+
+  @override
   String get modelsNewProviderName => '新上游';
 
   @override
@@ -6296,6 +6341,49 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsAddAccountDescription => '在浏览器中打开 ChatGPT 登录页。';
 
   @override
+  String get modelsAccountsImport => '导入';
+
+  @override
+  String get modelsAccountsImportTitle => '导入账号';
+
+  @override
+  String get modelsAccountsImportFile => '选择文件…';
+
+  @override
+  String get modelsAccountsImportDescription => '输入或选择 JSON 格式的账号凭据。';
+
+  @override
+  String get modelsAccountsPaste => '输入 JSON…';
+
+  @override
+  String get modelsAccountsPastePlaceholder => '在此输入或粘贴 JSON 凭据。';
+
+  @override
+  String get modelsAccountsImportConfirm => '导入这些 ChatGPT 凭据？';
+
+  @override
+  String get modelsAccountsImportConfirmDetail =>
+      'BaoCode 会安全保存凭据，不修改原文件，导入时也不会主动刷新令牌。但后续续期可能轮换刷新令牌，导致原工具需要重新登录。请只导入你有权使用的凭据。';
+
+  @override
+  String get modelsAccountsImportFailed => '无法读取或导入凭据。';
+
+  @override
+  String modelsAccountsImportSummary(int count) {
+    return '已导入账号：$count';
+  }
+
+  @override
+  String modelsAccountsImportKept(int count) {
+    return '已存在，保留现有登录：$count';
+  }
+
+  @override
+  String modelsAccountsImportItemFailed(int index, String error) {
+    return '第 $index 项：$error';
+  }
+
+  @override
   String get modelsAccountSigningIn => '等待登录…';
 
   @override
@@ -6310,7 +6398,12 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get modelsRefreshQuota => '刷新额度';
+  String get modelsRefreshQuota => '刷新全部额度';
+
+  @override
+  String modelsAccountRefreshQuota(String name) {
+    return '刷新 $name 的额度';
+  }
 
   @override
   String get modelsAccountRemove => '移除账号';
@@ -6683,7 +6776,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsRoleSubagentDescription =>
-      'CLAUDE_CODE_SUBAGENT_MODEL：所有子 Agent 使用的模型，优先于子 Agent 定义或调用时指定的模型（定义为 inherit 的除外）。也可以选其他上游的模型，请求会经包工头的本地代理发过去。';
+      'CLAUDE_CODE_SUBAGENT_MODEL：所有子 Agent 使用的模型，包括内置的 Explore、Plan 和定义为 inherit 的，优先于子 Agent 定义或调用时指定的模型。也可以选其他上游的模型，请求会经包工头的本地代理发过去。';
 
   @override
   String get modelsRoleMissing => '这个模型已不在它的上游里，用到它的请求会失败。';
@@ -7755,6 +7848,11 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String remoteStatusSystem(String platform) {
+    return '系统：$platform';
+  }
+
+  @override
   String remoteStatusTooltipLost(String host) {
     return '与 $host 的连接已断开：点击立即重连';
   }
@@ -8515,6 +8613,29 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mobilePairCopyLink => '复制链接';
 
   @override
+  String get mobilePairQrHint => '点按复制链接，在手机上粘贴';
+
+  @override
+  String get mobileGetApp => '下载手机版';
+
+  @override
+  String get mobileGetAppDescription => '用手机相机扫码下载，和官网下载页上的一样。';
+
+  @override
+  String get mobileGetAndroidDetail => '安装包，之后在应用内自动更新';
+
+  @override
+  String get mobileGetIos => 'iPhone 和 iPad';
+
+  @override
+  String get mobileGetIosDetail => 'TestFlight 测试版';
+
+  @override
+  String mobileGetOpen(String url) {
+    return '点击在浏览器中打开 $url';
+  }
+
+  @override
   String get mobilePairCopied => '已复制';
 
   @override
@@ -8630,10 +8751,39 @@ class AppLocalizationsZh extends AppLocalizations {
       '只用你指定的一台：BaoCode 的某一台，或自定义地址。';
 
   @override
+  String get mobileRelayModeDirect => '仅直连';
+
+  @override
+  String get mobileRelayModeDirectDescription =>
+      '不经过任何中继：手机直接连到这台电脑。电脑要有公网 IP，或者让下面的端口能从外面访问。';
+
+  @override
+  String get mobileDirectPort => '直连端口';
+
+  @override
+  String get mobileDirectPortDescription =>
+      '手机连接的 UDP 端口。路由器后面的话，把这个 UDP 端口转发给这台电脑，并在防火墙和云安全组里放行。';
+
+  @override
+  String get mobileDirectPortInvalid => '端口要在 1024–65535 之间。';
+
+  @override
+  String get mobileDirectAddress => '直连地址';
+
+  @override
+  String get mobileDirectAddressDescription => '配对二维码和之后的每次连接都会带上它。';
+
+  @override
+  String get mobileDirectAddressNone => '还没有公网地址：电脑上线后再看；在路由器后面的话，需要把端口转发过来。';
+
+  @override
+  String get mobileStatusDirect => '已开启 · 仅直连';
+
+  @override
   String get mobilePathLan => '局域网直连';
 
   @override
-  String get mobilePathDirect => '打洞直连';
+  String get mobilePathDirect => '直连';
 
   @override
   String get mobilePathRelay => '经中继';
@@ -9338,7 +9488,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get accountsDescription =>
-      '登录 GitHub 或 GitLab 后，Stash 中链接的 issue 和 PR 会显示最新状态，可以把 issue 导入为 Stash，并在你确认后回帖。';
+      '登录 GitHub、GitLab 或 Gitee 后，Stash 中链接的 issue 和 PR 会显示最新状态，可以把 issue 导入为 Stash，并在你确认后回帖。';
 
   @override
   String get accountsSignedIn => '已登录';
@@ -9348,13 +9498,17 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get accountsKeptLocally =>
-      '令牌只保存在本机钥匙串里，只会发给对应的 GitHub 或 GitLab。未经你确认，不会发布任何内容。';
+      '令牌只保存在本机钥匙串里，只会发给对应的 GitHub、GitLab 或 Gitee。未经你确认，不会发布任何内容。';
 
   @override
   String get accountsGitHubHosts => 'github.com，或公司的 GitHub Enterprise';
 
   @override
-  String get accountsGitLabHosts => 'gitlab.com，或自建的 GitLab';
+  String get accountsGitLabHosts =>
+      'gitlab.com，或自建的 GitLab（http:// 或 https://，可带端口）';
+
+  @override
+  String get accountsGiteeHosts => 'gitee.com，使用私人令牌登录';
 
   @override
   String get accountsSignInBrowser => '在浏览器中登录';
@@ -9408,12 +9562,31 @@ class AppLocalizationsZh extends AppLocalizations {
   String get accountsTokenGitLabScopes => '需要勾选 api 范围的个人访问令牌。';
 
   @override
+  String get accountsTokenGiteeScopes =>
+      '需要勾选 user_info、projects、pull_requests、issues、notes 权限的私人令牌。';
+
+  @override
   String accountsTokenCreate(String host) {
     return '在 $host 上创建令牌';
   }
 
   @override
   String get accountsTokenRefused => '令牌无效，请检查是否完整、是否已过期。';
+
+  @override
+  String get accountsCertificateTitle => '证书不受信任';
+
+  @override
+  String accountsCertificateDetail(
+    String host,
+    String issuer,
+    String fingerprint,
+  ) {
+    return '$host 的证书无法验证（签发者：$issuer）。\n\nSHA-256 指纹：\n$fingerprint\n\n信任后 BaoCode 会连接这台服务器，并且只接受这个指纹的证书；证书更换后会再次询问。';
+  }
+
+  @override
+  String get accountsCertificateTrust => '信任并继续';
 
   @override
   String accountsBrowserTitle(String forge) {
@@ -9570,7 +9743,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get stashImportAdd => '添加';
 
   @override
-  String get stashImportNotALink => '不是 GitHub 或 GitLab 的 issue / PR 链接。';
+  String get stashImportNotALink => '不是 GitHub、GitLab 或 Gitee 的 issue / PR 链接。';
 
   @override
   String stashImportSignIn(String forge) {
@@ -9597,7 +9770,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stashImportNoRepos =>
-      '没有项目的 Git 远程在 GitHub 或 GitLab 上，可以在上面粘贴 issue 链接。';
+      '没有项目的 Git 远程在 GitHub、GitLab 或 Gitee 上，可以在上面粘贴 issue 链接。';
 
   @override
   String get stashImportNone => '这里没有打开的 issue。';
@@ -9643,7 +9816,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stashWelcomeTrack =>
-      '卡片上实时显示对话状态，链接的 GitHub、GitLab issue 和 PR 也会同步状态。';
+      '卡片上实时显示对话状态，链接的 GitHub、GitLab、Gitee issue 和 PR 也会同步状态。';
 
   @override
   String get stashWelcomeStart => '开始使用';
@@ -9735,6 +9908,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get browserSettingsAppOld => '扩展比当前的包工头新，请更新包工头。';
+
+  @override
+  String get browserSettingsNoFileAccess => '没有开文件访问权限';
+
+  @override
+  String get browserSettingsNoFileAccessDescription =>
+      '打不开本地 HTML，也传不了文件。在 chrome://extensions 里点 BaoCode 的「详细信息」，打开「允许访问文件网址」。';
 
   @override
   String get browserSettingsInstall => '安装扩展';
@@ -9913,16 +10093,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelSetUp => '设置模型';
-
-  @override
-  String get claudeCoreHint =>
-      '当前用的是 包工头 内置内核。推荐换成 Claude Code 内核，体验更完整；没安装的话会自动帮你下载。';
-
-  @override
-  String get claudeCoreHintSwitch => '切换到 Claude Code';
-
-  @override
-  String get claudeCoreHintLater => '暂不';
 
   @override
   String get remoteAddServer => '新增 SSH 服务器…';
@@ -10358,7 +10528,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stashSettingsIssueSyncDescription =>
-      '项目是 GitHub / GitLab 上的 Git 仓库（并已在「账号」中登录）时，它的未关闭 issue 会成为 Stash，一个 issue 只对应一条，双向保持一致。删除或取消关联的不会再被拉回来。';
+      '项目是 GitHub / GitLab / Gitee 上的 Git 仓库（并已在「账号」中登录）时，它的未关闭 issue 会成为 Stash，一个 issue 只对应一条，双向保持一致。删除或取消关联的不会再被拉回来。';
 
   @override
   String get stashIssueSyncMine => '只同步指派给我或我创建的';
@@ -11056,6 +11226,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get diffUnified => '单栏查看';
 
   @override
+  String get gitDetailsLayout => '详情位置';
+
+  @override
+  String get gitDetailsLayoutAuto => '够宽时在右侧';
+
+  @override
+  String get gitDetailsLayoutBeside => '右侧';
+
+  @override
+  String get gitDetailsLayoutBelow => '下方';
+
+  @override
   String get diffIgnoreWhitespace => '忽略行首尾空白';
 
   @override
@@ -11690,6 +11872,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get gitCommitTab => '提交';
+
+  @override
+  String get gitCommitPanelFold => '折叠';
+
+  @override
+  String get gitCommitPanelUnfold => '展开';
 
   @override
   String get gitStashSelected => '暂存选中的文件…';
@@ -12364,6 +12552,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ustatFieldUpstreamLatency => '上游响应';
 
   @override
+  String get ustatCallAsking => '请求中';
+
+  @override
+  String get ustatCallAnswering => '输出中';
+
+  @override
+  String get ustatCallCancelled => '已取消';
+
+  @override
   String get ustatFieldFirstToken => '首字';
 
   @override
@@ -12461,6 +12658,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ustatSpaceEmpty => '暂无数据';
+
+  @override
+  String get ustatLoading => '正在读取调用记录…';
 
   @override
   String get ustatClearEllipsis => '清理…';
@@ -12753,7 +12953,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ustatPrices => '模型价格';
 
   @override
-  String get ustatPricesDetail => '每百万 token 的价格。费用按当前价格计算，改价后之前的调用也按新价格算。';
+  String get ustatPricesDetail =>
+      '每百万 token 的价格。费用按当前价格计算，改价后之前的调用也按新价格算；设了生效日期的价格只算那天之后的调用。';
 
   @override
   String get ustatPricesAgentHint =>
@@ -12854,5 +13055,148 @@ class AppLocalizationsZh extends AppLocalizations {
       'Claude Code 自带模型没填价格时按 Anthropic API 价折算，即输入框里的灰色数字。';
 
   @override
+  String ustatPriceRuleTiers(int count) {
+    return '按上下文长度分 $count 档';
+  }
+
+  @override
+  String get ustatPriceRuleSchedule => '峰谷时段';
+
+  @override
+  String ustatPriceRuleFast(String factor) {
+    return '快速模式 ×$factor';
+  }
+
+  @override
+  String get ustatPriceRuleServiceTiers => '按服务档位';
+
+  @override
+  String get ustatPriceRuleGeo => '按区域';
+
+  @override
+  String ustatPriceRulePerCall(String amount) {
+    return '每次 $amount';
+  }
+
+  @override
+  String get ustatPriceRuleTools => '工具按次计费';
+
+  @override
+  String ustatPriceRuleVersions(int count) {
+    return '$count 个按日期生效的价格';
+  }
+
+  @override
+  String ustatPriceRuleRate(String factor) {
+    return '上游倍率 ×$factor';
+  }
+
+  @override
+  String ustatPriceRuleTime(String factor) {
+    return '时段 ×$factor';
+  }
+
+  @override
+  String ustatPriceRuleFees(String amount) {
+    return '费用 $amount';
+  }
+
+  @override
+  String get ustatFees => '按次费用';
+
+  @override
+  String get ustatPricedBy => '计价依据';
+
+  @override
+  String get ustatUpstreamRates => '上游倍率';
+
+  @override
+  String get ustatUpstreamRatesDetail => '这些上游里没有单独设价的模型，按别处同名模型的价格乘以倍率计算。';
+
+  @override
+  String get ustatUpstreamRateClear => '清除倍率';
+
+  @override
   String get ustatContextUnpickHint => '再次点击取消选中，回到当前上下文';
+
+  @override
+  String get localRunTitle => '在本机执行';
+
+  @override
+  String localRunReason(String host, String system) {
+    return '$host 上的 agent 要在你的电脑（$system）上执行这条命令，不是在 $host 上执行。';
+  }
+
+  @override
+  String localRunAlways(String host) {
+    return '这台主机一直允许';
+  }
+
+  @override
+  String get remoteLocalAccess => '允许远程 agent 操作本机';
+
+  @override
+  String get remoteLocalAccessDetail =>
+      '这些主机上的 agent 可以在本机执行命令（每次都会问你）、在两边之间传文件、转发端口。';
+
+  @override
+  String get remoteLocalAccessNoAsking => '命令直接执行，不再询问';
+
+  @override
+  String get remoteLocalAccessAskAgain => '改回每次询问';
+
+  @override
+  String get sidePanelPorts => '端口';
+
+  @override
+  String portsEmpty(String host) {
+    return '还没有转发的端口。$host 上的服务打印出 http://localhost 地址时，会自动转发到本机。';
+  }
+
+  @override
+  String get portsAdd => '转发端口';
+
+  @override
+  String get portsCopy => '复制地址';
+
+  @override
+  String get portsOpen => '在浏览器打开';
+
+  @override
+  String get portsStop => '停止转发';
+
+  @override
+  String portsHostToHere(String host) {
+    return '$host → 本机';
+  }
+
+  @override
+  String portsHereToHost(String host) {
+    return '本机 → $host';
+  }
+
+  @override
+  String get portsAuto => '自动';
+
+  @override
+  String get portsPort => '端口';
+
+  @override
+  String get portsListen => '监听端口（可选）';
+
+  @override
+  String get portsForward => '转发';
+
+  @override
+  String portsCopied(String address) {
+    return '已复制 $address';
+  }
+
+  @override
+  String branchBarFolder(String path) {
+    return '$path\n点击复制路径';
+  }
+
+  @override
+  String get branchBarPathCopied => '已复制路径';
 }
