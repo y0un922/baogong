@@ -15,10 +15,16 @@ class UserMessageItem extends ChatItem {
     this.worked,
     this.usage,
     this.endedAt,
+    this.stopped = false,
     this.sentAt,
+    this.fromAgent,
   });
 
   final String text;
+
+  /// Sent by a subagent (SendMessage), not typed: what it was given to do,
+  /// else its id. Shown as its, and not to be edited.
+  final String? fromAgent;
 
   /// Pictures sent with it (screenshots, mockups…).
   final List<ImageAttachment> images;
@@ -30,8 +36,8 @@ class UserMessageItem extends ChatItem {
   /// back until then.
   final bool queued;
 
-  /// How long the agent worked on it, once its turn ended as it should
-  /// (not stopped): the work before its answer folds into that.
+  /// How long the agent worked on it, once its turn ended: the work before
+  /// its answer folds into that.
   final Duration? worked;
 
   /// What its turn spent, kept with [worked], when the kernel said.
@@ -41,10 +47,15 @@ class UserMessageItem extends ChatItem {
   /// lasts a while from its last request.
   final DateTime? endedAt;
 
+  /// The user stopped its turn, [worked] in: all its work folds, an answer
+  /// or not.
+  final bool stopped;
+
   UserMessageItem copyWith({
     Duration? worked,
     TurnUsage? usage,
     DateTime? endedAt,
+    bool? stopped,
   }) => UserMessageItem(
     text: text,
     queued: queued,
@@ -52,7 +63,9 @@ class UserMessageItem extends ChatItem {
     worked: worked ?? this.worked,
     usage: usage ?? this.usage,
     endedAt: endedAt ?? this.endedAt,
+    stopped: stopped ?? this.stopped,
     sentAt: sentAt,
+    fromAgent: fromAgent,
   );
 }
 
@@ -767,9 +780,9 @@ class FileChange {
   /// that over.
   final bool conflict;
 
-  String get fileName => path.split('/').last;
+  String get fileName => path.split(RegExp(r'[/\\]')).last;
   String get directory {
-    final index = path.lastIndexOf('/');
+    final index = path.lastIndexOf(RegExp(r'[/\\]'));
     return index < 0 ? '' : path.substring(0, index);
   }
 }

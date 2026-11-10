@@ -121,6 +121,28 @@ void main() {
       expect(_folds([_prompt(), _edit, _words, error]), isEmpty);
     });
 
+    test('stopped, all of it folds, an answer or not, but why it stopped', () {
+      final stopped = UserMessageItem(
+        text: 'Fix it',
+        worked: const Duration(seconds: 9),
+        stopped: true,
+      );
+      expect(_folds([stopped, _read, _grep, _edit]), ['work 1-4', 'steps 1-3']);
+      const error = NoticeItem(NoticeKind.error, 'Overloaded');
+      expect(_folds([stopped, _edit, _read, error]), ['work 1-3']);
+      expect(_folds([stopped, _read, _edit, _answer]), ['work 1-3']);
+      expect(_fold([stopped, _read, _edit]).workAt(1)?.stopped, isTrue);
+      // Untimed (stopped before this was kept), it shows as it is.
+      expect(
+        _folds([
+          const UserMessageItem(text: 'Fix it', stopped: true),
+          _edit,
+          _read,
+        ]),
+        isEmpty,
+      );
+    });
+
     test('its answer is all the words after its last step', () {
       expect(_folds([_prompt(), _edit, _read, _words, _thought, _answer]), [
         'work 1-3',
@@ -285,6 +307,40 @@ void main() {
         expect(_fold(other).rowAt(3, other[3], (_) => false).item, isFalse);
       }
     });
+  });
+
+  test('a question the user answered breaks a run, and shows out of a '
+      'closed turn, with what they said', () {
+    const asked = ToolCallItem(
+      kind: ToolKind.question,
+      target: 'Color',
+      input: {
+        'questions': [
+          {'question': 'Red or blue?', 'header': 'Color'},
+        ],
+        'answers': {'Red or blue?': 'Red'},
+      },
+    );
+    final turn = <ChatItem>[
+      _prompt(),
+      _read,
+      _grep,
+      asked,
+      _read,
+      _grep,
+      _answer,
+    ];
+    expect(_folds(turn), ['work 1-6', 'steps 1-3', 'steps 4-6']);
+    final folds = _fold(turn);
+    expect(folds.rowAt(3, asked, (_) => false).item, isTrue);
+    // Still being asked: in the panel over the composer, not out of it.
+    final asking = [...turn]
+      ..[3] = const ToolCallItem(
+        kind: ToolKind.question,
+        target: 'Color',
+        status: ToolStatus.running,
+      );
+    expect(_fold(asking).rowAt(3, asking[3], (_) => false).item, isFalse);
   });
 
   group('thoughts one after another', () {

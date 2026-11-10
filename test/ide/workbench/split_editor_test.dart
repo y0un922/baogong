@@ -1,6 +1,6 @@
 import 'package:baocode/chat/composer/file_drop.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart' show TextField, ValueKey;
+import 'package:flutter/material.dart' show SizedBox, TextField, ValueKey;
 import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/ide_commands.dart';
@@ -585,5 +585,71 @@ void main() {
     final docs = {for (final doc in workspace.documents) doc.path: doc.text};
     expect(docs[inRoot('a.md')], '# Alpha\n\n![](shot.png)\n\nText a.\n');
     expect(docs[inRoot('b.md')], '# Beta\n\nText b.\n');
+  });
+
+  testWidgets('a split is kept and comes back with its groups', (tester) async {
+    final kept = <Map<String, Object?>>[];
+    await pumpWorkbench(
+      tester,
+      {'a.dart': 'a\n', 'b.dart': 'b\n', 'c.dart': 'c\n'},
+      open: ['a.dart', 'b.dart'],
+      onViewState: kept.add,
+    );
+    await tester.tapAt(
+      tester.getCenter(
+        find.descendant(
+          of: find.byType(IdeExplorer),
+          matching: find.text('c.dart'),
+        ),
+      ),
+      buttons: kSecondaryMouseButton,
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open to the Side'));
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byKey(const ValueKey('ide-editor-split-sash')),
+      const Offset(80, 0),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final saved = kept.last;
+    expect(saved['splitEditors'], [inRoot('b.dart'), inRoot('c.dart')]);
+    expect(saved['splitLeft'], [inRoot('a.dart'), inRoot('b.dart')]);
+    expect(saved['splitRight'], [inRoot('c.dart')]);
+    expect(saved['splitRightFocused'], isTrue);
+    expect(saved['splitRatio'], greaterThan(0.5));
+    expect(saved['active'], inRoot('c.dart'));
+
+    // The same widget type would update the workbench already in the tree,
+    // which restores its view once, as it is made.
+    await tester.pumpWidget(const SizedBox());
+    final restored = await pumpWorkbench(tester, {
+      'a.dart': 'a\n',
+      'b.dart': 'b\n',
+      'c.dart': 'c\n',
+    }, viewState: saved);
+    await tester.pumpAndSettle();
+    expect(restored.active?.path, inRoot('c.dart'));
+    expect(find.byType(IdeEditor), findsNWidgets(2));
+    expect(
+      [
+        for (final editor in tester.widgetList<IdeEditor>(
+          find.byType(IdeEditor),
+        ))
+          editor.active.path,
+      ],
+      [inRoot('b.dart'), inRoot('c.dart')],
+    );
+    final bars = tester.widgetList<IdeTabBar>(find.byType(IdeTabBar)).toList();
+    expect(
+      [for (final doc in bars[0].documents) doc.path],
+      [inRoot('a.dart'), inRoot('b.dart')],
+    );
+    expect(bars[0].active?.path, inRoot('b.dart'));
+    expect([for (final doc in bars[1].documents) doc.path], [inRoot('c.dart')]);
+    expect(bars[1].active?.path, inRoot('c.dart'));
   });
 }

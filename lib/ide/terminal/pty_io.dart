@@ -56,6 +56,20 @@ abstract final class PtyProcesses {
     }
   }
 
+  /// Whether [shell] is started as a login shell known to read the login
+  /// files. Other arguments, or a shell it does not know, are not guessed
+  /// at.
+  static bool _readsLoginFiles(TerminalShell shell) {
+    if (!const {'bash', 'zsh', 'fish'}.contains(p.basename(shell.executable))) {
+      return false;
+    }
+    final args = shell.arguments
+        .where((arg) => arg != '-i' && arg != '--interactive')
+        .toList();
+    return args.length == 1 &&
+        const {'-l', '--login', '-il', '-li'}.contains(args.single);
+  }
+
   static Future<PtyLaunch> terminalLaunch(
     String root, {
     required int columns,
@@ -65,11 +79,17 @@ abstract final class PtyProcesses {
     TerminalEnvironmentRequest? environment,
   }) async {
     final os = _os;
-    // As VS Code, whose terminals inherit the environment it resolved from
-    // the login shell.
     final resolved = await ClaudeEnvironment.of();
     shell ??= defaultTerminalShell(os, resolved, exists: _exists, list: _list);
-    final base = terminalBaseEnvironment(resolved, shell);
+    // As VS Code, whose terminals inherit the environment it resolved from
+    // the login shell; but that one is of when the app started, and a login
+    // shell reads the files as they are now (one changed since, #226).
+    final base = terminalBaseEnvironment(
+      os != TerminalOs.windows && _readsLoginFiles(shell)
+          ? Platform.environment
+          : resolved,
+      shell,
+    );
     final launch = PtyLaunch(
       executable: shell.executable,
       arguments: shell.arguments,

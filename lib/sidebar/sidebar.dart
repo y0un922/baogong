@@ -40,12 +40,14 @@ import '../theme/workbench_theme.dart' show themeColors;
 import '../update/update_service.dart';
 import '../workspace/chat_drag.dart';
 import '../workspace/editor_launcher.dart';
+import '../workspace/islands.dart';
 import '../workspace/title_bar_double_click.dart';
 import '../workspace/window_controls.dart';
 import '../workspace/workspace.dart';
 import '../workspace/workspace_dialog.dart';
 import 'sidebar_menu.dart';
 import 'sidebar_times.dart';
+import '../theme/svg_icons.dart';
 
 enum SidebarGrouping {
   project('Project', Icons.folder_outlined),
@@ -206,7 +208,17 @@ class Sidebar extends StatefulWidget {
     this.updates,
     this.onUpdate,
     this.setup,
+    this.surface,
+    this.atRight = false,
   });
+
+  /// Under it: [AppColors.sidebarSurface] by default; none where the
+  /// window's own color is under it already.
+  final Color? surface;
+
+  /// At the window's right (see ChatLayout): its collapse button at its
+  /// left, by the conversations.
+  final bool atRight;
 
   /// Over the foot's row: the setup checklist folded ("Setup n/m"), which
   /// shows nothing when the checklist does not fold there.
@@ -488,8 +500,37 @@ class _SidebarState extends State<Sidebar>
   bool _collapsed(_Group group) =>
       _collapsible(group) && _workspace.isCollapsed(group.id);
 
+  /// What [thread] needs, its asides' too where they are folded under it:
+  /// the most pressing (see [ThreadStatus]'s order).
+  ThreadStatus _statusOf(AgentThread thread) {
+    var status = thread.shownStatus;
+    if (_workspace.asidesFolded(thread)) {
+      for (final aside in _asides[thread] ?? const <AgentThread>[]) {
+        if (aside.shownStatus.index < status.index) status = aside.shownStatus;
+      }
+    }
+    return status;
+  }
+
+  /// How many of [group]'s agents (and their asides) are at work, waiting
+  /// on the user, or finished unseen: told on its header while it is
+  /// folded, where its rows are not.
+  Map<ThreadStatus, int> _groupStatuses(_Group group) {
+    final counts = <ThreadStatus, int>{};
+    for (final thread in group.threads) {
+      for (final one in [thread, ...?_asides[thread]]) {
+        final status = one.shownStatus;
+        if (status != ThreadStatus.idle) {
+          counts[status] = (counts[status] ?? 0) + 1;
+        }
+      }
+    }
+    return counts;
+  }
+
   /// A project's most recent agents, unless asked for all (the open one
-  /// too, wherever it is).
+  /// too, wherever it is, and those at work or waiting on the user: not to
+  /// be lost under "show more").
   _Rows _rows(_Group group) {
     if (_collapsed(group)) return (threads: const [], more: 0, less: false);
     final all = group.threads;
@@ -502,7 +543,10 @@ class _SidebarState extends State<Sidebar>
     final current = _current;
     final shown = [
       for (final (i, thread) in all.indexed)
-        if (i < _recent || identical(thread, current)) thread,
+        if (i < _recent ||
+            identical(thread, current) ||
+            _statusOf(thread).index <= ThreadStatus.running.index)
+          thread,
     ];
     return (threads: shown, more: all.length - shown.length, less: false);
   }
@@ -1000,7 +1044,7 @@ class _SidebarState extends State<Sidebar>
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppColors.sidebarSurface,
+      color: widget.surface ?? AppColors.sidebarSurface,
       child: Listener(
         // On the way up, so a click lands on the row it went down on
         // before every project is listed again.
@@ -1100,16 +1144,21 @@ class _SidebarState extends State<Sidebar>
     );
   }
 
-  /// Under the window's traffic lights; the collapse button on the right.
+  /// Under the window's traffic lights; the collapse button on the side
+  /// by the conversations.
   Widget _buildTopBar() {
+    final right = widget.atRight;
     return TitleBarDoubleClick(
       child: SizedBox(
         height: AppMetrics.titleBarHeight,
         child: Row(
+          textDirection: right ? TextDirection.rtl : TextDirection.ltr,
           children: [
             const Spacer(),
             SidebarIconButton(
-              icon: Codicons.layoutSidebarLeft,
+              icon: right
+                  ? Codicons.layoutSidebarRight
+                  : Codicons.layoutSidebarLeft,
               tooltip: context.l10n.windowHideSidebar,
               command: 'workbench.action.toggleSidebarVisibility',
               onTap: widget.onCollapse,
@@ -1150,7 +1199,8 @@ class _SidebarState extends State<Sidebar>
           ),
           ?_buildCollapseAll(),
           SidebarMenu(
-            width: 150,
+            // `Recent activity` and its check whole.
+            width: 168,
             placement: (side: FloatingSide.bottom, align: FloatingAlign.end),
             items: () => [
               for (final grouping in SidebarGrouping.values)
@@ -1160,6 +1210,28 @@ class _SidebarState extends State<Sidebar>
                   checked: grouping == _grouping,
                   onSelected: () => _workspace.sidebarGrouping = grouping.name,
                 ),
+              // How the projects are ordered: only while they are the groups.
+              if (_grouping == SidebarGrouping.project) ...[
+                const SidebarMenuItem.divider(),
+                for (final (sort, label, icon) in [
+                  (
+                    ProjectSort.recent,
+                    context.l10n.sidebarProjectSortRecent,
+                    Icons.update_rounded,
+                  ),
+                  (
+                    ProjectSort.manual,
+                    context.l10n.sidebarProjectSortManual,
+                    Icons.drag_indicator_rounded,
+                  ),
+                ])
+                  SidebarMenuItem(
+                    label,
+                    icon: icon,
+                    checked: sort == _workspace.projectSort,
+                    onSelected: () => _workspace.projectSort = sort,
+                  ),
+              ],
             ],
             builder: (context, menu) => HoverBuilder(
               cursor: SystemMouseCursors.click,
@@ -1770,6 +1842,7 @@ class _SidebarState extends State<Sidebar>
     final header = _GroupHeader(
       group: group,
       collapsed: _collapsed(group),
+      statuses: _collapsed(group) ? _groupStatuses(group) : const {},
       light: !collapsible,
       // As a row clicked: the list has the keys then (its speed search).
       onToggle: collapsible
@@ -1868,6 +1941,7 @@ class _SidebarState extends State<Sidebar>
   }) {
     return _ThreadRow(
       thread: thread,
+      status: _statusOf(thread),
       model: () => _modelOf(thread),
       height: _rowHeight,
       stashes: switch ((widget.stashes, thread.id)) {
@@ -2305,9 +2379,15 @@ class _SidebarState extends State<Sidebar>
         widget.setup == null) {
       return const SizedBox.shrink();
     }
-    // No line over it: the list fades out above it instead.
+    // No line over it: the list fades out above it instead. Its buttons'
+    // middle where the row under the conversation's card has its own.
     return Padding(
-      padding: const EdgeInsets.all(6),
+      padding: const EdgeInsets.fromLTRB(
+        6,
+        6,
+        6,
+        (Islands.belowHeight - _footerRowHeight) / 2,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2316,29 +2396,37 @@ class _SidebarState extends State<Sidebar>
     );
   }
 
+  /// The footer's buttons' row: the archived toggle's height.
+  static const _footerRowHeight = 26.0;
+
   Widget _buildFooterButtons(
     int count,
     VoidCallback? settings,
     Widget? update,
   ) {
-    return Row(
-      children: [
-        Expanded(
-          child: count == 0
-              ? const SizedBox.shrink()
-              : _buildArchivedToggle(count),
-        ),
-        if (update != null) ...[const SizedBox(width: 4), update],
-        if (settings != null) ...[
-          const SizedBox(width: 4),
-          SidebarIconButton(
-            icon: Codicons.settingsGear,
-            tooltip: context.l10n.settingsTitle,
-            command: openSettingsCommandId,
-            onTap: settings,
+    // As high with the archived toggle as without: the buttons where the
+    // conversation's branch is beside it.
+    return SizedBox(
+      height: _footerRowHeight,
+      child: Row(
+        children: [
+          Expanded(
+            child: count == 0
+                ? const SizedBox.shrink()
+                : _buildArchivedToggle(count),
           ),
+          if (update != null) ...[const SizedBox(width: 4), update],
+          if (settings != null) ...[
+            const SizedBox(width: 4),
+            SidebarIconButton(
+              icon: Codicons.settingsGear,
+              tooltip: context.l10n.settingsTitle,
+              command: openSettingsCommandId,
+              onTap: settings,
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
@@ -2408,7 +2496,7 @@ class _SidebarState extends State<Sidebar>
 
   Widget _buildArchivedLabel(int count, bool active) {
     return Container(
-      height: 26,
+      height: _footerRowHeight,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
         color: active ? AppColors.hover : Colors.transparent,
@@ -2484,19 +2572,15 @@ class _NewAgentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The agent sessions window's New Session button, in the side panel
-    // rail's colors (its surface and line, the text; a toolbar button's
-    // hover over it): a theme's own for it can all but vanish (One Dark
-    // Pro's, see-through on a line as dark as the sidebar). Its hover
-    // with the keys of New Agent, which does the same (a folder first,
-    // without one).
-    final colors = themeColors;
+    // The agent sessions window's New Session button, as a little card on
+    // the window's base (the islands' color and outline), hovered as rows
+    // on a card are (the text's color faintly over it): a theme's widget
+    // or toolbar colors are of no part of the window, and can all but
+    // vanish or stand out of place. Its hover with the keys of New Agent,
+    // which does the same (a folder first, without one).
     final foreground = AppColors.text;
-    final surface = AppColors.surface;
-    final hover = Color.alphaBlend(colors['toolbar.hoverBackground'], surface);
-    // A see-through surface fades in as the hover's own color: a fade
-    // from another (a theme's #ff000000) would pass through it.
-    final idle = surface.a == 0 ? hover.withValues(alpha: 0) : surface;
+    final card = AppColors.code;
+    final hover = Color.alphaBlend(AppColors.bubbleHover, card);
     return IdeHover(
       message: ChatKeys.titleWithKey(
         context.l10n.sidebarNewAgent,
@@ -2513,9 +2597,9 @@ class _NewAgentButton extends StatelessWidget {
             height: 30,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color: hovered ? hover : idle,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppColors.partBorder),
+              color: hovered ? hover : card,
+              borderRadius: BorderRadius.circular(Islands.controlRadius),
+              border: Border.all(color: Islands.border),
             ),
             child: Row(
               children: [
@@ -2637,6 +2721,7 @@ class _GroupHeader extends StatelessWidget {
     required this.group,
     required this.collapsed,
     required this.onToggle,
+    this.statuses = const {},
     this.light = false,
     this.onCreate,
     this.dragNew,
@@ -2651,6 +2736,10 @@ class _GroupHeader extends StatelessWidget {
 
   final _Group group;
   final bool collapsed;
+
+  /// Folded, how many of its agents are at work, waiting on the user, or
+  /// finished unseen (see [_SidebarState._groupStatuses]).
+  final Map<ThreadStatus, int> statuses;
 
   /// The characters of its name the speed search matches.
   final List<int>? speedMatch;
@@ -2809,24 +2898,44 @@ class _GroupHeader extends StatelessWidget {
     return header;
   }
 
-  /// Folded, the dot of the agent in it that most needs attention: one
-  /// waiting on a question, else one finished unseen.
+  /// Folded, what its agents are doing, as their rows would say: a spinner
+  /// while any is at work, and the dot of the one that most needs
+  /// attention (waiting on a question, else finished unseen). How many of
+  /// each over them.
   Widget? _hiddenStatus(BuildContext context) {
-    if (!collapsed) return null;
-    final statuses = {for (final thread in group.threads) thread.status};
-    final (status, label) = switch (statuses) {
-      _ when statuses.contains(ThreadStatus.needsInput) => (
-        ThreadStatus.needsInput,
-        context.l10n.sidebarNeedsInput,
+    if (!collapsed || statuses.isEmpty) return null;
+    final l10n = context.l10n;
+    final told = [
+      for (final (status, label) in [
+        (ThreadStatus.running, l10n.sidebarRunning),
+        (ThreadStatus.needsInput, l10n.sidebarNeedsInput),
+        (ThreadStatus.unread, l10n.sidebarUnread),
+      ])
+        if (statuses[status] case final count?) '$label $count',
+    ].join(' · ');
+    final dot = statuses.containsKey(ThreadStatus.needsInput)
+        ? ThreadStatus.needsInput
+        : statuses.containsKey(ThreadStatus.unread)
+        ? ThreadStatus.unread
+        : null;
+    return _RowHover(
+      content: (context) => Text(told),
+      child: Semantics(
+        label: told,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (statuses.containsKey(ThreadStatus.running))
+              const StatusIndicator(ThreadStatus.running),
+            if (dot != null) ...[
+              if (statuses.containsKey(ThreadStatus.running))
+                const SizedBox(width: 5),
+              StatusIndicator(dot),
+            ],
+          ],
+        ),
       ),
-      _ when statuses.contains(ThreadStatus.unread) => (
-        ThreadStatus.unread,
-        context.l10n.sidebarUnread,
-      ),
-      _ => (null, null),
-    };
-    if (status == null) return null;
-    return Semantics(label: label, child: StatusIndicator(status));
+    );
   }
 
   Widget _label(Project? project) {
@@ -3262,6 +3371,7 @@ class _MoreRow extends StatelessWidget {
 class _ThreadRow extends StatelessWidget {
   const _ThreadRow({
     required this.thread,
+    required this.status,
     required this.model,
     required this.height,
     this.stashes = const [],
@@ -3294,6 +3404,9 @@ class _ThreadRow extends StatelessWidget {
   });
 
   final AgentThread thread;
+
+  /// What it needs, its folded asides' too (see [_SidebarState._statusOf]).
+  final ThreadStatus status;
 
   /// The model it runs on, as its hover shows it; none when unknown.
   final String? Function() model;
@@ -3495,7 +3608,7 @@ class _ThreadRow extends StatelessWidget {
                                     : context.l10n.sidebarFoldAsides,
                                 onTap: asides.onToggle,
                               ),
-                              _ => StatusIndicator(thread.shownStatus),
+                              _ => StatusIndicator(status),
                             },
                           ),
                         ),
@@ -3770,11 +3883,8 @@ class _ThreadRow extends StatelessWidget {
                     : relativeTime(thread.updatedAt, DateTime.now(), l10n),
                 textAlign: TextAlign.right,
                 maxLines: 1,
-                // The color of the buttons it gives way to on hover.
-                style: TextStyle(
-                  color: selected ? foreground : AppColors.textMuted,
-                  fontSize: 11,
-                ),
+                // A step under the title's, selected or not.
+                style: TextStyle(color: AppColors.textFaint, fontSize: 11),
               ),
             ),
           ),
@@ -4091,7 +4201,7 @@ class SidebarIconButton extends StatelessWidget {
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(5),
               ),
-              child: switch (Icon(
+              child: switch (AppIcon(
                 icon,
                 size: size * 0.65,
                 color: hovered ? AppColors.text : AppColors.textMuted,

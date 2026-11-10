@@ -114,6 +114,10 @@ Matcher isSelection(int base, int extent) => isA<TextSelection>()
 void main() {
   testWidgets('the answers sit inset from the user\'s messages by their '
       'corner radius', (tester) async {
+    // Tall enough for a message of the user's and an answer to show.
+    tester.view.physicalSize = const Size(800, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await pumpScreen(tester);
     final items = tester.widgetList<ChatItemView>(find.byType(ChatItemView));
     double width(bool user) => tester
@@ -1419,21 +1423,38 @@ void main() {
     );
     // The history opens at the bottom; bring the message into view.
     Future<void> reveal(WidgetTester tester, String text) async {
-      // Mid-view: at the top, the message's copy stuck there would cover it.
-      await Scrollable.ensureVisible(
-        tester.element(
-          find.descendant(
-            of: find.byType(SuperListView),
-            matching: find.textContaining(
-              text,
-              findRichText: true,
-              skipOffstage: false,
-            ),
-            skipOffstage: false,
-          ),
+      final message = find.descendant(
+        of: find.byType(SuperListView),
+        matching: find.textContaining(
+          text,
+          findRichText: true,
+          skipOffstage: false,
         ),
-        alignment: 0.5,
+        skipOffstage: false,
       );
+      // Up the list until it is built: the list builds what is near the view.
+      final position = tester
+          .state<ScrollableState>(
+            find
+                .descendant(
+                  of: find.byType(SuperListView),
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+          )
+          .position;
+      while (message.evaluate().isEmpty &&
+          position.pixels > position.minScrollExtent) {
+        position.jumpTo(
+          (position.pixels - 400).clamp(
+            position.minScrollExtent,
+            position.maxScrollExtent,
+          ),
+        );
+        await tester.pump();
+      }
+      // Mid-view: at the top, the message's copy stuck there would cover it.
+      await Scrollable.ensureVisible(tester.element(message), alignment: 0.5);
       await tester.pump();
     }
 
@@ -1813,6 +1834,7 @@ void main() {
       await reveal(tester, '第 3 轮');
       await reveal(tester, '第 2 轮');
       final list = tester.getRect(find.byType(SuperListView));
+      final inset = chatGutter(list.width);
       final position = tester
           .state<ScrollableState>(
             find
@@ -1844,7 +1866,7 @@ void main() {
       position.jumpTo(position.pixels + 60);
       await tester.pump();
       expect(stuck.hitTestable(), findsOneWidget);
-      expect(tester.getTopLeft(stuck).dy, list.top + 8);
+      expect(tester.getTopLeft(stuck).dy, list.top + inset);
       final stuckAt = position.pixels;
 
       // The next message, arriving, pushes it up: the copy's fade ends at it.
@@ -1860,7 +1882,7 @@ void main() {
         tester.getTopLeft(bubble('第 3 轮')).dy,
         closeTo(list.top + 40, 0.01),
       );
-      expect(tester.getTopLeft(stuck).dy, lessThan(list.top + 8));
+      expect(tester.getTopLeft(stuck).dy, lessThan(list.top + inset));
       expect(tester.getBottomLeft(stuck).dy + 16, closeTo(list.top + 40, 0.01));
 
       // Clicked, it opens the message to edit, stuck to the top in its place.
@@ -1885,6 +1907,7 @@ void main() {
       // The editor opens over a moment.
       await tester.pump(const Duration(milliseconds: 300));
       final list = tester.getRect(find.byType(SuperListView));
+      final inset = chatGutter(list.width);
       final composer = find.descendant(
         of: find.byType(ChatHistoryView),
         matching: find.byType(ChatComposer),
@@ -1905,12 +1928,12 @@ void main() {
       await tester.pump();
       final start = position.pixels;
       final inPlace = tester.getTopLeft(composer).dy;
-      expect(inPlace, greaterThan(list.top + 8));
+      expect(inPlace, greaterThan(list.top + inset));
 
       // Scrolled past: pinned just below the top of the list.
       position.jumpTo(position.maxScrollExtent);
       await tester.pump();
-      expect(tester.getTopLeft(composer).dy, list.top + 8);
+      expect(tester.getTopLeft(composer).dy, list.top + inset);
       // Still usable there: the wheel over it scrolls the list.
       final wheel = TestPointer(7, PointerDeviceKind.mouse);
       wheel.hover(tester.getCenter(composer));

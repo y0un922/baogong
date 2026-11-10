@@ -109,19 +109,18 @@ class FileLinkTarget {
     this.home,
     this.inPanel = false,
     this.openInIde,
-    this.showBrowserTab,
     this.openFolder,
   });
 
   final ValueChanged<FileOpenRequest> open;
 
+  /// The home folder of the project's host, where `~` goes; null while it
+  /// is not known (a remote host not reached yet).
+  final String? Function()? home;
+
   /// Shows a folder the chat names (absolute, on the project's host) in
   /// the side panel's tree; none where there is no such tree.
   final ValueChanged<String>? openFolder;
-
-  /// Shows a tab of the user's browser (its id, as the agents' tools have
-  /// it) beside the conversation: on the side panel's browser page.
-  final ValueChanged<int>? showBrowserTab;
 
   /// Whether [open] shows them in the side panel (the agent window's).
   final bool inPanel;
@@ -147,9 +146,6 @@ class FileLinkTarget {
 
   /// How the project's host spells paths; this machine's when null.
   final p.Context? paths;
-
-  /// The project's host's home directory, for `~/file` links.
-  final String? home;
 }
 
 /// Whether a file is in [files], as the listing of its folder says: on a
@@ -252,16 +248,12 @@ class FileOpenScope extends InheritedWidget {
     this.sizeOf,
     this.inPanel = false,
     this.onOpenInIde,
-    this.onShowBrowserTab,
     this.onOpenFolder,
     required super.child,
   });
 
   /// See [FileLinkTarget.openFolder].
   final ValueChanged<String>? onOpenFolder;
-
-  /// See [FileLinkTarget.showBrowserTab].
-  final ValueChanged<int>? onShowBrowserTab;
 
   /// See [FileLinkTarget.inPanel].
   final bool inPanel;
@@ -323,6 +315,21 @@ class FileOpenScope extends InheritedWidget {
       if (existence.known(candidate) == true) return candidate;
     }
     return candidates.first;
+  }
+
+  /// [resolve]d, where it is read with no click asking for it (an image
+  /// the chat shows): in [root] or one of [roots], or a file the agent
+  /// saw; null elsewhere.
+  String? resolveShown(String path) {
+    final full = resolve(path);
+    if (full == null) return null;
+    final context = paths ?? p.context;
+    final inside = [...roots, root].any(
+      (folder) => folder == full || context.isWithin(folder, full),
+    );
+    if (inside) return full;
+    final seenFile = _seen(path);
+    return seenFile != null && context.equals(seenFile, full) ? full : null;
   }
 
   /// Where [path] may be: absolute as written, or the file of [seen] it

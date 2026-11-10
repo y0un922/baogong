@@ -43,7 +43,8 @@ void main() {
   testWidgets('status line follows selection, typing, and active tab', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(900, 700);
+    // Wide enough for both tabs to show whole beside the chat.
+    tester.view.physicalSize = const Size(1100, 700);
     tester.view.devicePixelRatio = 1;
     final root = p.join(p.separator, 'virtual-project');
     final first = p.join(root, 'main.dart');
@@ -98,7 +99,26 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    expect(find.text('Ln 1, Col 2 (8 selected)'), findsOneWidget);
+    // Over two lines: how many too.
+    expect(find.text('Ln 1, Col 2 (2 lines, 8 selected)'), findsOneWidget);
+
+    // Within a line: the characters alone.
+    controller().selection = const TextSelection(
+      baseOffset: 1,
+      extentOffset: 4,
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Ln 1, Col 5 (3 selected)'), findsOneWidget);
+
+    // Up to the next line's start: that line not counted.
+    controller().selection = const TextSelection(
+      baseOffset: 0,
+      extentOffset: 6,
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Ln 2, Col 1 (6 selected)'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'alpha\nbeta!');
     await tester.pump();

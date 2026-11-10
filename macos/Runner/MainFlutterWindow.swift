@@ -159,14 +159,18 @@ class BaoWindow: NSWindow {
           let container = titleBar.superview
     else { return }
     let buttonHeight = close.frame.height
-    let fromTop = { (y: CGFloat, height: CGFloat) in
-      titleBar.isFlipped ? y + buttonHeight / 2 : height - y - buttonHeight / 2
+    // How far below the container's top a point of the title bar's is,
+    // and back: through AppKit's conversion, whichever of them is flipped
+    // and wherever in the container the title bar is: as the container
+    // grows, a window may keep it at its top rather than its foot, the
+    // buttons then placed as from the foot going up past the window's edge.
+    let fromTop = { (y: CGFloat) -> CGFloat in
+      let point = container.convert(NSPoint(x: 0, y: y), from: titleBar)
+      return container.isFlipped ? point.y : container.bounds.height - point.y
     }
     if trafficLightsHome == nil {
       if trafficLightsDrop == 0 { return }
-      trafficLightsHome = (
-        container.frame.height, fromTop(close.frame.origin.y, container.frame.height)
-      )
+      trafficLightsHome = (container.frame.height, fromTop(close.frame.midY))
     }
     guard let home = trafficLightsHome else { return }
     let center = home.center + trafficLightsDrop
@@ -174,12 +178,16 @@ class BaoWindow: NSWindow {
     bar.size.height = max(home.barHeight, center * 2)
     bar.origin.y = frame.height - bar.size.height
     container.frame = bar
-    let y = titleBar.isFlipped
-      ? center - buttonHeight / 2 : bar.height - center - buttonHeight / 2
+    // The title bar as tall as the container, the buttons inside it.
+    titleBar.frame = container.bounds
+    let inContainer = NSPoint(
+      x: 0, y: container.isFlipped ? center : container.bounds.height - center)
+    let y = titleBar.convert(inContainer, from: container).y - buttonHeight / 2
     for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
       guard let button = standardWindowButton(kind) else { continue }
       button.setFrameOrigin(NSPoint(x: button.frame.origin.x, y: y))
-    }  }
+    }
+  }
 
   private var drops: FileDropView?
 
@@ -401,6 +409,12 @@ class BaoWindow: NSWindow {
       let pasteboard = NSPasteboard.general
       result(pasteboard.canReadObject(
         forClasses: [NSString.self, NSURL.self, NSImage.self], options: nil))
+    case "hasPasteboardText":
+      // The text fields' Paste (the engine's Clipboard.hasStrings, see
+      // lib/platform/app_binding.dart): the types alone. Reading the text
+      // waits on the app that copied it, and one that hangs held the
+      // window with it.
+      result(NSPasteboard.general.availableType(from: [.string]) != nil)
     case "writePasteboardMarkdown":
       result(Self.writePasteboardMarkdown(call.arguments as? [String: Any] ?? [:]))
     case "readPasteboardMarkdown":
