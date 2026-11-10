@@ -362,6 +362,9 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     'workbench.action.focusActiveEditorGroup' => l10n.cmdFocusActiveEditorGroup,
     'workbench.action.focusFirstEditorGroup' => l10n.cmdFocusFirstEditorGroup,
     'workbench.action.focusLastEditorGroup' => l10n.cmdFocusLastEditorGroup,
+    'workbench.action.focusSecondEditorGroup' => l10n.ideFocusRightEditor,
+    'workbench.action.splitEditorRight' => l10n.ideOpenToSide,
+    'baocode.ide.closeSplitEditor' => l10n.ideCloseSplit,
     'quickInput.first' => l10n.cmdListFocusFirst,
     'quickInput.last' => l10n.cmdListFocusLast,
     'workbench.action.files.copyPathOfActiveFile' =>

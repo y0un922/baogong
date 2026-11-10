@@ -14,6 +14,7 @@ import '../ide_workspace.dart';
 import '../lsp_ui/lsp_convert.dart' show IdeLocation;
 import '../services/auto_save.dart';
 import '../services/debug_view.dart';
+import '../services/editor_groups.dart';
 import '../services/editors.dart';
 import '../services/explorer.dart';
 import '../services/extensions_view.dart';
@@ -60,6 +61,7 @@ class WorkspaceBinding {
   void attach(IdeWorkspace workspace) {
     _workspace = workspace;
     workspace.layout.terminals = _terminals.terminals != null;
+    _services.find<EditorGroupsService>()?.attach(workspace);
     _explorer.attach(workspace);
     _language.attach(workspace);
     _services.get<ProblemsService>().clear();
@@ -100,6 +102,7 @@ class WorkspaceBinding {
     _layout.detach();
     _scm.detach();
     _explorer.detach();
+    _services.find<EditorGroupsService>()?.detach();
     _language.detach();
   }
 

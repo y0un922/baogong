@@ -1,8 +1,10 @@
 // The layout's commands (layoutActions.ts, panelActions.ts, the view
 // containers' Show commands) and context keys, over the window's
-// LayoutService; Focus Active Editor Group over its EditorService.
+// LayoutService. Focusing a group goes through EditorGroupsService when
+// the editor is split, then EditorService.
 
 import '../../ide_workspace.dart';
+import '../../services/editor_groups.dart';
 import '../../services/editors.dart';
 import '../../services/layout.dart';
 import '../actions.dart';
@@ -85,17 +87,29 @@ class LayoutContribution extends WorkbenchRegistrations {
           precondition: (_) => layout.chatShown,
           run: (_, _) => layout.layout.chat = false,
         ),
-        for (final id in const [
+        WorkbenchAction.catalog(
           'workbench.action.focusActiveEditorGroup',
+          precondition: editing,
+          run: (services, _) =>
+              services.get<EditorService>().focusEditorOrWorkbench(),
+        ),
+        WorkbenchAction.catalog(
           'workbench.action.focusFirstEditorGroup',
+          precondition: editing,
+          run: (services, _) {
+            services.find<EditorGroupsService>()?.focusSide(false);
+            services.get<EditorService>().focusEditorOrWorkbench();
+          },
+        ),
+        WorkbenchAction.catalog(
           'workbench.action.focusLastEditorGroup',
-        ])
-          WorkbenchAction.catalog(
-            id,
-            precondition: editing,
-            run: (services, _) =>
-                services.get<EditorService>().focusEditorOrWorkbench(),
-          ),
+          precondition: editing,
+          run: (services, _) {
+            final groups = services.find<EditorGroupsService>();
+            if (groups != null && groups.hasSplit) groups.focusSide(true);
+            services.get<EditorService>().focusEditorOrWorkbench();
+          },
+        ),
       ]),
     );
     add(

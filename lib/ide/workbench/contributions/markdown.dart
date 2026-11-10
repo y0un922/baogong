@@ -20,7 +20,8 @@ class MarkdownContribution extends WorkbenchRegistrations {
         EditorPane(
           id: 'workbench.editor.markdownPreview',
           accepts: markdown.previewing,
-          build: (context, doc) => markdown.build(doc),
+          build: (context, doc) =>
+              markdown.build(doc, right: EditorGroupSide.rightOf(context)),
           control: (doc) => switch (markdown.previewOf(doc)) {
             final preview? => _PreviewControl(preview),
             null => null,

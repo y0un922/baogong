@@ -11,7 +11,7 @@
 // editor/editorStatus.ts (`ChangeLanguageAction`, `ChangeEOLAction`).
 //
 // Deviations:
-// - One editor group: "in group" and across groups are the same.
+// - Close, cycle and the "in group" commands act on the focused group.
 // - Find in a markdown preview finds in its source, which it switches to.
 
 import 'dart:async';
@@ -43,7 +43,7 @@ class EditorCommandsContribution extends WorkbenchRegistrations {
     final config = services.get<ConfigurationService>();
     IdeWorkspace? workspace() => services.find<IdeWorkspace>();
     IdeDocument? active() => workspace()?.active;
-    List<IdeDocument> docs() => workspace()?.documents ?? const [];
+    List<IdeDocument> docs() => editors.groupDocuments;
     bool editing(WorkbenchServices _) => active() != null;
     bool hasEditors(WorkbenchServices _) => docs().isNotEmpty;
     bool several(WorkbenchServices _) => docs().length > 1;
@@ -136,7 +136,8 @@ class EditorCommandsContribution extends WorkbenchRegistrations {
           'File',
           'Save All',
           () => unawaited(editors.saveAll()),
-          precondition: (_) => docs().any((doc) => doc.dirty),
+          precondition: (_) =>
+              workspace()?.documents.any((doc) => doc.dirty) ?? false,
         ),
         command(
           'workbench.action.files.saveAs',

@@ -44,6 +44,7 @@ import 'services/chat.dart';
 import 'services/commands.dart';
 import 'services/configuration.dart';
 import 'services/debug_view.dart';
+import 'services/editor_groups.dart';
 import 'services/editors.dart';
 import 'services/explorer.dart';
 import 'services/extensions_view.dart';
@@ -374,6 +375,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       ),
     );
     _panes = _services.add(EditorPaneRegistry());
+    _groups = _services.add(
+      EditorGroupsService(
+        workspace: () => widget.workspace,
+        ready: () => mounted,
+        closing: () => _editors.closing,
+        storage: _storage,
+      ),
+    );
+    _storage.register(_groups);
     _editors = _services.add(
       EditorService(
         host: _host,
@@ -386,7 +396,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         onShowEditor: () => _extensionsView.editorShown(),
         storage: _storage,
         revealInExplorer: (path) => _explorerService.reveal(path),
+        groups: _groups,
       ),
+    );
+    _groups.bind(
+      shown: () => _extensionsView.editorShown(),
+      busy: () => _editors.busy,
     );
     _autoSave = _services.add(
       AutoSaveService(
@@ -424,6 +439,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         caret: () => _caretPosition,
         clipboard: () => IdeWorkbench.markdownClipboard,
         insertInEditor: (text) => _editor?.insertAtCaret(text),
+        paneDocument: ({required bool right}) =>
+            _groups.paneDocument(right: right),
+        paneRight: () => _groups.rightFocused,
+        insertOnSide: (text, {required bool right}) =>
+            _groups.editorFor(right: right)?.insertAtCaret(text),
       ),
     );
     _storage.register(_markdown);
@@ -547,8 +567,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// The editor's panes beside the text editor (see EditorPaneRegistry).
   late final EditorPaneRegistry _panes;
 
-  /// The editors opened, shown and closed.
+  /// The editors opened, shown and closed, and the two groups of tabs.
   late final EditorService _editors;
+  late final EditorGroupsService _groups;
 
   /// The markdown files' previews.
   late final MarkdownPreviewService _markdown;

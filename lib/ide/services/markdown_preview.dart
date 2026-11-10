@@ -38,6 +38,9 @@ class MarkdownPreviewService extends ChangeNotifier
     required this._caret,
     required this._clipboard,
     required this._insertInEditor,
+    this._paneDocument,
+    this._paneRight,
+    this._insertOnSide,
   });
 
   final WorkbenchHost host;
@@ -54,6 +57,19 @@ class MarkdownPreviewService extends ChangeNotifier
 
   /// Inserts text at the active editor's caret.
   final void Function(String text) _insertInEditor;
+
+  /// The document a group shows, when the editor is split.
+  final IdeDocument? Function({required bool right})? _paneDocument;
+
+  /// Whether the right group is the one in front.
+  final bool Function()? _paneRight;
+
+  /// Inserts text at one group's editor caret.
+  final void Function(String text, {required bool right})? _insertOnSide;
+
+  /// Preview states of the right group. The left uses [GlobalObjectKey].
+  /// A closed document drops its key with the document.
+  final _rightPreviewKeys = Expando<GlobalKey<IdeMarkdownPreviewState>>();
 
   IdeWorkspace get _ws => _workspace();
 
@@ -81,9 +97,19 @@ class MarkdownPreviewService extends ChangeNotifier
     null => null,
   };
 
-  /// [doc]'s preview, while it shows.
-  IdeMarkdownPreviewState? previewOf(IdeDocument doc) =>
-      GlobalObjectKey<IdeMarkdownPreviewState>(doc).currentState;
+  /// [doc]'s preview, while it shows. [right] is that group's; without it,
+  /// the focused group's, then the other's.
+  IdeMarkdownPreviewState? previewOf(IdeDocument doc, {bool? right}) {
+    if (right != null) return _previewKey(doc, right).currentState;
+    final focusedRight = _paneRight?.call() ?? false;
+    return _previewKey(doc, focusedRight).currentState ??
+        _previewKey(doc, !focusedRight).currentState;
+  }
+
+  GlobalKey<IdeMarkdownPreviewState> _previewKey(IdeDocument doc, bool right) {
+    if (!right) return GlobalObjectKey<IdeMarkdownPreviewState>(doc);
+    return _rightPreviewKeys[doc] ??= GlobalKey<IdeMarkdownPreviewState>();
+  }
 
   /// Whether the project's files are this machine's (not a remote
   /// host's).
@@ -142,12 +168,12 @@ class MarkdownPreviewService extends ChangeNotifier
     });
   }
 
-  /// [doc]'s preview.
-  Widget build(IdeDocument doc) {
+  /// [doc]'s preview. [right] keeps the second group's state its own.
+  Widget build(IdeDocument doc, {bool right = false}) {
     final workspace = _ws;
     final files = workspace.files;
     return IdeMarkdownPreview(
-      key: GlobalObjectKey<IdeMarkdownPreviewState>(doc),
+      key: _previewKey(doc, right),
       path: doc.path,
       model: doc.model,
       readOnly: doc.readOnly,
@@ -242,46 +268,63 @@ class MarkdownPreviewService extends ChangeNotifier
     return pasted;
   }
 
-  /// [editor], taking the files other apps drop on it when it is a
-  /// markdown document's (see [dropOn]).
-  Widget drops(IdeDocument? active, Widget editor) {
-    if (active == null ||
-        !isMarkdownPath(active.path) ||
-        active.readOnly ||
-        active.diff != null ||
-        active.openError != null) {
-      return editor;
-    }
-    return FileDropRegion(delegate: _drop, child: editor);
+  /// [editor], taking the files other apps drop on it when it is [doc], a
+  /// markdown document (see [dropOn]). [right] is the group it is in.
+  Widget drops(IdeDocument? doc, Widget editor, {bool right = false}) {
+    if (doc == null || !_acceptsDrop(doc)) return editor;
+    return FileDropRegion(delegate: right ? _rightDrop : _drop, child: editor);
   }
+
+  bool _acceptsDrop(IdeDocument doc) =>
+      isMarkdownPath(doc.path) &&
+      !doc.readOnly &&
+      doc.diff == null &&
+      doc.openError == null;
 
   late final _drop = _MarkdownDrop(
     (position, files) => unawaited(dropOn(position, files)),
   );
+  late final _rightDrop = _MarkdownDrop(
+    (position, files) => unawaited(dropOn(position, files, right: true)),
+  );
 
-  /// Files dropped from other apps on the active markdown document: put
+  /// Files dropped from other apps on the group's markdown document: put
   /// beside it and linked to, at the caret, or after the block they were
-  /// dropped on.
-  Future<void> dropOn(Offset position, List<ComposerFile> files) async {
+  /// dropped on. [right] is the group dropped on.
+  Future<void> dropOn(
+    Offset position,
+    List<ComposerFile> files, {
+    bool right = false,
+  }) async {
     final workspace = _ws;
-    final doc = workspace.active;
+    final target = _paneDocument?.call(right: right) ?? workspace.active;
     final paste = _paste();
-    if (doc == null ||
-        !isMarkdownPath(doc.path) ||
-        doc.readOnly ||
+    if (target == null ||
+        !isMarkdownPath(target.path) ||
+        target.readOnly ||
         paste == null) {
       return;
     }
-    final outcome = await paste.drop(doc.path, files);
+    final outcome = await paste.drop(target.path, files);
     if (host.context == null || outcome is! MarkdownPasteLinks) return;
-    if (!identical(workspace.active, doc)) {
-      insertMarkdownAtEnd(doc.model, outcome.text);
-      workspace.notifyDocumentChanged(doc);
-    } else if (preview case final preview?) {
+    if (previewOf(target, right: right) case final preview?) {
       preview.insert(outcome.text, position: position);
-    } else {
-      _insertInEditor(outcome.text);
+      return;
     }
+    final focused =
+        (_paneRight?.call() ?? false) == right &&
+        identical(workspace.active, target);
+    if (focused) {
+      final insert = _insertOnSide;
+      if (insert != null) {
+        insert(outcome.text, right: right);
+      } else {
+        _insertInEditor(outcome.text);
+      }
+      return;
+    }
+    insertMarkdownAtEnd(target.model, outcome.text);
+    workspace.notifyDocumentChanged(target);
   }
 
   @override

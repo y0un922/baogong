@@ -73,6 +73,23 @@ class EditorPaneRegistry extends ChangeNotifier {
   }
 }
 
+/// Which editor group is being built. A pane (a markdown preview) reads it
+/// to keep the right group's widget apart from the left's.
+class EditorGroupSide extends InheritedWidget {
+  const EditorGroupSide({super.key, required this.right, required super.child});
+
+  /// The group to the right of the first.
+  final bool right;
+
+  static bool rightOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<EditorGroupSide>()?.right ??
+      false;
+
+  @override
+  bool updateShouldNotify(EditorGroupSide oldWidget) =>
+      right != oldWidget.right;
+}
+
 /// The priorities of the panes the workbench has, in the order it asks
 /// them: a file view's (by the view the document was opened with), an
 /// image's, one not read's, a markdown preview's.

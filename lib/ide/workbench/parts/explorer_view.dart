@@ -216,6 +216,9 @@ class ExplorerViewPart extends StatelessWidget {
                                           folders: folders,
                                         ),
                                       ),
+                              onOpenToSide: (path) => unawaited(
+                                services.get<EditorService>().openToSide(path),
+                              ),
                             ),
                     ),
                   IdePane(

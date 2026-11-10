@@ -25,6 +25,7 @@ import '../lsp_ui/lsp_convert.dart';
 import '../workbench/contributions.dart';
 import '../workbench/editor_panes.dart';
 import '../workbench/storage.dart';
+import 'editor_groups.dart';
 import 'navigation_history.dart';
 
 class EditorService extends ChangeNotifier
@@ -40,6 +41,7 @@ class EditorService extends ChangeNotifier
     this.onViewChanged,
     this.revealInExplorer,
     this.storage,
+    this.groups,
   });
 
   final WorkbenchHost host;
@@ -67,6 +69,10 @@ class EditorService extends ChangeNotifier
   /// scroll, its caret) are kept with the window.
   final WorkbenchStorage? storage;
 
+  /// The editor's groups, when the window has them: which tabs a close
+  /// acts on. None in a test of the editors alone.
+  final EditorGroupsService? groups;
+
   /// The editors kept by the last run opened again, the one in front as
   /// it was; each file's view as it was left.
   @override
@@ -77,7 +83,9 @@ class EditorService extends ChangeNotifier
       _ => const <String>[],
     };
     if (editors.isEmpty) return;
-    final restoring = _ws.restore(editors, active: kept['active'] as String?);
+    final restoring = _ws
+        .restore(editors, active: kept['active'] as String?)
+        .whenComplete(() => groups?.finishRestore());
     if (storage case final storage?) {
       storage.holdWhile(restoring);
     } else {
@@ -94,7 +102,11 @@ class EditorService extends ChangeNotifier
         if (doc.label == null && (doc.isFile || doc.isMedia)) doc.path,
     ];
     final active = workspace.active?.key;
-    editor?.keepViewStates();
+    if (groups case final groups?) {
+      groups.keepViewStates();
+    } else {
+      editor?.keepViewStates();
+    }
     final paths = workspace.paths;
     final views = workspace.viewStates.toJson(
       (key) => !key.contains('\u0000') && paths.isAbsolute(key),
@@ -106,9 +118,15 @@ class EditorService extends ChangeNotifier
 
   IdeWorkspace get _ws => _workspace();
 
-  /// The text editor, while one shows.
+  /// The text editor, while one shows. The focused group's, when the
+  /// window has two.
   final editorKey = GlobalKey<IdeEditorState>();
-  IdeEditorState? get editor => editorKey.currentState;
+  IdeEditorState? get editor => groups?.focusedEditor ?? editorKey.currentState;
+
+  /// The tabs a close or a cycle acts on: the focused group's, or every
+  /// document when there is one group.
+  List<IdeDocument> get groupDocuments =>
+      groups?.activeDocuments ?? _ws.documents;
 
   /// Where the text editor's caret is, and how much is selected: the status
   /// bar alone is built again as it moves.
@@ -170,30 +188,38 @@ class EditorService extends ChangeNotifier
         : workspace.paths.relative(path, from: workspace.root);
   }
 
-  /// A tab's context menu's [action] on [doc].
-  void tabAction(IdeDocument doc, IdeTabAction action) {
-    final docs = _ws.documents;
+  /// A tab's context menu's [action] on [doc], in the right group where
+  /// [right] (the one in front, where it is not said).
+  void tabAction(IdeDocument doc, IdeTabAction action, {bool? right}) {
+    final groups = this.groups;
+    final inRight = right ?? (groups?.rightFocused ?? false);
+    final docs = groups?.documents(right: inRight) ?? _ws.documents;
     switch (action) {
+      case IdeTabAction.openToSide:
+        groups?.openDocumentToSide(doc);
       case IdeTabAction.close:
-        unawaited(close(doc));
+        unawaited(closeTabs([doc], right: inRight));
       case IdeTabAction.closeOthers:
         unawaited(
-          closeAll([
+          closeTabs([
             for (final d in docs)
               if (!identical(d, doc)) d,
-          ]),
+          ], right: inRight),
         );
       case IdeTabAction.closeToTheRight:
-        unawaited(closeAll(docs.sublist(docs.indexOf(doc) + 1)));
+        final index = docs.indexWhere((d) => d.key == doc.key);
+        if (index >= 0 && index + 1 < docs.length) {
+          unawaited(closeTabs(docs.sublist(index + 1), right: inRight));
+        }
       case IdeTabAction.closeSaved:
         unawaited(
-          closeAll([
+          closeTabs([
             for (final d in docs)
               if (!d.dirty) d,
-          ]),
+          ], right: inRight),
         );
       case IdeTabAction.closeAll:
-        unawaited(closeAll(docs));
+        unawaited(closeTabs(docs, right: inRight));
       case IdeTabAction.copyPath:
         unawaited(Clipboard.setData(ClipboardData(text: doc.path)));
       case IdeTabAction.copyRelativePath:
@@ -220,6 +246,10 @@ class EditorService extends ChangeNotifier
   /// The edits the text editor holds back (a field of the fallback
   /// editor) put in its document.
   Future<void> flush() async {
+    if (groups case final groups?) {
+      await groups.flush();
+      return;
+    }
     await editor?.flush();
   }
 
@@ -354,17 +384,19 @@ class EditorService extends ChangeNotifier
     _ws.select(doc.key);
   });
 
-  /// The editor [delta] tabs on from the active one, around the ends.
+  /// The editor [delta] tabs on from the active one, around the ends, in
+  /// the group in front.
   void cycle(int delta) {
-    final docs = _ws.documents;
+    final docs = groupDocuments;
     if (docs.length < 2) return;
     final index = docs.indexOf(_ws.active ?? docs.first);
     unawaited(select(docs[(index + delta) % docs.length]));
   }
 
-  /// The editor at [index] (the last for -1, or past the end).
+  /// The editor at [index] (the last for -1, or past the end), in the
+  /// group in front.
   void openAt(int index) {
-    final docs = _ws.documents;
+    final docs = groupDocuments;
     if (docs.isEmpty) return;
     unawaited(
       select(
@@ -391,8 +423,40 @@ class EditorService extends ChangeNotifier
     };
   }
 
-  /// Closes [docs] in order, asking about each unsaved one; Cancel stops.
-  Future<void> closeAll(List<IdeDocument> docs) async {
+  /// Opens [path] in the group to the right.
+  Future<void> openToSide(String path) {
+    final groups = this.groups;
+    if (groups == null) return open(path);
+    return groups.openPath(path, open);
+  }
+
+  /// Closes the right group.
+  Future<void> closeSplit() {
+    final groups = this.groups;
+    if (groups == null) return Future<void>.value();
+    return groups.closeSplit(_closeDocuments);
+  }
+
+  /// Closes [docs] in the group [right] (in the workspace, with no split).
+  Future<void> closeTabs(List<IdeDocument> docs, {required bool right}) {
+    if (_busy || docs.isEmpty) return Future<void>.value();
+    final groups = this.groups;
+    if (groups == null || !groups.hasSplit) return _closeDocuments(docs);
+    return groups.closeInGroup(
+      docs,
+      right: right,
+      closeDocuments: _closeDocuments,
+    );
+  }
+
+  /// Closes [docs] in the group in front, asking about each unsaved one;
+  /// Cancel stops.
+  Future<void> closeAll(List<IdeDocument> docs) =>
+      closeTabs(docs, right: groups?.rightFocused ?? false);
+
+  /// Closes [docs] in the workspace, in order, asking about each unsaved
+  /// one; Cancel stops.
+  Future<void> _closeDocuments(List<IdeDocument> docs) async {
     if (_busy || docs.isEmpty) return;
     _setBusy(true);
     _closing = true;
@@ -414,7 +478,12 @@ class EditorService extends ChangeNotifier
           }
           if (choice == 'save') await workspace.save(doc);
         }
-        await editor?.closeDocument(doc);
+        if (groups case final groups?) {
+          await groups.leftEditorKey.currentState?.closeDocument(doc);
+          await groups.rightEditorKey.currentState?.closeDocument(doc);
+        } else {
+          await editor?.closeDocument(doc);
+        }
         _history()?.editorClosed(doc);
         workspace.close(doc);
       }

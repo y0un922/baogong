@@ -6,6 +6,7 @@ import '../services.dart';
 import 'debug.dart';
 import 'editor_panes.dart';
 import 'editor_commands.dart';
+import 'editor_groups.dart';
 import 'editor_status.dart';
 import 'explorer.dart';
 import 'extensions.dart';
@@ -37,6 +38,7 @@ List<WorkbenchContribution> createWorkbenchContributions(
   LayoutContribution(services),
   QuickInputContribution(services),
   SearchContribution(services),
+  EditorGroupsContribution(services),
   EditorCommandsContribution(services),
   WindowContribution(services),
   ExtensionsContribution(services),
