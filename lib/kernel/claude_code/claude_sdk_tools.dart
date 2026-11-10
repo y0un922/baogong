@@ -7,7 +7,8 @@
 
 import 'dart:async';
 
-import '../../chat/chat_models.dart' show ToolCallItem, ToolKind;
+import '../../chat/chat_models.dart'
+    show ImageAttachment, ToolCallItem, ToolKind, ToolStatus;
 
 /// Where a tool is called from: the agent's working directory (its
 /// project's path, as the workspace has it) and its session.
@@ -151,6 +152,50 @@ abstract final class ClaudeSdkTools {
     return name.startsWith(prefix)
         ? _tools[name.substring(prefix.length)]
         : null;
+  }
+
+  /// A call of the tool an agent calls [name] (see [called]) as its step
+  /// in the conversation, where the tool says which ([ClaudeSdkTool.kind]:
+  /// a browser's): the line the agent said for it (its input's
+  /// `description`), else the tool's [ClaudeSdkTool.summary]. Null for
+  /// any other tool. The same in every agent's conversation.
+  static ToolCallItem? item(
+    String name, {
+    required Map<String, Object?> input,
+    required ToolStatus status,
+    String? output,
+    String? callId,
+    List<ImageAttachment> images = const [],
+    List<String> imageFiles = const [],
+  }) {
+    if (called(name) case ClaudeSdkTool(
+      :final name,
+      :final kind?,
+      :final summary,
+      :final files,
+    )) {
+      final said = switch (input['description']) {
+        final String text => text.trim(),
+        _ => '',
+      };
+      return ToolCallItem(
+        kind: kind,
+        tool: name,
+        callId: callId,
+        input: input,
+        // Said by the agent, it is the line, whole.
+        label: said.isEmpty ? null : '',
+        target: said.isNotEmpty ? said : summary?.call(input, output) ?? '',
+        status: status,
+        output: output,
+        images: images,
+        imageFiles: switch ((files, output)) {
+          (final files?, final output?) => files(output),
+          _ => imageFiles,
+        },
+      );
+    }
+    return null;
   }
 
   /// Whether there is any tool: the server is only given then.

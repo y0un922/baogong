@@ -29,6 +29,7 @@ import 'package:baocode/kernel/commit_attribution.dart';
 import 'package:baocode/kernel/extension_switches.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
+import 'package:baocode/kernel/next_prompt.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
@@ -6269,6 +6270,16 @@ exec /usr/bin/env "\$@"
 
     setUp(() {
       server = _FakeServer();
+      // No model asked what would come next.
+      NextPrompt.asker = (
+        _,
+        _, {
+        cancel,
+        model,
+        exact = false,
+        location,
+      }) async => 'NONE';
+      addTearDown(() => NextPrompt.asker = null);
       kernel = CodexKernel(
         MockKernels.codex,
         const KernelContext(cwd: '/project'),

@@ -14,8 +14,10 @@ import 'package:baocode/kernel/codex/codex_kernel.dart';
 import 'package:baocode/kernel/codex/codex_transport.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
+import 'package:baocode/kernel/next_prompt.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
+import 'package:baocode/usage/usage_ledger.dart';
 
 import 'pi_kernel_test.dart' show shown;
 
@@ -261,6 +263,12 @@ codexKernel(
   KernelContext context = const KernelContext(cwd: '/project'),
 }) {
   var started = 0;
+  // No model asked what would come next, unless the test says.
+  if (NextPrompt.asker == null) {
+    NextPrompt.asker = (_, _, {cancel, model, exact = false, location}) async =>
+        'NONE';
+    addTearDown(() => NextPrompt.asker = null);
+  }
   final kernel = CodexKernel(
     _descriptor,
     context,
@@ -626,6 +634,172 @@ void main() {
       expect((cache.last.read, cache.last.uncached), (18304, 36501 - 18304));
       expect(cache.conversation.total, 54432);
       expect(cache.conversation.read, 18304);
+    });
+
+    test(
+      "each request is kept for the usage page, as Claude Code's are",
+      () async {
+        final kept = UsageLedger.current;
+        final ledger = UsageLedger.current = UsageLedger(MemoryUsageStorage());
+        addTearDown(() => UsageLedger.current = kept);
+        final codex = FakeCodex();
+        final (:kernel, transcript: _, events: _) = codexKernel([codex]);
+        kernel.send(const KernelTurn(id: 't1', text: 'Hello'));
+        await pumpEventQueue();
+        codex.emit({
+          'method': 'item/started',
+          'params': {
+            'threadId': _thread,
+            'turnId': 'st1',
+            'item': {'id': 'a1', 'type': 'agentMessage'},
+          },
+        });
+        codex.emit({
+          'method': 'item/agentMessage/delta',
+          'params': {
+            'threadId': _thread,
+            'turnId': 'st1',
+            'itemId': 'a1',
+            'delta': 'Hi',
+          },
+        });
+        codex.emit({
+          'method': 'thread/tokenUsage/updated',
+          'params': {
+            'threadId': _thread,
+            'turnId': 'st1',
+            'tokenUsage': {
+              'total': {'totalTokens': 1200},
+              'last': {
+                'inputTokens': 1000,
+                'cachedInputTokens': 800,
+                'outputTokens': 200,
+                'reasoningOutputTokens': 50,
+              },
+            },
+          },
+        });
+        await pumpEventQueue();
+        final call = (await ledger.ofSession(_thread)).single;
+        expect(call.provider, 'codex');
+        expect(call.providerName, 'Codex');
+        expect(call.model, 'gpt-6-sol');
+        expect(call.session, _thread);
+        expect(
+          (call.input, call.cacheRead, call.output, call.reasoning),
+          (200, 800, 200, 50),
+        );
+        expect(call.status, 200);
+        expect(call.firstToken, isNotNull);
+        expect(ledger.hasCalls(_thread), isTrue);
+      },
+    );
+
+    test("BaoCode's browser tools show as Claude Code's do", () async {
+      ClaudeSdkTools.register(
+        ClaudeSdkTool(
+          name: 'browser_click',
+          description: 'Click',
+          inputSchema: const {'type': 'object'},
+          kind: ToolKind.browser,
+          summary: (input, output) => 'the ${input['target']}',
+          run: (input, call) async => '',
+        ),
+      );
+      addTearDown(() => ClaudeSdkTools.unregister('browser_click'));
+      final codex = FakeCodex();
+      final (:kernel, :transcript, events: _) = codexKernel([codex]);
+      kernel.send(const KernelTurn(id: 't1', text: 'Click it'));
+      await pumpEventQueue();
+      final pixel = base64Encode([1, 2, 3]);
+      for (final (method, item) in [
+        (
+          'item/started',
+          {
+            'id': 'm1',
+            'type': 'mcpToolCall',
+            'server': 'baocode',
+            'tool': 'browser_click',
+            'status': 'inProgress',
+            'arguments': {'tabId': 7, 'target': 'button'},
+          },
+        ),
+        (
+          'item/completed',
+          {
+            'id': 'm1',
+            'type': 'mcpToolCall',
+            'server': 'baocode',
+            'tool': 'browser_click',
+            'status': 'completed',
+            'arguments': {'tabId': 7, 'target': 'button'},
+            'result': {
+              'content': [
+                {'type': 'text', 'text': 'Clicked'},
+                {'type': 'image', 'data': pixel, 'mimeType': 'image/png'},
+              ],
+            },
+          },
+        ),
+      ]) {
+        codex.emit({
+          'method': method,
+          'params': {'threadId': _thread, 'turnId': 'st1', 'item': item},
+        });
+      }
+      await pumpEventQueue();
+      final step = [
+        for (var i = 0; i < transcript.length; i++) transcript.itemAt(i),
+      ].whereType<ToolCallItem>().single;
+      expect(step.kind, ToolKind.browser);
+      expect(step.tool, 'browser_click');
+      expect(step.target, 'the button');
+      expect(step.input['tabId'], 7);
+      expect(step.output, 'Clicked');
+      expect(step.status, ToolStatus.succeeded);
+      expect(step.images.single.bytes, [1, 2, 3]);
+    });
+
+    test('what the user would likely send next is offered once the turn '
+        'ends, and dropped as they send', () async {
+      final asked = <String>[];
+      NextPrompt.asker =
+          (_, prompt, {cancel, model, exact = false, location}) async {
+            asked.add(prompt);
+            return '"Run the tests"';
+          };
+      addTearDown(() => NextPrompt.asker = null);
+      final codex = FakeCodex();
+      final (:kernel, transcript: _, events: _) = codexKernel([codex]);
+      kernel.send(const KernelTurn(id: 't1', text: 'Fix the bug'));
+      await pumpEventQueue();
+      for (final (method, item) in [
+        ('item/started', {'id': 'a1', 'type': 'agentMessage'}),
+        (
+          'item/completed',
+          {'id': 'a1', 'type': 'agentMessage', 'text': 'Fixed.'},
+        ),
+      ]) {
+        codex.emit({
+          'method': method,
+          'params': {'threadId': _thread, 'turnId': 'st1', 'item': item},
+        });
+      }
+      await pumpEventQueue();
+      expect(kernel.promptSuggestion, isNull);
+      codex.emit({
+        'method': 'turn/completed',
+        'params': {
+          'threadId': _thread,
+          'turn': {'id': 'st1', 'status': 'completed'},
+        },
+      });
+      await pumpEventQueue();
+      expect(asked.single, contains('Fix the bug'));
+      expect(asked.single, contains('Fixed.'));
+      expect(kernel.promptSuggestion, 'Run the tests');
+      kernel.send(const KernelTurn(id: 't2', text: 'Thanks'));
+      expect(kernel.promptSuggestion, isNull);
     });
 
     test('a recorded patch: its diff to review', () async {

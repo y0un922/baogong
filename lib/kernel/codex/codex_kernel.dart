@@ -9,6 +9,7 @@ import '../../chat/chat_models.dart';
 import '../../icons/brand_logos.dart';
 import '../../models/model_brand.dart';
 import '../../models/model_provider.dart' show effortLabel;
+import '../../usage/agent_usage_meter.dart';
 import '../agent_instructions.dart';
 import '../agent_kernel.dart';
 import '../claude_code/claude_elicitation.dart';
@@ -16,6 +17,7 @@ import '../claude_code/claude_sdk_tools.dart';
 import '../context_estimate.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
+import '../next_prompt.dart';
 import '../output_meter.dart';
 import '../queued_messages.dart';
 import 'codex_catalog.dart';
@@ -44,6 +46,7 @@ class CodexKernel
         RenamesSession,
         AcceptsImages,
         ManagesMcpServers,
+        SuggestsPrompts,
         LoadsHistory {
   CodexKernel(this.descriptor, this._context, {this._start = startCodexProcess})
     : _threadId = _context.resume?.id,
@@ -737,6 +740,7 @@ class CodexKernel
   void dispose() {
     _disposed = true;
     _live.remove(this);
+    _next.dispose();
     _teardown();
     closeEvents();
   }
@@ -744,6 +748,16 @@ class CodexKernel
   // --- The conversation -------------------------------------------------------
 
   final Set<String> _sentTurns = {};
+
+  /// What the user would likely send next, Codex suggesting none itself.
+  late final NextPrompt _next = NextPrompt(emitInfoChanged);
+
+  @override
+  String? get promptSuggestion => _next.suggestion;
+
+  /// What the turn under way was asked, and the last of its answer.
+  String _asked = '';
+  String _answer = '';
 
   /// Ours, and the server's for the same turn once it says.
   String? _turn;
@@ -776,6 +790,13 @@ class CodexKernel
   final Set<String> _meterTools = {};
   DateTime? _outputReported;
   static const _outputEvery = Duration(milliseconds: 250);
+
+  /// Each request kept for the usage page, as Claude Code's are.
+  late final AgentUsageMeter _calls = AgentUsageMeter(
+    provider: 'codex',
+    providerName: 'Codex',
+    session: () => _threadId,
+  );
 
   /// Messages sent while a turn runs, waiting here for it to end: the next
   /// first.
@@ -862,6 +883,7 @@ class CodexKernel
   /// Starts a turn with [turn].
   void _startTurn(KernelTurn turn) {
     _beginTurn(turn.id);
+    _asked = turn.text;
     emit(
       ItemUpserted(
         nextSeq,
@@ -884,6 +906,7 @@ class CodexKernel
               return const <String, Object?>{};
             }
             _meter.begin();
+            _calls.asking();
             final command = _command(turn);
             if (command == null) _sentBeforeReply(turn);
             return switch (command) {
@@ -980,8 +1003,11 @@ class CodexKernel
     _serverTurn = null;
     _turnStarted = DateTime.now();
     _turnInput = _turnOutput = 0;
+    _asked = _answer = '';
+    _next.clear();
     _lastTokenUsageTotal = null;
     _meter.begin();
+    _calls.asking();
     _meterTools.clear();
     _outputReported = null;
     emit(TurnStarted(nextSeq, id, unprompted: unprompted));
@@ -1106,6 +1132,10 @@ class CodexKernel
     }
     if (_queue.isNotEmpty && _health.status != KernelHealthStatus.failed) {
       _startTurn(_queue.removeAt(0));
+    }
+    // Waiting for the user: what they would likely send next.
+    if (!interrupted && _turn == null) {
+      _next.turnEnded(asked: _asked, answer: _answer, location: _cwd);
     }
     if (_releaseWanted) release();
   }
@@ -1461,6 +1491,15 @@ class CodexKernel
     // Each request's as it ends: what the turn spent is theirs summed.
     _turnInput += count('inputTokens');
     _turnOutput += output;
+    final cached = count('cachedInputTokens').clamp(0, count('inputTokens'));
+    _calls.answered(
+      model: _modelInUse ?? '',
+      protocol: 'openaiResponses',
+      input: count('inputTokens') - cached,
+      output: output,
+      cacheRead: cached,
+      reasoning: count('reasoningOutputTokens'),
+    );
     _meter.endMessage(tokens: output);
     _outputReported = DateTime.now();
     emit(OutputReported(nextSeq, _meter.output));
@@ -1469,6 +1508,7 @@ class CodexKernel
   /// Estimates the live count; speed waits for the actual usage.
   void _metered(String text) {
     _meter.streamed(text);
+    _calls.streamed();
     final now = DateTime.now();
     if (_outputReported case final at? when now.difference(at) < _outputEvery) {
       return;
@@ -1555,6 +1595,7 @@ class CodexKernel
             emit(ItemUpserted(nextSeq, id, AssistantTextItem(text)));
           }
         } else {
+          if (text.trim().isNotEmpty) _answer = text;
           emit(ItemCompleted(nextSeq, id, item: AssistantTextItem(text)));
         }
       case 'commandExecution':
@@ -1594,7 +1635,11 @@ class CodexKernel
   }
 
   void _resumeMeter() {
-    if (_meterTools.isEmpty && _requests.isEmpty) _meter.resume();
+    if (_meterTools.isEmpty && _requests.isEmpty) {
+      _meter.resume();
+      // Its tools' results back: the next request is asked.
+      _calls.asking();
+    }
   }
 
   void _completeThought(String id, String? summary, {bool history = false}) {
@@ -1698,6 +1743,31 @@ class CodexKernel
       _ => ToolStatus.running,
     };
     final arguments = item['arguments'];
+    final output = switch (item) {
+      {'result': {'content': final List<Object?> content}} => [
+        for (final block in content)
+          if (block case {'type': 'text', 'text': final String text}) text,
+      ].join('\n'),
+      {'error': {'message': final String message}} => message,
+      _ => null,
+    };
+    // The app's own (a browser's), shown as Claude Code's are.
+    if (item case {
+      'type': 'mcpToolCall',
+      'server': ClaudeSdkTools.server,
+      'tool': final String tool,
+    }) {
+      if (ClaudeSdkTools.item(
+            'mcp__${ClaudeSdkTools.server}__$tool',
+            input: arguments is Map ? arguments.cast() : const {},
+            status: status,
+            output: output,
+            images: _images(item['result']),
+          )
+          case final step?) {
+        return step;
+      }
+    }
     return switch (item['type']) {
       'webSearch' => ToolCallItem(
         kind: ToolKind.web,
@@ -1718,18 +1788,23 @@ class CodexKernel
         label: [?item['server'] as String?, '${item['tool']}'].join(' · '),
         tool: '${item['tool']}',
         input: arguments is Map ? arguments.cast() : const {},
-        output: switch (item) {
-          {'result': {'content': final List<Object?> content}} => [
-            for (final block in content)
-              if (block case {'type': 'text', 'text': final String text}) text,
-          ].join('\n'),
-          {'error': {'message': final String message}} => message,
-          _ => null,
-        },
+        output: output,
         status: status,
       ),
     };
   }
+
+  /// The pictures an MCP tool answered with (a screenshot, say).
+  static List<ImageAttachment> _images(Object? result) => [
+    if (result case {'content': final List<Object?> content})
+      for (final block in content)
+        if (block case {
+          'type': 'image',
+          'data': final String data,
+          'mimeType': final String type,
+        })
+          ImageAttachment(bytes: base64Decode(data), mediaType: type),
+  ];
 
   /// The lines of [diff], numbered as in the file: a file added or deleted
   /// ([kind]) has its whole text for a diff.

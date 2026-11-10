@@ -6,13 +6,16 @@ import 'package:flutter/material.dart' show Icons;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
+import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
+import 'package:baocode/kernel/next_prompt.dart';
 import 'package:baocode/kernel/pi/pi_catalog.dart';
 import 'package:baocode/kernel/pi/pi_kernel.dart';
 import 'package:baocode/kernel/pi/pi_transport.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
+import 'package:baocode/usage/usage_ledger.dart';
 
 /// A turn pi 1.3.0 ran in RPC mode (recorded in `/project`, its system
 /// prompt and extension statuses left out).
@@ -152,6 +155,12 @@ piKernel(
   KernelContext context = const KernelContext(cwd: '/project'),
 }) {
   final starts = <({String cwd, String? session})>[];
+  // No model asked what would come next, unless the test says.
+  if (NextPrompt.asker == null) {
+    NextPrompt.asker = (_, _, {cancel, model, exact = false, location}) async =>
+        'NONE';
+    addTearDown(() => NextPrompt.asker = null);
+  }
   final kernel = PiKernel(
     _descriptor,
     context,
@@ -249,6 +258,144 @@ void main() {
         );
       },
     );
+
+    test(
+      "each request is kept for the usage page, as Claude Code's are; "
+      'what the user would likely send next offered as the turn ends',
+      () async {
+        final kept = UsageLedger.current;
+        final ledger = UsageLedger.current = UsageLedger(MemoryUsageStorage());
+        addTearDown(() => UsageLedger.current = kept);
+        final asked = <String>[];
+        NextPrompt.asker =
+            (_, prompt, {cancel, model, exact = false, location}) async {
+              asked.add(prompt);
+              return 'commit it';
+            };
+        addTearDown(() => NextPrompt.asker = null);
+        final pi = FakePi();
+        final (:kernel, transcript: _, events: _, starts: _) = piKernel([pi]);
+        addTearDown(kernel.dispose);
+        kernel.send(const KernelTurn(id: 't1', text: 'Tidy up'));
+        await pumpEventQueue();
+        pi
+          ..emit({'type': 'turn_start'})
+          ..emit({
+            'type': 'message_start',
+            'message': {'role': 'assistant'},
+          })
+          ..emit({
+            'type': 'message_update',
+            'assistantMessageEvent': {'type': 'text_start', 'contentIndex': 0},
+          })
+          ..emit({
+            'type': 'message_update',
+            'assistantMessageEvent': {
+              'type': 'text_delta',
+              'contentIndex': 0,
+              'delta': 'Tidied.',
+            },
+          })
+          ..emit({
+            'type': 'message_end',
+            'message': {
+              'role': 'assistant',
+              'provider': 'anthropic',
+              'model': 'claude-sonnet-5-5',
+              'api': 'anthropic-messages',
+              'stopReason': 'stop',
+              'durationMs': 2000,
+              'content': [
+                {'type': 'text', 'text': 'Tidied.'},
+              ],
+              'usage': {
+                'input': 30,
+                'output': 40,
+                'cacheRead': 500,
+                'cacheWrite': 60,
+                'totalTokens': 630,
+              },
+            },
+          });
+        await pumpEventQueue();
+        expect(kernel.promptSuggestion, isNull);
+        pi.emit({'type': 'agent_settled', 'aborted': false});
+        await pumpEventQueue();
+
+        final call = (await ledger.ofSession('s1')).single;
+        expect(call.provider, 'pi');
+        expect(call.providerName, 'pi · anthropic');
+        expect(call.model, 'claude-sonnet-5-5');
+        expect(call.protocol, 'anthropic-messages');
+        expect(
+          (call.input, call.output, call.cacheRead, call.cacheWrite),
+          (30, 40, 500, 60),
+        );
+        expect(call.duration, const Duration(seconds: 2));
+        expect(call.stopReason, 'stop');
+
+        expect(asked.single, allOf(contains('Tidy up'), contains('Tidied.')));
+        expect(kernel.promptSuggestion, 'commit it');
+        kernel.send(const KernelTurn(id: 't2', text: 'Commit'));
+        expect(kernel.promptSuggestion, isNull);
+      },
+    );
+
+    test("BaoCode's browser tools show as Claude Code's do", () async {
+      ClaudeSdkTools.register(
+        ClaudeSdkTool(
+          name: 'browser_open',
+          description: 'Open',
+          inputSchema: const {'type': 'object'},
+          kind: ToolKind.browser,
+          summary: (input, output) => '${input['url']}',
+          run: (input, call) async => '',
+        ),
+      );
+      addTearDown(() => ClaudeSdkTools.unregister('browser_open'));
+      final pi = FakePi();
+      final (:kernel, :transcript, events: _, starts: _) = piKernel([pi]);
+      addTearDown(kernel.dispose);
+      kernel.send(const KernelTurn(id: 't1', text: 'Open it'));
+      await pumpEventQueue();
+      const args = {
+        'url': 'https://example.com',
+        'description': 'Open the docs',
+      };
+      pi
+        ..emit({
+          'type': 'tool_execution_start',
+          'toolCallId': 'b1',
+          'toolName': 'mcp__baocode__browser_open',
+          'args': args,
+        })
+        ..emit({
+          'type': 'tool_execution_end',
+          'toolCallId': 'b1',
+          'toolName': 'mcp__baocode__browser_open',
+          'result': {
+            'content': [
+              {'type': 'text', 'text': 'Opened tab 3'},
+              {
+                'type': 'image',
+                'data': base64Encode([4, 5]),
+                'mimeType': 'image/png',
+              },
+            ],
+          },
+          'isError': false,
+        });
+      await pumpEventQueue();
+      final step = [
+        for (var i = 0; i < transcript.length; i++) transcript.itemAt(i),
+      ].whereType<ToolCallItem>().single;
+      expect(step.kind, ToolKind.browser);
+      expect(step.tool, 'browser_open');
+      // Said by the agent, it is the line, whole.
+      expect((step.label, step.target), ('', 'Open the docs'));
+      expect(step.output, 'Opened tab 3');
+      expect(step.images.single.bytes, [4, 5]);
+    });
 
     test('a recorded turn: a command, a read, an edit to review', () async {
       final pi = FakePi(turn: recordedTurn());

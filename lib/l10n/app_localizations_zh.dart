@@ -3615,7 +3615,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get generalSettingsPromptSuggestionsDescription =>
-      '每轮结束后在输入框里给出灰色的下一条消息建议，按 Tab 采用。每条建议都会带着整段对话额外请求一次模型，关掉可以节省 token。从下一条消息起生效；目前仅支持 Claude Code。';
+      '每轮结束后在输入框里给出灰色的下一条消息建议，按 Tab 采用。每条建议都会带着整段对话额外请求一次模型，关掉可以节省 token。从下一条消息起生效。Codex 和 pi 自己不出建议，由辅助模型根据最近一问一答生成。';
 
   @override
   String generalSettingsCommitAttributionLabel(String name) {

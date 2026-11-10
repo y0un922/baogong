@@ -951,29 +951,17 @@ class ClaudeTranslator {
     String base(String? path) => path == null ? '' : path.split('/').last;
     final name = tool.name;
     // The app's own, shown as it says.
-    if (ClaudeSdkTools.called(name) case ClaudeSdkTool(
-      :final name,
-      :final kind?,
-      :final summary,
-      :final files,
-    )) {
-      final said = _string(input['description'])?.trim() ?? '';
-      return ToolCallItem(
-        kind: kind,
-        tool: name,
-        callId: tool.id,
-        input: input,
-        // Said by the agent, it is the line, whole.
-        label: said.isEmpty ? null : '',
-        target: said.isNotEmpty ? said : summary?.call(input, output) ?? '',
-        status: status,
-        output: output,
-        images: images,
-        imageFiles: switch ((files, output)) {
-          (final files?, final output?) => files(output),
-          _ => imageFiles,
-        },
-      );
+    if (ClaudeSdkTools.item(
+          name,
+          input: input,
+          status: status,
+          output: output,
+          callId: tool.id,
+          images: images,
+          imageFiles: imageFiles,
+        )
+        case final item?) {
+      return item;
     }
     if (name.startsWith('mcp__')) {
       final parts = name.split('__');

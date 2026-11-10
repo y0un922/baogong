@@ -3768,7 +3768,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get generalSettingsPromptSuggestionsDescription =>
-      'After each turn, a greyed-out suggestion for your next message, taken with Tab. Each one is an extra request with the whole conversation; turn it off to save tokens. Applies from the next message; Claude Code only.';
+      'After each turn, a greyed-out suggestion for your next message, taken with Tab. Each one is an extra request with the whole conversation; turn it off to save tokens. Applies from the next message. Codex and pi suggest none themselves: theirs are asked of the auxiliary model, with the last message and answer.';
 
   @override
   String generalSettingsCommitAttributionLabel(String name) {

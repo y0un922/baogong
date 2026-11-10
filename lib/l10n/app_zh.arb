@@ -1043,7 +1043,7 @@
   "generalSettingsQueuedAfterTurn": "当前任务完成后依次执行",
   "generalSettingsQueuedDuringTurn": "插入当前任务",
   "generalSettingsPromptSuggestions": "建议下一条提示",
-  "generalSettingsPromptSuggestionsDescription": "每轮结束后在输入框里给出灰色的下一条消息建议，按 Tab 采用。每条建议都会带着整段对话额外请求一次模型，关掉可以节省 token。从下一条消息起生效；目前仅支持 Claude Code。",
+  "generalSettingsPromptSuggestionsDescription": "每轮结束后在输入框里给出灰色的下一条消息建议，按 Tab 采用。每条建议都会带着整段对话额外请求一次模型，关掉可以节省 token。从下一条消息起生效。Codex 和 pi 自己不出建议，由辅助模型根据最近一问一答生成。",
   "generalSettingsCommitAttributionLabel": "提交署名: {name}",
   "generalSettingsAttributionAgent": "跟随 Agent",
   "generalSettingsAttributionAgentDetail": "Agent 自带的署名（如 Claude Code 的），或你在 ~/.claude/settings.json 中设置的 attribution。",

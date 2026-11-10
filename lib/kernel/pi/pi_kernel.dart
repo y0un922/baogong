@@ -11,10 +11,13 @@ import '../../icons/project_icon.dart';
 import '../../models/model_brand.dart';
 import '../../models/model_icons.dart' show ProviderIconView;
 import '../../models/model_provider.dart' show effortLabel, formatTokens;
+import '../../usage/agent_usage_meter.dart';
 import '../agent_kernel.dart';
+import '../claude_code/claude_sdk_tools.dart';
 import '../context_estimate.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
+import '../next_prompt.dart';
 import '../output_meter.dart';
 import '../queued_messages.dart';
 import 'pi_transport.dart';
@@ -40,6 +43,7 @@ class PiKernel
         QueuesMessages,
         RewindsConversation,
         ForksConversation,
+        SuggestsPrompts,
         LoadsHistory {
   PiKernel(this.descriptor, this._context, {this._start = startPiProcess})
     : _resumeFile = _context.resume?.path,
@@ -622,6 +626,7 @@ class PiKernel
     for (final timer in _dialogTimers.values) {
       timer.cancel();
     }
+    _next.dispose();
     _teardown();
     closeEvents();
   }
@@ -643,6 +648,13 @@ class PiKernel
   final OutputMeter _meter = OutputMeter();
   DateTime? _outputReported;
   static const _outputEvery = Duration(milliseconds: 250);
+
+  /// Each request kept for the usage page, as Claude Code's are.
+  late final AgentUsageMeter _calls = AgentUsageMeter(
+    provider: 'pi',
+    providerName: 'pi',
+    session: () => _sessionId,
+  );
 
   /// Messages sent while a turn runs, waiting here for it to end: the next
   /// first.
@@ -666,6 +678,16 @@ class PiKernel
   /// The model has answered in the run under way: a user message after
   /// that is one steered into it.
   bool _answered = false;
+
+  /// What the user would likely send next, pi suggesting none itself.
+  late final NextPrompt _next = NextPrompt(emitInfoChanged);
+
+  @override
+  String? get promptSuggestion => _next.suggestion;
+
+  /// What the turn under way was asked, and the last of its answer.
+  String _asked = '';
+  String _answer = '';
 
   /// The items showing the user messages on the branch of pi's session it
   /// is on, in order: one's place from the end is its message's there.
@@ -701,6 +723,7 @@ class PiKernel
   /// Starts a turn with [turn].
   void _startTurn(KernelTurn turn) {
     _beginTurn(turn.id);
+    _asked = turn.text;
     emit(
       ItemUpserted(
         nextSeq,
@@ -809,6 +832,8 @@ class PiKernel
     _turnInput = _turnOutput = 0;
     _turnCost = 0;
     _answered = false;
+    _asked = _answer = '';
+    _next.clear();
     _meter.begin();
     _meter.pause();
     _outputReported = null;
@@ -952,6 +977,10 @@ class PiKernel
     if (_queue.isNotEmpty && _health.status != KernelHealthStatus.failed) {
       _startTurn(_queue.removeAt(0));
     }
+    // Waiting for the user: what they would likely send next.
+    if (!interrupted && _turn == null) {
+      _next.turnEnded(asked: _asked, answer: _answer, location: _cwd);
+    }
     if (_releaseWanted) release();
   }
 
@@ -1091,6 +1120,7 @@ class PiKernel
       case 'turn_start':
         // Before the provider request, so TTFT and reasoning both count.
         _meter.resume();
+        _calls.asking();
       case 'agent_settled':
         _endTurn(interrupted: message['aborted'] == true);
       case 'message_start':
@@ -1270,6 +1300,7 @@ class PiKernel
   /// is written now and then.
   void _metered(String text) {
     _meter.streamed(text);
+    _calls.streamed();
     final now = DateTime.now();
     if (_outputReported case final at? when now.difference(at) < _outputEvery) {
       return;
@@ -1307,6 +1338,7 @@ class PiKernel
       final id = 'pi:$_message:$index';
       if (block case {'type': 'text', 'text': final String text}
           when _messageTexts.contains(id)) {
+        if (text.trim().isNotEmpty) _answer = text;
         _texts.remove(id);
         emit(ItemCompleted(nextSeq, id, item: AssistantTextItem(text)));
       }
@@ -1332,6 +1364,24 @@ class PiKernel
     emit(OutputReported(nextSeq, _meter.output));
     if (usage case final Map<Object?, Object?> usage) {
       int count(String key) => (usage[key] as num?)?.toInt() ?? 0;
+      final failed = message['stopReason'] == 'error';
+      _calls.answered(
+        model: '${message['model'] ?? ''}',
+        protocol: message['api'] as String?,
+        providerName: switch (message['provider']) {
+          final String provider => 'pi · $provider',
+          _ => null,
+        },
+        input: count('input'),
+        output: count('output'),
+        cacheRead: count('cacheRead'),
+        cacheWrite: count('cacheWrite'),
+        stopReason: message['stopReason'] as String?,
+        error: failed
+            ? '${message['errorMessage'] ?? 'The model request failed'}'
+            : null,
+        duration: duration == Duration.zero ? null : duration,
+      );
       _turnInput += count('input') + count('cacheRead') + count('cacheWrite');
       _turnOutput += count('output');
       if (usage['cost'] case {'total': final num cost}) {
@@ -1511,18 +1561,31 @@ class PiKernel
           ? ToolStatus.failed
           : ToolStatus.succeeded,
       output: _resultText(result),
+      images: _resultImages(result),
     );
   }
 
   /// A tool as a row: a command as a terminal, reads and searches as
-  /// theirs, anything else by its name.
+  /// theirs, the app's own (a browser's) as Claude Code's are, anything
+  /// else by its name.
   ChatItem _toolItem(
     String name,
     Map<String, Object?> args, {
     required ToolStatus status,
     String? output,
     DateTime? started,
+    List<ImageAttachment> images = const [],
   }) {
+    if (ClaudeSdkTools.item(
+          name,
+          input: args,
+          status: status,
+          output: output,
+          images: images,
+        )
+        case final item?) {
+      return item;
+    }
     String arg(String key) => args[key] as String? ?? '';
     final path = arg('path');
     final done = status != ToolStatus.running;
@@ -1756,6 +1819,18 @@ class PiKernel
     ].join('\n'),
     _ => null,
   };
+
+  /// A tool result's pictures (a screenshot, say).
+  static List<ImageAttachment> _resultImages(Map<String, Object?> result) => [
+    if (result case {'content': final List<Object?> blocks})
+      for (final block in blocks)
+        if (block case {
+          'type': 'image',
+          'data': final String data,
+          'mimeType': final String type,
+        })
+          ImageAttachment(bytes: base64Decode(data), mediaType: type),
+  ];
 
   static final _ansi = RegExp(r'\x1B\[[0-9;?]*[ -/]*[@-~]');
 
