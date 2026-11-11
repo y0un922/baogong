@@ -29,6 +29,25 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  group('BotSuggestions', () {
+    List<String> notes(bool wanted, bool? told, {bool suggested = false}) =>
+        BotSuggestions.notes(wanted: wanted, told: told, suggested: suggested);
+
+    test('turned on: told in full, then a word with each message', () {
+      expect(notes(true, null), [BotSuggestions.on]);
+      expect(notes(true, false), [BotSuggestions.on]);
+      expect(notes(true, true), [BotSuggestions.stillOn]);
+    });
+
+    test('turned off: told once, then nothing', () {
+      expect(notes(false, true), [BotSuggestions.off]);
+      expect(notes(false, false), isEmpty);
+      expect(notes(false, null), isEmpty);
+      // On before the app started again: its last reply still suggests.
+      expect(notes(false, null, suggested: true), [BotSuggestions.off]);
+    });
+  });
+
   group('BotPacer', () {
     final start = DateTime(2026, 10, 29, 14);
     BotEvent event(String chat, BotEventKind kind, DateTime at) => BotEvent(
@@ -250,6 +269,17 @@ void main() {
       expect(botChatStyle, contains('emoji'));
       expect(botChatStyle, isNot(contains('bot_send_sticker')));
       expect(botChatStyle, contains('bot_send_image'));
+    });
+
+    test('a chat from the bot_say tool\'s days is told it is gone', () {
+      expect(
+        botChatStyle,
+        contains(
+          'Earlier in this chat you may have sent messages with a '
+          'bot_say tool',
+        ),
+      );
+      expect(botChatStyle, contains('Those tools are gone'));
     });
   });
 
