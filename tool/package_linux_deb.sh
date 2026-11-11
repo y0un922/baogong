@@ -77,6 +77,16 @@ Categories=Development;
 StartupWMClass=dev.baocode.desktop
 EOF
 
+# The newest glibc any of its programs and libraries asks for: what it was
+# built against (#851), for dpkg to say so rather than install one that
+# cannot start.
+glibc=$(find "$bundle" -type f -exec objdump -T {} + 2> /dev/null \
+  | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' | sort -uV | tail -1)
+if [ -z "$glibc" ]; then
+  echo "No glibc version found in $bundle (is objdump installed?)" >&2
+  exit 1
+fi
+
 # libgtk-3-0 is what the engine links. libblkid1 and liblzma5 are the
 # extra libraries Flutter's Linux bundle expects on the system.
 cat > "$stage/DEBIAN/control" << EOF
@@ -85,7 +95,7 @@ Version: ${marketing}
 Section: devel
 Priority: optional
 Architecture: ${package_arch}
-Depends: libgtk-3-0, libblkid1, liblzma5${webkit}
+Depends: libc6 (>= ${glibc}), libgtk-3-0, libblkid1, liblzma5${webkit}
 Maintainer: y0un922 <y0un92@linux.do>
 Homepage: https://github.com/y0un922/baogong
 Description: Baogong (包工头), an unofficial fork of BaoCode

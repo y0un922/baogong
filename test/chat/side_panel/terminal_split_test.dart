@@ -108,7 +108,7 @@ void main() {
         // One of the split asked for: its tab shows.
         shown: b,
         onShow: (_) {},
-        onNew: () => null,
+        onNew: ({cwd}) => null,
       ),
     );
     await tester.pumpWidget(

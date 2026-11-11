@@ -88,6 +88,7 @@ class TerminalDeck extends StatefulWidget {
     required this.onShow,
     required this.onNew,
     this.onNewWithProfile,
+    this.folders = const [],
     this.tasks,
     this.files,
     this.trailing,
@@ -105,9 +106,16 @@ class TerminalDeck extends StatefulWidget {
   final Object? shown;
   final ValueChanged<Object> onShow;
 
-  /// New Terminal: made, then shown here ([onShow]).
-  final ValueGetter<TerminalInstance?> onNew;
-  final TerminalInstance? Function(TerminalProfile profile)? onNewWithProfile;
+  /// New Terminal: made (in [cwd], else where the project's start), then
+  /// shown here ([onShow]).
+  final TerminalInstance? Function({String? cwd}) onNew;
+  final TerminalInstance? Function(TerminalProfile profile, {String? cwd})?
+  onNewWithProfile;
+
+  /// A workspace's folders: with more than one, New Terminal asks which
+  /// it starts in (as VS Code's multi-root workspace does), and each tab
+  /// says where its terminal started.
+  final List<String> folders;
 
   /// The agent's background commands, and what reads their output.
   final TerminalTasks? tasks;
@@ -264,10 +272,14 @@ class _TerminalDeckState extends State<TerminalDeck> {
                           terminals: terminals!,
                           shell: shell,
                           active: shell == current,
+                          folder: _askFolder
+                              ? _folderName(shell.cwd ?? terminals.root)
+                              : null,
                           // Its name edited where it is the view.
                           renaming: terminals.editing == shell && here,
                           onSelect: () => _show(shell),
-                          onNew: () => _shown(widget.onNew()),
+                          // In the folder this one started in.
+                          onNew: () => _shown(widget.onNew(cwd: shell.cwd)),
                           onRename: () {
                             _show(shell);
                             terminals.startRename(shell);
@@ -299,17 +311,22 @@ class _TerminalDeckState extends State<TerminalDeck> {
             ),
           ),
           if (terminals != null) ...[
-            IdeActionButton(
-              key: const ValueKey('terminal-deck-new'),
-              icon: Codicons.add,
-              tooltip: switch (KeybindingService.instance.labelFor(
-                'workbench.action.terminal.new',
-              )) {
-                final keys? => context.l10n.termNewTerminalKeys(keys),
-                null => context.l10n.termNewTerminal,
-              },
-              onPressed: () => _shown(widget.onNew()),
-            ),
+            if (_askFolder)
+              IdeMenuButton(
+                key: const ValueKey('terminal-deck-new'),
+                icon: Codicons.add,
+                tooltip: _newTooltip(context),
+                entries: () => _folderEntries(
+                  (folder) => _shown(widget.onNew(cwd: folder)),
+                ),
+              )
+            else
+              IdeActionButton(
+                key: const ValueKey('terminal-deck-new'),
+                icon: Codicons.add,
+                tooltip: _newTooltip(context),
+                onPressed: () => _shown(widget.onNew()),
+              ),
             if (widget.onNewWithProfile case final withProfile?)
               IdeMenuButton(
                 key: const ValueKey('terminal-deck-profiles'),
@@ -321,6 +338,11 @@ class _TerminalDeckState extends State<TerminalDeck> {
                   context.l10n,
                   terminals.profiles,
                   (profile) => _shown(withProfile(profile)),
+                  folders: _askFolder
+                      ? (profile) => _folderEntries(
+                          (folder) => _shown(withProfile(profile, cwd: folder)),
+                        )
+                      : null,
                 ),
               ),
           ],
@@ -381,13 +403,48 @@ class _TerminalDeckState extends State<TerminalDeck> {
     terminals.move(shell, to > from ? to - 1 : to);
   }
 
+  /// Whether New Terminal asks which of the workspace's folders.
+  bool get _askFolder => widget.folders.length > 1;
+
+  String _newTooltip(BuildContext context) => switch (KeybindingService.instance
+      .labelFor('workbench.action.terminal.new')) {
+    final keys? => context.l10n.termNewTerminalKeys(keys),
+    null => context.l10n.termNewTerminal,
+  };
+
+  String _folderName(String folder) =>
+      terminalFolderName(folder, widget.folders);
+
+  List<IdeMenuEntry> _folderEntries(ValueChanged<String> onPick) =>
+      terminalFolderMenu(widget.folders, onPick);
+
+  /// New Terminal from the empty deck's button: in the folder chosen under
+  /// it, when there are several.
+  void _newFrom(BuildContext button) {
+    if (!_askFolder) {
+      _shown(widget.onNew());
+      return;
+    }
+    final box = button.findRenderObject();
+    if (box is! RenderBox) return;
+    unawaited(
+      showIdeMenu(
+        button,
+        anchor: box.localToGlobal(Offset.zero) & box.size,
+        entries: _folderEntries((folder) => _shown(widget.onNew(cwd: folder))),
+      ),
+    );
+  }
+
   /// The dropdown by New Terminal: a terminal on each profile, the default
-  /// first; then the default chosen among them.
+  /// first (each with the workspace's [folders] to start it in, if any);
+  /// then the default chosen among them.
   static Future<List<IdeMenuEntry>> _profiles(
     AppLocalizations l10n,
     TerminalProfileService profiles,
-    ValueChanged<TerminalProfile> onNew,
-  ) async {
+    ValueChanged<TerminalProfile> onNew, {
+    List<IdeMenuEntry> Function(TerminalProfile profile)? folders,
+  }) async {
     await profiles.refresh();
     final defaultName = profiles.defaultProfileName;
     final available = terminalDropdownProfiles(
@@ -401,7 +458,8 @@ class _TerminalDeckState extends State<TerminalDeck> {
             profile.name == defaultName
                 ? l10n.termProfileDefault(profile.name)
                 : profile.name,
-            onSelected: () => onNew(profile),
+            onSelected: folders == null ? () => onNew(profile) : null,
+            submenu: folders?.call(profile),
           ),
       ],
       [
@@ -478,7 +536,7 @@ class _TerminalDeckState extends State<TerminalDeck> {
         return _Note(
           text: l10n.termNoTerminals,
           action: terminals == null ? null : l10n.termNewTerminal,
-          onAction: () => _shown(widget.onNew()),
+          onAction: _newFrom,
         );
     }
   }
@@ -503,6 +561,7 @@ class _DeckTab extends IdeEditorTab {
     required super.active,
     required super.onSelect,
     required ValueChanged<Offset> super.onMenu,
+    super.description,
     super.trailing,
     super.closeTooltip,
     super.onClose,
@@ -512,8 +571,9 @@ class _DeckTab extends IdeEditorTab {
 }
 
 /// A terminal's tab: its name (edited in place while [renaming]), the
-/// exited marker, Kill as its close; on a right click, New Terminal,
-/// Rename, Clear and the kills ([terminalTabMenu]).
+/// [folder] it started in, the exited marker, Kill as its close; on a
+/// right click, New Terminal, Rename, Clear and the kills
+/// ([terminalTabMenu]).
 class _ShellTab extends StatelessWidget {
   const _ShellTab({
     super.key,
@@ -524,11 +584,15 @@ class _ShellTab extends StatelessWidget {
     required this.onSelect,
     required this.onNew,
     required this.onRename,
+    this.folder,
   });
 
   final TerminalService terminals;
   final TerminalInstance shell;
   final bool active;
+
+  /// The workspace's folder it started in, among several.
+  final String? folder;
   final bool renaming;
   final VoidCallback onSelect;
   final VoidCallback onNew;
@@ -544,7 +608,10 @@ class _ShellTab extends StatelessWidget {
             ? const TerminalExitedIcon()
             : const Icon(Codicons.terminal),
         label: shell.title,
-        tooltip: shell.exitMessage ?? shell.title,
+        description: folder,
+        tooltip:
+            shell.exitMessage ??
+            (folder == null ? shell.title : '${shell.title} · $folder'),
         active: active,
         renaming: renaming,
         onRenamed: (title) {
@@ -721,7 +788,9 @@ class _Note extends StatelessWidget {
 
   final String text;
   final String? action;
-  final VoidCallback? onAction;
+
+  /// Pressed, with the button's context (a menu opened under it).
+  final ValueChanged<BuildContext>? onAction;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -737,7 +806,15 @@ class _Note extends StatelessWidget {
           ),
           if (action case final action?) ...[
             const SizedBox(height: 12),
-            IdeButton(label: action, onPressed: onAction),
+            Builder(
+              builder: (button) => IdeButton(
+                label: action,
+                onPressed: switch (onAction) {
+                  final onAction? => () => onAction(button),
+                  null => null,
+                },
+              ),
+            ),
           ],
         ],
       ),

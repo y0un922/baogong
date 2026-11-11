@@ -33,6 +33,10 @@ abstract final class ChatCodec {
   /// its chat as a card that opens it.
   static const botCardTag = 'bot_show_chat';
 
+  /// The tag a bot wraps each of what the user might say next in, at the
+  /// end of its reply, when they turned that on: a tap away from sent.
+  static const botSuggestTag = 'bot_suggest';
+
   /// What the app told a bot in [item], if it is such a note.
   static String? botEvent(UserMessageItem item) {
     // The pictures that came with it referred to after it, if they are.
@@ -53,15 +57,29 @@ abstract final class ChatCodec {
   );
 
   /// The messages a bot's reply [text] has, in order: each `<bot_say>`'s,
-  /// once closed (one still being written shows when it is whole).
+  /// once closed (one still being written shows when it is whole), as
+  /// they show ([withoutVoiceCues]).
   static List<String> botSays(String text) => [
     for (final (tag, said) in botParts(text))
-      if (tag == botSayTag) said,
+      if (tag == botSayTag)
+        if (withoutVoiceCues(said) case final shown when shown.isNotEmpty)
+          shown,
   ];
+
+  /// How a bot's words sound, where it said: `[whispers]`, `[laughs]`, in
+  /// its messages and narration. For them read aloud; not shown.
+  static final voiceCue = RegExp(r"\[[a-z][a-z ,'-]{0,30}\]");
+
+  /// [text] (a bot's message, its narration) as it shows: without its
+  /// [voiceCue]s.
+  static String withoutVoiceCues(String text) => text
+      .replaceAll(voiceCue, '')
+      .replaceAll(RegExp(r'[ \t]{2,}'), ' ')
+      .trim();
 
   /// What a bot's reply [text] shows, in order, each once closed: its
   /// messages ([botSayTag]), its narration ([botNarrateTag]) and the
-  /// agents it shows ([botCardTag], their ids).
+  /// agents it shows ([botCardTag], their ids). Its [voiceCue]s kept.
   static List<(String tag, String text)> botParts(String text) => [
     for (final match in _botParts.allMatches(text))
       if (match[2]!.trim() case final part when part.isNotEmpty)
@@ -70,6 +88,18 @@ abstract final class ChatCodec {
 
   static final _botParts = RegExp(
     '<($botSayTag|$botNarrateTag|$botCardTag)>(.*?)</\\1>',
+    dotAll: true,
+  );
+
+  /// What a bot's reply [text] suggests the user say next
+  /// ([botSuggestTag]), each once closed: not among what it shows.
+  static List<String> botSuggestions(String text) => [
+    for (final match in _botSuggestions.allMatches(text))
+      if (match[1]!.trim() case final said when said.isNotEmpty) said,
+  ];
+
+  static final _botSuggestions = RegExp(
+    '<$botSuggestTag>(.*?)</$botSuggestTag>',
     dotAll: true,
   );
 
