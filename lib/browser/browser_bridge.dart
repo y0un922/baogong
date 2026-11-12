@@ -338,6 +338,7 @@ class BrowserBridge extends ChangeNotifier {
       'BraveSoftware/Brave-Browser-Beta',
       'Vivaldi',
       'Arc/User Data',
+      'com.phibrowser.Mac',
     ])
       p.join(home, 'Library', 'Application Support', browser),
   ];
