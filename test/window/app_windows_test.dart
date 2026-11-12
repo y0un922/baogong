@@ -836,7 +836,7 @@ void main() {
     // Asked in the window in front: b's.
     expect(harness.host.focused, harness.window('/w/b').viewId);
 
-    expect(find.text('Quit BaoCode?'), findsOneWidget);
+    expect(find.text('Quit Baogong?'), findsOneWidget);
     await tester.tap(find.text('Quit'));
     await tester.pump();
     expect(await quitting, isTrue);
@@ -848,7 +848,7 @@ void main() {
     await harness.windows.showFolder('/w/a');
     await harness.showDialogs(tester);
     expect(await harness.windows.confirmQuit(), isTrue);
-    expect(find.text('Quit BaoCode?'), findsNothing);
+    expect(find.text('Quit Baogong?'), findsNothing);
   });
 
   testWidgets('quitting from the tray, everything hidden, shows the window '
@@ -862,7 +862,7 @@ void main() {
 
     final quitting = harness.windows.confirmQuit();
     await tester.pump();
-    expect(find.text('Quit BaoCode?'), findsOneWidget);
+    expect(find.text('Quit Baogong?'), findsOneWidget);
     expect(harness.windows.chat.shown, isTrue);
     expect(harness.host.focused, 0);
     await tester.tap(find.text('Quit'));
@@ -959,7 +959,7 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pump();
     expect(await quitting, isFalse);
-    expect(find.text('Quit BaoCode?'), findsNothing);
+    expect(find.text('Quit Baogong?'), findsNothing);
   });
 
   group('restoring', () {

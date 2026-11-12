@@ -129,7 +129,7 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     await tester.pump();
     // Round to the last: Settings, its pages.
-    expect(_rich('Keyboard Shortcuts'), findsOneWidget);
+    expect(_rich('General'), findsOneWidget);
     expect(_rich('New Chat'), findsNothing);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);

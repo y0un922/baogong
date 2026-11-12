@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 import 'package:baocode/chat/chat_history_view.dart';
 import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/kernel/kernel_types.dart' show KernelOption;
+import 'package:baocode/chat/step_folds.dart' show StepAction;
 import 'package:baocode/chat/composer/composer_picker.dart';
 import 'package:baocode/chat/composer/suggestion_menu.dart';
 import 'package:baocode/chat/floating/floating_layer.dart';
@@ -161,15 +163,33 @@ void main() {
   testWidgets('a menu with no room above opens below, inside the window', (
     tester,
   ) async {
-    await pumpScreen(tester);
-    await openEditorAtTop(tester);
-    final pill = tester.getRect(historyPicker());
+    const options = [
+      KernelOption('one', 'First option', Icons.circle, ''),
+      KernelOption('two', 'Second option', Icons.circle, ''),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 16, left: 40),
+              child: ComposerPicker(
+                options: options,
+                selected: options.first,
+                onSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final pill = tester.getRect(find.byType(ComposerPicker));
     await tester.tapAt(pill.center);
     await settleAnimations(tester);
-
     final menu = Rect.fromPoints(
-      tester.getTopLeft(find.text('Opus 5.5').last),
-      tester.getBottomRight(find.text('Haiku 4.5')),
+      tester.getTopLeft(find.text('First option').last),
+      tester.getBottomRight(find.text('Second option')),
     );
     final window =
         Offset.zero & tester.view.physicalSize / tester.view.devicePixelRatio;
@@ -315,7 +335,14 @@ void main() {
       await pumpScreen(tester);
       // The last turn's read is folded with its thought and search: open it,
       // clear of the turn's message stuck at the top.
-      final fold = find.byType(StepsFoldLine, skipOffstage: false).last;
+      final fold = find
+          .byWidgetPredicate(
+            (widget) =>
+                widget is StepsFoldLine &&
+                widget.tally.counts[StepAction.read] != null,
+            skipOffstage: false,
+          )
+          .last;
       await Scrollable.ensureVisible(tester.element(fold), alignment: 0.5);
       await tester.pump();
       await tester.tap(fold);

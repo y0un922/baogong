@@ -291,7 +291,7 @@ void main() {
     expect(transcript.length, 4);
   });
 
-  test('a turn done is timed on its message; a stopped one is not', () {
+  test('a finished or stopped turn keeps its duration on its message', () {
     const worked = Duration(minutes: 4, seconds: 32);
     Duration? workedOn(Transcript transcript) =>
         (transcript.itemAt(0) as UserMessageItem).worked;
@@ -306,7 +306,8 @@ void main() {
       ..apply(const TurnStarted(1, 'u'))
       ..apply(const ItemUpserted(2, 'u', UserMessageItem(text: 'hi')))
       ..apply(const TurnEnded(3, 'u', interrupted: true, worked: worked));
-    expect(workedOn(stopped), isNull);
+    expect(workedOn(stopped), worked);
+    expect((stopped.itemAt(0) as UserMessageItem).stopped, isTrue);
   });
 
   test('tasks are replaced whole', () {

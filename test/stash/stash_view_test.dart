@@ -593,7 +593,7 @@ void main() {
     Finder action(String tooltip) => find.byWidgetPredicate(
       (widget) => widget is IdeHover && widget.message == tooltip,
     );
-    expect(action('Implement in BaoCode'), findsOneWidget);
+    expect(action('Implement in Baogong'), findsOneWidget);
     expect(action('More'), findsWidgets);
     await tester.tap(action('Mark Done'));
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));

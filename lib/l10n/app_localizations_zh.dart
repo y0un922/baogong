@@ -1468,6 +1468,29 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdSidePanelCloseTab => '关闭侧边面板标签页';
 
   @override
+  String get cmdSidePanelSplitTerminalRight => '向右拆分终端';
+
+  @override
+  String get cmdSidePanelSplitTerminalDown => '向下拆分终端';
+
+  @override
+  String get cmdNavigateLeft => '向左切换';
+
+  @override
+  String get cmdNavigateRight => '向右切换';
+
+  @override
+  String get cmdNavigateUp => '向上切换';
+
+  @override
+  String get cmdNavigateDown => '向下切换';
+
+  @override
+  String cmdSidePanelPage(int index) {
+    return '显示侧边面板第 $index 页';
+  }
+
+  @override
   String get sidePanelFiles => '文件';
 
   @override

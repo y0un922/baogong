@@ -1829,7 +1829,9 @@ void main() {
     testWidgets('a turn\'s message sticks to the top, pushed off by the next', (
       tester,
     ) async {
-      await pumpScreen(tester, historyCount: 24);
+      // A fourth turn leaves enough content below the third, even with
+      // edits folded, to scroll its message up to the top.
+      await pumpScreen(tester, historyCount: 32);
       // Turn 3, then turn 2 just above it.
       await reveal(tester, '第 3 轮');
       await reveal(tester, '第 2 轮');

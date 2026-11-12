@@ -281,7 +281,7 @@ void main() {
       );
       await tester.pump();
       await tester.pump();
-      await tester.tap(find.text('Show all 40 lines'));
+      await tester.tap(find.textContaining('Show all '));
       await tester.pump();
       return outer;
     }

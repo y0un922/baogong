@@ -667,6 +667,18 @@
   "cmdSidePanelNewTerminal": "New Agent Terminal",
   "cmdSidePanelToggleList": "Toggle Side Panel List",
   "cmdSidePanelCloseTab": "Close Side Panel Tab",
+  "cmdSidePanelSplitTerminalRight": "Split Terminal Right",
+  "cmdSidePanelSplitTerminalDown": "Split Terminal Down",
+  "cmdNavigateLeft": "Navigate Left",
+  "cmdNavigateRight": "Navigate Right",
+  "cmdNavigateUp": "Navigate Up",
+  "cmdNavigateDown": "Navigate Down",
+  "cmdSidePanelPage": "Show Side Panel Page {index}",
+  "@cmdSidePanelPage": {
+    "placeholders": {
+      "index": { "type": "int" }
+    }
+  },
   "sidePanelFiles": "Files",
   "sidePanelTerminal": "Terminal",
   "browserOtherApp": "Another Baogong is connected to the browser.",

@@ -163,6 +163,21 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     ChatCommandIds.sidePanelToggleList => l10n.cmdSidePanelToggleList,
     ChatCommandIds.sidePanelUsage => l10n.cmdSidePanelUsage,
     ChatCommandIds.sidePanelCloseTab => l10n.cmdSidePanelCloseTab,
+    ChatCommandIds.sidePanelSplitTerminalRight =>
+      l10n.cmdSidePanelSplitTerminalRight,
+    ChatCommandIds.sidePanelSplitTerminalDown =>
+      l10n.cmdSidePanelSplitTerminalDown,
+    ChatCommandIds.navigateLeft => l10n.cmdNavigateLeft,
+    ChatCommandIds.navigateRight => l10n.cmdNavigateRight,
+    ChatCommandIds.navigateUp => l10n.cmdNavigateUp,
+    ChatCommandIds.navigateDown => l10n.cmdNavigateDown,
+
+    final String page
+        when ChatCommandIds.indexOf(page, ChatCommandIds.sidePanelPage) !=
+            null =>
+      l10n.cmdSidePanelPage(
+        ChatCommandIds.indexOf(page, ChatCommandIds.sidePanelPage)!,
+      ),
     ChatCommandIds.closeTab => l10n.cmdChatCloseTab,
     ChatCommandIds.focusInput => l10n.cmdChatFocusInput,
     ChatCommandIds.focusList => l10n.cmdChatFocusList,

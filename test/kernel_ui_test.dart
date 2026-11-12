@@ -23,6 +23,7 @@ import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/widgets/activity_row.dart';
 import 'package:baocode/chat/widgets/thinking_spark.dart';
 import 'package:baocode/chat/widgets/command_step.dart';
+import 'package:baocode/chat/widgets/fold_line.dart';
 import 'package:baocode/chat/widgets/pixel_loader.dart';
 import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/ide/ide_switch.dart';
@@ -492,8 +493,15 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     // Its command, one line until opened.
+    final steps = find.byType(StepsFoldLine);
+    await tester.tap(steps.last);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     final command = find.byType(CommandStep);
     expect(command, findsOneWidget);
+    await tester.ensureVisible(command);
+    await tester.pump();
     expect(find.textContaining('All tests passed'), findsNothing);
     await tester.tap(
       find.descendant(of: command, matching: find.byType(RichText)).first,

@@ -784,6 +784,10 @@ void main() {
     await tester.pumpAndSettle();
     // The diff's card, taller than its box: what it scrolls to lies below
     // it, under the answer.
+    await tester.tap(find.text('parser.dart'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Show all 20 lines'));
+    await tester.pumpAndSettle();
     expect(find.byType(StepBody), findsOneWidget);
 
     final paragraph = tester.renderObject<RenderParagraph>(
@@ -835,6 +839,10 @@ void main() {
         home: Scaffold(body: ChatHistoryView(feed: feed)),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('parser.dart'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Show all 20 lines'));
     await tester.pumpAndSettle();
     final paragraph = tester.renderObject<RenderParagraph>(
       find.byWidgetPredicate(

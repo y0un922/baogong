@@ -18,6 +18,7 @@ import 'package:baocode/kernel/claude_code/claude_core_setting.dart';
 import 'package:baocode/kernel/kernel_registry.dart';
 import 'package:baocode/models/featured_upstreams.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
+import 'package:baocode/kernel/next_prompt.dart';
 import 'package:baocode/platform/context_menu.dart';
 import 'package:baocode/platform/shell_command.dart';
 import 'package:baocode/theme/workbench_theme.dart';
@@ -49,6 +50,10 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
     IdeDiffOptions.instance.reset();
     rootBundle.clear();
     ClaudeCore.current = () => ClaudeCore.cli;
+    // Mock agent turns must not ask the user's real auxiliary model for
+    // a follow-up prompt. Tests of suggestions install their own asker.
+    NextPrompt.asker = (_, _, {cancel, model, exact = false, location}) async =>
+        'NONE';
     UserMessageStyle.current.value = UserMessageStyle.sticky;
     ShellCommand.debugInstaller = _NoShellCommand();
     ContextMenu.debugInstaller = _NoContextMenu();

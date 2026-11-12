@@ -827,6 +827,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // A model removed on its upstream's page: the roles on it unset.
+    await tester.ensureVisible(find.byType(IdeBackButton));
+    await tester.pumpAndSettle();
     await tester.tap(find.byType(IdeBackButton));
     await tester.pumpAndSettle();
     await tester.tap(find.text('DeepSeek').last);
@@ -1074,6 +1076,8 @@ void main() {
     await pump(tester);
     await tester.tap(find.text('Gateway'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Advanced'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Advanced'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Delete Upstream').last);
@@ -1102,6 +1106,8 @@ void main() {
     await providers.setKey('gw', 'sk');
     await pump(tester);
     await tester.tap(find.text('Gateway'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Advanced'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Advanced'));
     await tester.pumpAndSettle();

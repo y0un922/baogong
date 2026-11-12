@@ -450,6 +450,7 @@ void main() {
     });
 
     test('every command of the catalog has a Chinese title', () {
+      final missing = <String>[];
       for (final MapEntry(key: id, value: info) in commandCatalog.entries) {
         expect(
           localizedCommandTitleOf(
@@ -461,12 +462,11 @@ void main() {
           info.label,
           reason: id,
         );
-        expect(
-          localizedCommandLabel(_zh, id, info.title),
-          isNot(info.title),
-          reason: id,
-        );
+        if (localizedCommandLabel(_zh, id, info.title) == info.title) {
+          missing.add('$id: ${info.title}');
+        }
       }
+      expect(missing, isEmpty, reason: missing.join('\n'));
     });
   });
 

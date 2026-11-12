@@ -1505,6 +1505,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdSidePanelCloseTab => 'Close Side Panel Tab';
 
   @override
+  String get cmdSidePanelSplitTerminalRight => 'Split Terminal Right';
+
+  @override
+  String get cmdSidePanelSplitTerminalDown => 'Split Terminal Down';
+
+  @override
+  String get cmdNavigateLeft => 'Navigate Left';
+
+  @override
+  String get cmdNavigateRight => 'Navigate Right';
+
+  @override
+  String get cmdNavigateUp => 'Navigate Up';
+
+  @override
+  String get cmdNavigateDown => 'Navigate Down';
+
+  @override
+  String cmdSidePanelPage(int index) {
+    return 'Show Side Panel Page $index';
+  }
+
+  @override
   String get sidePanelFiles => 'Files';
 
   @override

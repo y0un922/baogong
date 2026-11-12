@@ -127,19 +127,22 @@ void main() {
         worked: const Duration(seconds: 9),
         stopped: true,
       );
-      expect(_folds([stopped, _read, _grep, _edit]), ['work 1-4', 'steps 1-3']);
+      expect(_folds([stopped, _read, _grep, _edit]), ['work 1-4', 'steps 1-4']);
       const error = NoticeItem(NoticeKind.error, 'Overloaded');
-      expect(_folds([stopped, _edit, _read, error]), ['work 1-3']);
-      expect(_folds([stopped, _read, _edit, _answer]), ['work 1-3']);
+      expect(_folds([stopped, _edit, _read, error]), ['work 1-3', 'steps 1-3']);
+      expect(_folds([stopped, _read, _edit, _answer]), [
+        'work 1-3',
+        'steps 1-3',
+      ]);
       expect(_fold([stopped, _read, _edit]).workAt(1)?.stopped, isTrue);
-      // Untimed (stopped before this was kept), it shows as it is.
+      // Untimed, only the quick steps fold; there is no timed work fold.
       expect(
         _folds([
           const UserMessageItem(text: 'Fix it', stopped: true),
           _edit,
           _read,
         ]),
-        isEmpty,
+        ['steps 1-3'],
       );
     });
 

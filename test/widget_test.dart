@@ -71,7 +71,7 @@ void main() {
       await tester.pump();
 
       expect(copiedText, contains('已完成修改'));
-      expect(copiedText, contains('flutter test'));
+      expect(copiedText, contains('Edited 1 file +2 -1 · ran 1 command'));
       await mouse.removePointer();
     });
   }
@@ -537,9 +537,8 @@ void main() {
     expect(thoughts, greaterThanOrEqualTo(3));
     // Whole turns, except that the first may start partway (after its
     // folded steps, before its edit and command).
-    expect(_edits.allMatches(text).length - thoughts, inInclusiveRange(0, 1));
     expect(
-      'Ran flutter test'.allMatches(text).length - thoughts,
+      _foldedEdits.allMatches(text).length - thoughts,
       inInclusiveRange(0, 1),
     );
     final turns = RegExp(r'第 (\d+) 轮')
@@ -609,21 +608,26 @@ void main() {
         }
         // The wheel's notches eased out (120 ms).
         await tester.pump(const Duration(milliseconds: 200));
-        // A terminal line on screen (cached items above are built too);
+        // An edit/command fold on screen (cached items above are built too);
         // scroll on until one is.
         final visible = tester.getRect(find.byType(SuperListView));
         Offset topLeftOf(RenderBox box) => box.localToGlobal(Offset.zero);
         RenderBox? onScreen() => find
-            .textContaining('flutter test')
+            .textContaining('Edited 1 file', findRichText: true)
             .evaluate()
             .map((element) => element.renderObject! as RenderBox)
             .where((box) => visible.deflate(8).contains(topLeftOf(box)))
             .firstOrNull;
-        while (onScreen() == null) {
+        for (var i = 0; onScreen() == null && i < 100; i++) {
           await tester.sendEventToBinding(wheel.scroll(const Offset(0, -60)));
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 200));
         }
+        expect(
+          onScreen(),
+          isNotNull,
+          reason: 'An edit/command fold must be reachable',
+        );
         final targetBox = onScreen()!;
         final targetTopLeft = topLeftOf(targetBox);
         final target = targetTopLeft + const Offset(4, 6);
@@ -645,12 +649,11 @@ void main() {
 
       void expectContiguousToAnchor(String text) {
         // From the clicked command down to the anchor: whole turns.
-        expect(text, startsWith('Ran flutter test'));
-        expect(text, endsWith('Ran flutter test'));
+        expect(text, startsWith('Edited 1 file'));
+        expect(text, endsWith('Edited 1 file +2 -1 · ran 1 command'));
         final thoughts = _foldedSteps.allMatches(text).length;
         expect(thoughts, greaterThanOrEqualTo(3));
-        expect('flutter test'.allMatches(text).length, thoughts + 1);
-        expect(_edits.allMatches(text).length, thoughts);
+        expect(_foldedEdits.allMatches(text).length, thoughts);
       }
 
       final first = await scrollAndShiftClick();
@@ -658,7 +661,13 @@ void main() {
       final second = await scrollAndShiftClick();
       expectContiguousToAnchor(second);
       expect(second.length, greaterThan(first.length));
-      expect(second, endsWith(first));
+      // The first clicked fold may be only partly selected. Extending
+      // past it selects that whole row; everything after it stays put.
+      final afterFirstRow = first.indexOf('\n') + 1;
+      expect(afterFirstRow, greaterThan(0));
+      // Built paragraphs can wrap whitespace differently from model text.
+      String words(String text) => text.replaceAll(RegExp(r'\s+'), '');
+      expect(words(second), endsWith(words(first.substring(afterFirstRow))));
       await mouse.removePointer();
     },
     variant: TargetPlatformVariant.only(TargetPlatform.macOS),
@@ -726,7 +735,7 @@ void main() {
     stopwatch.stop();
     final text = copied ?? '';
     expect(text, startsWith('第 1 轮'));
-    expect(text, endsWith('Ran flutter test'));
+    expect(text, endsWith('Edited 1 file +2 -1 · ran 1 command'));
     final turns = RegExp(r'第 (\d+) 轮')
         .allMatches(text)
         .map((match) => int.parse(match.group(1)!))
@@ -787,8 +796,8 @@ void main() {
 /// A mock turn's thought, read and search, folded into one line.
 final _foldedSteps = RegExp(r'Read 1 file, searched 1 pattern');
 
-/// An edit's card, as it copies: its file's name and counts.
-final _edits = RegExp(r'^Edited main\.dart ', multiLine: true);
+/// A mock turn's edit and command now share one folded line.
+final _foldedEdits = RegExp(r'Edited 1 file \+2 -1 · ran 1 command');
 
 /// The scrollbar, not the minimap that stands in for it where there is room.
 void _scrollbarOnly() {

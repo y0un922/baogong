@@ -2960,6 +2960,48 @@ abstract class AppLocalizations {
   /// **'Close Side Panel Tab'**
   String get cmdSidePanelCloseTab;
 
+  /// No description provided for @cmdSidePanelSplitTerminalRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Terminal Right'**
+  String get cmdSidePanelSplitTerminalRight;
+
+  /// No description provided for @cmdSidePanelSplitTerminalDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Terminal Down'**
+  String get cmdSidePanelSplitTerminalDown;
+
+  /// No description provided for @cmdNavigateLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigate Left'**
+  String get cmdNavigateLeft;
+
+  /// No description provided for @cmdNavigateRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigate Right'**
+  String get cmdNavigateRight;
+
+  /// No description provided for @cmdNavigateUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigate Up'**
+  String get cmdNavigateUp;
+
+  /// No description provided for @cmdNavigateDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Navigate Down'**
+  String get cmdNavigateDown;
+
+  /// No description provided for @cmdSidePanelPage.
+  ///
+  /// In en, this message translates to:
+  /// **'Show Side Panel Page {index}'**
+  String cmdSidePanelPage(int index);
+
   /// No description provided for @sidePanelFiles.
   ///
   /// In en, this message translates to:

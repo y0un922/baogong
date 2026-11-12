@@ -2,7 +2,6 @@
 // workspace/chat_terminal.dart): its toggles, its keys, and the project
 // its terminals start in.
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';

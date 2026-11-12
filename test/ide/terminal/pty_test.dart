@@ -31,6 +31,7 @@ void main() {
     );
   });
   tearDown(() async {
+    await PtyProcesses.stopAll();
     await PtyProcesses.registry.flush();
     dir.deleteSync(recursive: true);
   });
@@ -148,14 +149,13 @@ void main() {
 
   test('is recorded while it runs', () async {
     final (pty, _) = await sh('read x');
-    await PtyProcesses.registry.reaped;
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    await PtyProcesses.registry.flush();
     expect(jsonDecode(registryFile.readAsStringSync()), [
       {'pid': pty.pid, 'parent': pid},
     ]);
     pty.writeText('\n');
     await pty.exitCode.timeout(timeout);
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    await PtyProcesses.registry.flush();
     expect(jsonDecode(registryFile.readAsStringSync()), isEmpty);
   });
 

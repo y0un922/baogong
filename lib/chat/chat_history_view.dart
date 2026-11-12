@@ -2971,7 +2971,17 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                   top: 0,
                   left: _gutter,
                   right: _gutter,
-                  child: _inset > 0 ? _OverRail(child: _findBar()) : _findBar(),
+                  child: ListenableBuilder(
+                    listenable: _find,
+                    // An invisible find bar needs no portal. Keeping its
+                    // empty overlay alive can reinsert a clean semantics
+                    // node after scrolling has removed it from the tree.
+                    builder: (context, _) => !_find.visible
+                        ? const SizedBox.shrink()
+                        : _inset > 0
+                        ? _OverRail(child: _findBar())
+                        : _findBar(),
+                  ),
                 ),
               ],
             ),

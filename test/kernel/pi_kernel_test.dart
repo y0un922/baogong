@@ -484,8 +484,11 @@ void main() {
           ),
         );
         addTearDown(kernel.dispose);
+        final reported = kernel.events.firstWhere(
+          (event) => event is UsageReported,
+        );
         kernel.prepare();
-        await pumpEventQueue();
+        await reported.timeout(const Duration(seconds: 5));
         return transcript.usage;
       }
 
