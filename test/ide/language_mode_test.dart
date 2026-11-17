@@ -64,7 +64,13 @@ void main() {
       debounce: Duration.zero,
     );
     await storage.load();
-    keepLanguageModes(storage);
+    final stop = keepLanguageModes(storage);
+    // Before the folder goes (tear-downs run last first): the write the
+    // picks cleared below makes, done, and none after.
+    addTearDown(() async {
+      stop();
+      await storage.load();
+    });
     overrides.set('/x/run', 'shellscript');
     // Written as it is kept, off the call.
     for (var i = 0; i < 100; i++) {

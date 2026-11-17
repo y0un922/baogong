@@ -14,11 +14,11 @@ import 'ide_status_bar.dart' show IdeLanguageNames;
 const languageModesKey = 'editor.languageModes';
 
 /// Reads the languages picked for files from [storage], and keeps them
-/// there as they change, for the app's whole run.
-void keepLanguageModes(GlobalStorage storage) {
+/// there as they change, for the app's whole run. Returns what stops it.
+VoidCallback keepLanguageModes(GlobalStorage storage) {
   final overrides = EditorLanguageOverrides.instance;
   overrides.load(storage.get<Map<Object?, Object?>>(languageModesKey));
-  overrides.addListener(() {
+  void keep() {
     final picks = overrides.toJson();
     unawaited(
       storage
@@ -27,7 +27,10 @@ void keepLanguageModes(GlobalStorage storage) {
             (Object error) => debugPrint('$languageModesKey not kept: $error'),
           ),
     );
-  });
+  }
+
+  overrides.addListener(keep);
+  return () => overrides.removeListener(keep);
 }
 
 /// Change Language Mode for [path] (VS Code's): Auto Detect (by its name

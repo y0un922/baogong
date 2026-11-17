@@ -117,5 +117,9 @@ for name in $(gh api "orgs/$ORG/repos" --paginate --jq '.[].name'); do
   gh label create "$ORG_LABEL" -R "$REPO" --color 1d76db --description "上游组织的新仓库" --force >/dev/null
   seen=$(gh issue list -R "$REPO" --label "$ORG_LABEL" --state all --search "$name in:title" \
     --json title --jq "map(select(.title == \"$issue_title\")) | length")
-  [ "$seen" -eq 0 ] && gh issue create -R "$REPO" --label "$ORG_LABEL" --title "$issue_title" --body "$issue_body"
+  # An if, not &&: a repository already told of, the last, would leave the
+  # script's status 1 and fail the run.
+  if [ "$seen" -eq 0 ]; then
+    gh issue create -R "$REPO" --label "$ORG_LABEL" --title "$issue_title" --body "$issue_body"
+  fi
 done
