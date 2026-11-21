@@ -22,8 +22,9 @@ on:
   push:
     branches: [main]
     paths-ignore: *docs
-  schedule:
-    - cron: '47 18 * * *'
+  # Fork: no nightly schedule. Upstream's tests fail now and then by
+  # chance on the runners (a timeout), and each failure mailed the fork's
+  # owner; Actions → Checks → Run workflow still runs them.
   workflow_dispatch:
 
 permissions:
