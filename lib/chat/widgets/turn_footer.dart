@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../ide/ide_hover.dart';
@@ -11,17 +10,19 @@ import '../../ide/ide_spinning.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
+import '../../usage/usage_prices.dart';
 import '../chat_models.dart';
 import 'agent_step.dart';
+import 'copy_button.dart';
 import 'hover_builder.dart';
 import 'rolling_text.dart';
+import '../selection/chat_selection.dart';
 
 /// Lucide's icons the footer uses.
-const _copyIcon = 'assets/icons/lucide-copy.svg';
-const _checkIcon = 'assets/icons/lucide-check.svg';
 const _zapIcon = 'assets/icons/lucide-zap.svg';
 const _clockIcon = 'assets/icons/lucide-clock.svg';
 const _arrowDownIcon = 'assets/icons/lucide-arrow-down.svg';
+const _forkIcon = 'assets/icons/lucide-split.svg';
 
 /// Whether the turn under way has its line of figures (`chat.liveTurnStats`),
 /// on unless set to false. A finished turn's figures always show.
@@ -40,7 +41,8 @@ abstract final class LiveTurnStatsSetting {
   static Listenable? changes;
 }
 
-/// Under a finished turn: a button to copy its answer, then, faint, how
+/// Under a finished turn: a button to copy its answer, one to fork the
+/// conversation from there and one to put it in Chinese, then, faint, how
 /// long the turn took, how fast the model wrote, what it cost, the tokens
 /// it used and when it ended (for the prompt cache, which lasts a while
 /// from the last request), as far as known. Out of the history's selection.
@@ -55,9 +57,11 @@ class TurnFooter extends StatelessWidget {
   const TurnFooter({
     super.key,
     this.answer,
+    this.onFork,
     this.worked,
     this.usage,
     this.endedAt,
+    this.cost,
     this.live,
     this.since,
     this.translated = false,
@@ -66,6 +70,10 @@ class TurnFooter extends StatelessWidget {
 
   /// What the copy button copies; no button when null.
   final String? answer;
+
+  /// Copies the conversation up to the end of this turn into a new one;
+  /// no button when null.
+  final VoidCallback? onFork;
   final Duration? worked;
   final TurnUsage? usage;
   final DateTime? endedAt;
@@ -76,6 +84,10 @@ class TurnFooter extends StatelessWidget {
   /// Translates the answer into Chinese, or puts back the model's own
   /// words; no button when null.
   final Future<void> Function()? onTranslate;
+
+  /// What this turn's kept calls cost at the current model prices
+  /// ([UsagePrices]). Takes precedence over [TurnUsage.costUsd] when present.
+  final UsageCost? cost;
 
   /// What the turn under way has written so far, and how fast.
   final TurnOutput? live;
@@ -122,11 +134,21 @@ class TurnFooter extends StatelessWidget {
     final l10n = context.l10n;
     final live = this.live;
     if (live == null) {
+      final onFork = this.onFork;
       return _padded(
         _line([
-          if (answer case final answer?) _CopyButton(text: answer),
-          if (answer != null && onTranslate != null)
-            _TranslateButton(translated: translated, onTap: onTranslate!),
+          if (answer != null || onFork != null)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              spacing: 2,
+              children: [
+                if (answer case final answer?)
+                  CopyButton(text: answer, tooltip: l10n.turnCopy),
+                if (onFork != null) _ForkButton(onTap: onFork),
+                if (answer != null && onTranslate != null)
+                  _TranslateButton(translated: translated, onTap: onTranslate!),
+              ],
+            ),
           ..._stats(l10n),
         ]),
       );
@@ -140,7 +162,7 @@ class TurnFooter extends StatelessWidget {
     );
   }
 
-  static Widget _padded(Widget line) => SelectionContainer.disabled(
+  static Widget _padded(Widget line) => ChatUnselectable(
     child: Padding(padding: const EdgeInsets.only(top: 6), child: line),
   );
 
@@ -153,9 +175,23 @@ class TurnFooter extends StatelessWidget {
     children: items,
   );
 
+  String? _costText() {
+    if (cost case final priced?) {
+      if (priced.text case final text?) return text;
+      // Calls were recorded for this turn but none are priced yet: avoid
+      // showing a misleading $0.00 from a CLI unfamiliar with the model.
+      if (usage?.costUsd case final usd? when usd > 0) {
+        return formatCost(usd);
+      }
+      return null;
+    }
+    if (usage?.costUsd case final usd?) return formatCost(usd);
+    return null;
+  }
+
   List<Widget> _stats(AppLocalizations l10n) {
     final speed = usage?.tokensPerSecond;
-    final cost = usage?.costUsd;
+    final costText = _costText();
     final tokens = usage?.totalTokens;
     return [
       if (worked case final worked?)
@@ -170,7 +206,7 @@ class TurnFooter extends StatelessWidget {
           text: l10n.turnSpeed(speed.toStringAsFixed(2)),
           hint: l10n.turnSpeedHint,
         ),
-      if (cost != null) _Stat(text: formatCost(cost), hint: l10n.turnCostHint),
+      if (costText != null) _Stat(text: costText, hint: l10n.turnCostHint),
       if (tokens != null && tokens > 0)
         _Stat(
           text: l10n.turnTokens(AgentStep.formatTokens(tokens, decimals: 2)),
@@ -275,6 +311,44 @@ class _LiveStatsState extends State<_LiveStats> {
       time.isNegative ? Duration.zero : time;
 }
 
+/// A faint icon beside the copy button, as it is: forks the conversation
+/// from the end of the turn.
+class _ForkButton extends StatelessWidget {
+  const _ForkButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return IdeHover(
+      message: context.l10n.turnFork,
+      child: HoverBuilder(
+        cursor: SystemMouseCursors.click,
+        builder: (context, hovered) => GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: hovered ? AppColors.hover : null,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: SvgPicture.asset(
+              _forkIcon,
+              width: 13,
+              height: 13,
+              colorFilter: ColorFilter.mode(
+                hovered ? AppColors.text : AppColors.textFaint,
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Stat extends StatelessWidget {
   const _Stat({
     this.icon,
@@ -320,66 +394,6 @@ class _Stat extends StatelessWidget {
           else
             Text(text, style: TextStyle(color: color, fontSize: 12)),
         ],
-      ),
-    );
-  }
-}
-
-class _CopyButton extends StatefulWidget {
-  const _CopyButton({required this.text});
-
-  final String text;
-
-  @override
-  State<_CopyButton> createState() => _CopyButtonState();
-}
-
-class _CopyButtonState extends State<_CopyButton> {
-  bool _copied = false;
-  Timer? _copiedTimer;
-
-  void _copy() {
-    unawaited(Clipboard.setData(ClipboardData(text: widget.text)));
-    _copiedTimer?.cancel();
-    setState(() => _copied = true);
-    _copiedTimer = Timer(const Duration(milliseconds: 1500), () {
-      if (mounted) setState(() => _copied = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    _copiedTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    return IdeHover(
-      message: _copied ? l10n.turnCopied : l10n.turnCopy,
-      child: HoverBuilder(
-        cursor: SystemMouseCursors.click,
-        builder: (context, hovered) => GestureDetector(
-          onTap: _copy,
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: hovered ? AppColors.hover : null,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: SvgPicture.asset(
-              _copied ? _checkIcon : _copyIcon,
-              width: 13,
-              height: 13,
-              colorFilter: ColorFilter.mode(
-                hovered || _copied ? AppColors.text : AppColors.textFaint,
-                BlendMode.srcIn,
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }

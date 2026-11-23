@@ -17,7 +17,6 @@ import '../claude_code/claude_sdk_tools.dart';
 import '../context_estimate.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
-import '../next_prompt.dart';
 import '../output_meter.dart';
 import '../queued_messages.dart';
 import 'pi_transport.dart';
@@ -43,7 +42,6 @@ class PiKernel
         QueuesMessages,
         RewindsConversation,
         ForksConversation,
-        SuggestsPrompts,
         LoadsHistory {
   PiKernel(this.descriptor, this._context, {this._start = startPiProcess})
     : _resumeFile = _context.resume?.path,
@@ -626,7 +624,6 @@ class PiKernel
     for (final timer in _dialogTimers.values) {
       timer.cancel();
     }
-    _next.dispose();
     _teardown();
     closeEvents();
   }
@@ -679,16 +676,6 @@ class PiKernel
   /// that is one steered into it.
   bool _answered = false;
 
-  /// What the user would likely send next, pi suggesting none itself.
-  late final NextPrompt _next = NextPrompt(emitInfoChanged);
-
-  @override
-  String? get promptSuggestion => _next.suggestion;
-
-  /// What the turn under way was asked, and the last of its answer.
-  String _asked = '';
-  String _answer = '';
-
   /// The items showing the user messages on the branch of pi's session it
   /// is on, in order: one's place from the end is its message's there.
   final List<String> _userItems = [];
@@ -723,7 +710,6 @@ class PiKernel
   /// Starts a turn with [turn].
   void _startTurn(KernelTurn turn) {
     _beginTurn(turn.id);
-    _asked = turn.text;
     emit(
       ItemUpserted(
         nextSeq,
@@ -832,8 +818,6 @@ class PiKernel
     _turnInput = _turnOutput = 0;
     _turnCost = 0;
     _answered = false;
-    _asked = _answer = '';
-    _next.clear();
     _meter.begin();
     _meter.pause();
     _outputReported = null;
@@ -976,10 +960,6 @@ class PiKernel
     }
     if (_queue.isNotEmpty && _health.status != KernelHealthStatus.failed) {
       _startTurn(_queue.removeAt(0));
-    }
-    // Waiting for the user: what they would likely send next.
-    if (!interrupted && _turn == null) {
-      _next.turnEnded(asked: _asked, answer: _answer, location: _cwd);
     }
     if (_releaseWanted) release();
   }
@@ -1338,7 +1318,6 @@ class PiKernel
       final id = 'pi:$_message:$index';
       if (block case {'type': 'text', 'text': final String text}
           when _messageTexts.contains(id)) {
-        if (text.trim().isNotEmpty) _answer = text;
         _texts.remove(id);
         emit(ItemCompleted(nextSeq, id, item: AssistantTextItem(text)));
       }

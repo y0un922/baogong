@@ -10,6 +10,7 @@ import 'package:baocode/ide/file_service.dart';
 import 'package:baocode/kernel/agent_kernel.dart' show KernelChoiceKind;
 import 'package:baocode/link/chat_codec.dart';
 import 'package:baocode/link/link_host.dart';
+import 'package:baocode/link/phone_push.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/workspace/project_workspace.dart';
 import 'package:baocode/workspace/workspace.dart';
@@ -117,28 +118,114 @@ void main() {
     expect(parsed.address.relays, offer.relays);
   });
 
-  test('one relay picked: kept to, told and bound to alone; automatic '
-      'again, all of BaoCode\'s', () async {
+  test('relays listed: the first bound to alone, all told and kept; '
+      'automatic again, all of BaoCode\'s', () async {
     await host.setEnabled(true);
     expect(platform.boundRelays, defaultLinkRelays);
-    // The one in use picked at first.
+    // The one in use listed at first.
     await host.setRelayMode(LinkRelayMode.pinned);
     expect(host.relays, [defaultLinkRelays.first]);
     expect(platform.boundRelays, host.relays);
 
-    await host.pinRelay(defaultLinkRelays.last);
+    await host.setPinnedRelays([defaultLinkRelays.last]);
     expect(platform.boundRelays, [defaultLinkRelays.last]);
 
-    // One at an address of one's own.
-    await host.pinRelay('https://relay.example.com');
-    expect(platform.boundRelays, ['https://relay.example.com']);
+    // One at an address of one's own first, BaoCode's after it.
+    const own = 'https://relay.example.com';
+    final binds = platform.binds;
+    await host.setPinnedRelays([own, defaultLinkRelays.last, own]);
+    expect(host.relays, [own, defaultLinkRelays.last]);
+    expect(host.activeRelay, own);
+    expect(platform.boundRelays, [own]);
+    expect(platform.binds, binds + 1);
     expect(platform.kept['relayMode'], 'pinned');
-    expect(platform.kept['pinnedRelay'], 'https://relay.example.com');
+    expect(platform.kept['pinnedRelays'], [own, defaultLinkRelays.last]);
+    expect(platform.kept['pinnedRelay'], own);
     final offer = (await host.beginPairing())!;
-    expect(offer.relays, ['https://relay.example.com']);
+    expect(offer.relays, [own, defaultLinkRelays.last]);
+
+    // One added after the one bound to: not bound again.
+    await host.setPinnedRelays([...host.relays, defaultLinkRelays.first]);
+    expect(platform.binds, binds + 1);
+    // None: nothing changed.
+    await host.setPinnedRelays(const []);
+    expect(host.relays, hasLength(3));
 
     await host.setRelayMode(LinkRelayMode.auto);
     expect(platform.boundRelays, defaultLinkRelays);
+  });
+
+  group('relays listed, in order', () {
+    const first = 'https://relay.example.com';
+    const second = 'https://relay.other.com';
+    const third = 'https://relay.third.com';
+
+    setUp(() async {
+      host.dispose();
+      host = LinkHost(
+        workspace: workspace,
+        platform: platform,
+        relayFailover: const Duration(milliseconds: 20),
+        relayRecheck: const Duration(milliseconds: 60),
+      );
+      await host.load();
+      await host.setEnabled(true);
+      await host.setPinnedRelays([first, second, third]);
+      expect(platform.boundRelays, [first]);
+    });
+
+    Future<void> settle() =>
+        Future<void>.delayed(const Duration(milliseconds: 150));
+
+    test('the next that answers when the one kept to is out of reach; '
+        'back to the first once it answers', () async {
+      platform.network.relaysDown.addAll([first, second]);
+      await platform.node!.changed();
+      await settle();
+      expect(host.activeRelay, third);
+      expect(platform.boundRelays, [third]);
+      // All still told: a phone reaches it through the one it fell to.
+      final offer = (await host.beginPairing())!;
+      expect(offer.relays, containsAll([first, second, third]));
+
+      platform.network.relaysDown.remove(first);
+      await settle();
+      expect(host.activeRelay, first);
+      expect(platform.boundRelays, [first]);
+      // Kept to the first: none looked at any more.
+      platform.probed.clear();
+      await settle();
+      expect(platform.probed, isEmpty);
+      // The list kept as it was.
+      expect(host.relays, [first, second, third]);
+    });
+
+    test('none answers: it stays, binding no other', () async {
+      final binds = platform.binds;
+      platform.network.relaysDown.addAll([first, second, third]);
+      await platform.node!.changed();
+      await settle();
+      expect(host.activeRelay, first);
+      expect(platform.binds, binds);
+      expect(platform.probed, containsAll([second, third]));
+    });
+
+    test('one that turns it away is left, and not gone back to', () async {
+      platform.network.relaysDenying[first] = 'banned';
+      await platform.node!.changed();
+      await settle();
+      expect(host.activeRelay, second);
+      await settle();
+      expect(host.activeRelay, second);
+      expect(platform.probed, isNot(contains(first)));
+
+      // The list changed: the first tried again.
+      platform.network.relaysDenying.clear();
+      await host.setPinnedRelays([second, first]);
+      expect(host.activeRelay, second);
+      await host.setPinnedRelays([first, second]);
+      expect(host.activeRelay, first);
+    });
   });
 
   test(
@@ -187,8 +274,8 @@ void main() {
     expect(host.linkPort, 51000);
   });
 
-  test('relays of one\'s own kept before there was a choice: the first '
-      'picked', () async {
+  test('relays of one\'s own kept before there was a choice: listed, in '
+      'order', () async {
     host.dispose();
     platform.kept = {
       'relays': ['https://relay.example.com', 'https://relay.other.com'],
@@ -196,6 +283,20 @@ void main() {
     host = LinkHost(workspace: workspace, platform: platform);
     await host.load();
     expect(host.relayMode, LinkRelayMode.pinned);
+    expect(host.relays, [
+      'https://relay.example.com',
+      'https://relay.other.com',
+    ]);
+  });
+
+  test('one relay picked before there were more: listed alone', () async {
+    host.dispose();
+    platform.kept = {
+      'relayMode': 'pinned',
+      'pinnedRelay': 'https://relay.example.com',
+    };
+    host = LinkHost(workspace: workspace, platform: platform);
+    await host.load();
     expect(host.relays, ['https://relay.example.com']);
   });
 
@@ -650,6 +751,7 @@ void main() {
           '/code/site/index.html': '<p>',
           '/code/api/main.go': 'package main',
           '/code/api/go.mod': 'module api',
+          '${made.path}/shot.png': 'png',
         }),
         paths: p.posix,
       ),
@@ -660,6 +762,15 @@ void main() {
     final listed =
         (await peer.call(LinkMethods.files, {'project': made.path}))! as Map;
     expect(listed['paths'], ['site/index.html', 'api/go.mod', 'api/main.go']);
+    // A picture in the workspace's own folder (an agent's working there),
+    // named from the project's path as the phone names it.
+    expect(
+      await peer.call(LinkMethods.image, {
+        'project': made.path,
+        'path': 'shot.png',
+      }),
+      containsPair('type', 'image/png'),
+    );
     expect(await peer.call(LinkMethods.folder, {'project': made.path}), {
       'folders': ['site', 'api'],
       'files': <String>[],
@@ -922,6 +1033,74 @@ void main() {
     await peer.done;
     expect(host.phones, isEmpty);
     expect(host.offer, isNull);
+  });
+
+  test('a phone away is pushed what its agents did, in its words', () async {
+    final peer = await pair();
+    final token = 'ab' * 32;
+    await peer.call(LinkMethods.push, {
+      'token': token,
+      'needsInput': '在 {device} 上等你处理',
+      'done': '在 {device} 上完成了',
+    });
+    // Kept with the phone.
+    expect(host.phones.single.push?.token, token);
+    expect(
+      ((platform.kept['phones']! as List).single as Map)['push'],
+      containsPair('token', token),
+    );
+    final state = LinkState.fromJson(
+      (await peer.call(LinkMethods.state))! as Map<String, Object?>,
+    );
+    final session = state.sessions.firstWhere(
+      (s) => s.title == 'Sticky user message on scroll',
+    );
+    final thread = workspace.threads.firstWhere(
+      (t) => t.title == session.title,
+    );
+    Future<void> turn(String text) async {
+      await peer.call(LinkMethods.send, {'session': session.id, 'text': text});
+      await _until(() => thread.shownStatus == ThreadStatus.running);
+      // Done with it sooner than its script would be.
+      await peer.call(LinkMethods.stop, {'session': session.id});
+      await _until(() => thread.shownStatus != ThreadStatus.running);
+    }
+
+    // In front: the phone tells of it itself.
+    await turn('one');
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(platform.posted, isEmpty);
+
+    // In the background: pushed, once.
+    await peer.call(LinkMethods.away, {'away': true});
+    await turn('two');
+    await _until(() => platform.posted.isNotEmpty);
+    final (url, body) = platform.posted.single;
+    expect(url.toString(), 'https://push.baocode.dev/v1/push');
+    final key = '${host.id}/${session.id}';
+    expect(body, {
+      'token': token,
+      'id': notificationIdOf(key),
+      'key': key,
+      'title': 'Sticky user message on scroll',
+      'body': '在 Test Mac 上完成了',
+    });
+
+    // Gone from the phone: forgotten, nothing more sent.
+    platform.answer = (_, _) => (410, {'gone': true});
+    await turn('three');
+    await _until(() => host.phones.single.push == null);
+    final sent = platform.posted.length;
+    await turn('four');
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(platform.posted, hasLength(sent));
+  });
+
+  test('a notification\'s number is the phone\'s', () {
+    // FNV-1a of the key's UTF-8, 31 bits: as the phone counts it.
+    expect(notificationIdOf(''), 0x811c9dc5 & 0x7fffffff);
+    expect(notificationIdOf('a'), 0xe40c292c & 0x7fffffff);
+    expect(notificationIdOf('bot:桌面/1'), notificationIdOf('bot:桌面/1'));
   });
 
   test('unpaired on the desktop, the phone is told and let go', () async {

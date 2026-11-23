@@ -14,7 +14,6 @@ import 'package:baocode/kernel/codex/codex_kernel.dart';
 import 'package:baocode/kernel/codex/codex_transport.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
-import 'package:baocode/kernel/next_prompt.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
 import 'package:baocode/usage/usage_ledger.dart';
@@ -263,12 +262,6 @@ codexKernel(
   KernelContext context = const KernelContext(cwd: '/project'),
 }) {
   var started = 0;
-  // No model asked what would come next, unless the test says.
-  if (NextPrompt.asker == null) {
-    NextPrompt.asker = (_, _, {cancel, model, exact = false, location}) async =>
-        'NONE';
-    addTearDown(() => NextPrompt.asker = null);
-  }
   final kernel = CodexKernel(
     _descriptor,
     context,
@@ -758,48 +751,6 @@ void main() {
       expect(step.output, 'Clicked');
       expect(step.status, ToolStatus.succeeded);
       expect(step.images.single.bytes, [1, 2, 3]);
-    });
-
-    test('what the user would likely send next is offered once the turn '
-        'ends, and dropped as they send', () async {
-      final asked = <String>[];
-      NextPrompt.asker =
-          (_, prompt, {cancel, model, exact = false, location}) async {
-            asked.add(prompt);
-            return '"Run the tests"';
-          };
-      addTearDown(() => NextPrompt.asker = null);
-      final codex = FakeCodex();
-      final (:kernel, transcript: _, events: _) = codexKernel([codex]);
-      kernel.send(const KernelTurn(id: 't1', text: 'Fix the bug'));
-      await pumpEventQueue();
-      for (final (method, item) in [
-        ('item/started', {'id': 'a1', 'type': 'agentMessage'}),
-        (
-          'item/completed',
-          {'id': 'a1', 'type': 'agentMessage', 'text': 'Fixed.'},
-        ),
-      ]) {
-        codex.emit({
-          'method': method,
-          'params': {'threadId': _thread, 'turnId': 'st1', 'item': item},
-        });
-      }
-      await pumpEventQueue();
-      expect(kernel.promptSuggestion, isNull);
-      codex.emit({
-        'method': 'turn/completed',
-        'params': {
-          'threadId': _thread,
-          'turn': {'id': 'st1', 'status': 'completed'},
-        },
-      });
-      await pumpEventQueue();
-      expect(asked.single, contains('Fix the bug'));
-      expect(asked.single, contains('Fixed.'));
-      expect(kernel.promptSuggestion, 'Run the tests');
-      kernel.send(const KernelTurn(id: 't2', text: 'Thanks'));
-      expect(kernel.promptSuggestion, isNull);
     });
 
     test('a recorded patch: its diff to review', () async {

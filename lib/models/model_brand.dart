@@ -17,6 +17,7 @@ abstract final class ModelBrand {
   /// OpenRouter…; null for a relay of no maker's.
   static String? ofProvider(ModelProvider provider) {
     if (provider.protocol == ProviderProtocol.codex) return 'openai';
+    if (provider.protocol == ProviderProtocol.antigravity) return 'google';
     if (provider.followsMagpie) return 'magpie';
     return ofUrl(provider.baseUrl);
   }

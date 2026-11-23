@@ -3,10 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bao_agent/bao_agent.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../chat/chat_models.dart' show ImageAttachment;
 import '../../models/launch_environment.dart';
+import '../../models/model_provider.dart';
+import '../../models/model_providers.dart';
 import '../../network/network_proxy_io.dart';
+import '../../network/tls.dart';
 import '../../usage/usage_ledger.dart';
 import 'claude_core_setting.dart';
 import 'claude_environment.dart';
@@ -124,7 +128,8 @@ Future<(String, int)> _run(
   ClaudeHaikuTools? tools,
   void Function()? onStart,
 }) async {
-  if (ClaudeCore.current() == ClaudeCore.builtin) {
+  if (ClaudeCore.current() == ClaudeCore.builtin ||
+      claudeHaikuBuiltinOnly(env, model)) {
     return _runBuiltin(
       system,
       prompt,
@@ -152,6 +157,8 @@ Future<(String, int)> _run(
       ? null
       : await ClaudeSettingsFile.write(settings);
   final proxy = await NetworkProxy.instance.environment();
+  // The machine's own certificates, as the app's requests trust them.
+  final certificates = await nodeCertificatesEnvironment(cli.environment);
   final Process process;
   try {
     process = await Process.start(
@@ -173,8 +180,10 @@ Future<(String, int)> _run(
       environment: {
         ...cli.environment,
         ...proxy,
+        ...certificates,
         if (env != null)
           for (final name in ClaudeModelVariables.inherited) name: '',
+        ...ClaudeEntrypoint.of(env, cli.environment),
         ...ClaudeEnvironment.stateDirectory(cli.environment),
       },
       includeParentEnvironment: Platform.isWindows,
@@ -315,4 +324,28 @@ Future<(String, int)> _runBuiltin(
     unawaited(subscription.cancel());
     agent.close();
   }
+}
+
+/// Whether [env] points Claude Code at an upstream only BaoCode's own core
+/// runs on, through the proxy's `/p/<provider>`, or [model] is one of
+/// such an upstream's (Antigravity's: see ModelProviders.builtinCoreOnly).
+@visibleForTesting
+bool claudeHaikuBuiltinOnly(
+  Map<String, String>? env,
+  String? model, {
+  ModelProviders? providers,
+}) {
+  providers ??= ModelProviders.current;
+  if (parseModelRef(model) case (:final provider, model: _)
+      when providers.provider(provider)?.protocol ==
+          ProviderProtocol.antigravity) {
+    return true;
+  }
+  final base = env?[ClaudeModelVariables.baseUrl];
+  if (base == null) return false;
+  final segments = Uri.tryParse(base)?.pathSegments ?? const [];
+  final at = segments.indexOf('p');
+  if (at < 0 || at + 1 >= segments.length) return false;
+  final provider = providers.provider(segments[at + 1]);
+  return provider != null && providers.builtinCoreOnly(provider);
 }

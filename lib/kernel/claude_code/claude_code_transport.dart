@@ -59,18 +59,20 @@ class ClaudeLaunch {
     this.attribution = CommitAttribution.agent,
     this.persist = true,
     this.env,
+    this.builtinCore = false,
     this.settingsPath,
+    this.promptPath,
     this.directories = const [],
     this.folderInstructions = true,
     this.readable = const [],
     this.instructions,
     this.ownPrompt = false,
     this.models = const [],
+    this.additionalModels = const [],
     this.sdkServers = const [],
     this.tools,
     this.userServers = false,
     this.allowed = const [],
-    this.promptSuggestions = true,
     this.variables = const {},
     this.switches = ExtensionSwitches.none,
   });
@@ -82,10 +84,6 @@ class ClaudeLaunch {
   /// The skills, MCP servers and tools turned off (Settings → Customize):
   /// permission rules and `skillOverrides` of the flag settings.
   final ExtensionSwitches switches;
-
-  /// Whether it suggests the next prompt after each turn
-  /// (`--prompt-suggestions`), each a request of its own.
-  final bool promptSuggestions;
 
   /// Folders it may read without asking, its tools' work outside them
   /// aside: where the long pastes it is told of are kept (PasteStore).
@@ -135,6 +133,10 @@ class ClaudeLaunch {
   /// first sending each a request of its own, to see that it is one: a
   /// provider's, as `modelPicker` rows, which it takes as known.
   final List<String> models;
+
+  /// Qualified model refs the local proxy can route, not picker rows.
+  final List<String> additionalModels;
+
   final String? permissionMode;
   final String? effort;
 
@@ -170,6 +172,12 @@ class ClaudeLaunch {
   /// own; null for Claude Code as the user set it up.
   final Map<String, String>? env;
 
+  /// Whether it runs on BaoCode's own core whatever the setting says: an
+  /// upstream only it speaks to as it should (Antigravity's, whose prompt
+  /// and requests the CLI's would get the account turned away for), as
+  /// the session's model or one its roles pick (ModelProviders.builtinCoreOnly).
+  final bool builtinCore;
+
   /// A file the flag settings ([settings]) are written to, given in their
   /// place: so that a key in them is in no command line.
   final String? settingsPath;
@@ -183,15 +191,39 @@ class ClaudeLaunch {
     null => false,
   };
 
+  /// A file [systemPrompt] is written to, given in its place: so that a
+  /// long one (a bot's) does not take the command line past what the
+  /// system starts a process with.
+  final String? promptPath;
+
+  /// What it is told as its system prompt ([ownPrompt]), or after Claude
+  /// Code's own: [appendedSystemPrompt], how to work on servers where
+  /// BaoCode gives the agent its command, then [instructions].
+  String get systemPrompt => ownPrompt
+      ? instructions ?? ''
+      : [
+          appendedSystemPrompt,
+          if (agentCommand) servers,
+          if (instructions case final instructions?
+              when instructions.isNotEmpty)
+            instructions,
+        ].join('\n\n');
+
   /// This launch with its flag settings in the file at [path].
   ClaudeLaunch withSettingsFile(String path) => copyWith(settingsPath: path);
 
+  /// This launch with [systemPrompt] in the file at [path].
+  ClaudeLaunch withPromptFile(String path) => copyWith(promptPath: path);
+
   /// This launch in [cwd], or with [env], or its flag settings in the file
-  /// at [settingsPath].
+  /// at [settingsPath], or its prompt in the file at [promptPath], or with
+  /// [instructions].
   ClaudeLaunch copyWith({
     String? cwd,
     Map<String, String>? env,
     String? settingsPath,
+    String? promptPath,
+    String? instructions,
   }) => ClaudeLaunch(
     cwd: cwd ?? this.cwd,
     resume: resume,
@@ -204,17 +236,20 @@ class ClaudeLaunch {
     attribution: attribution,
     persist: persist,
     env: env ?? this.env,
+    builtinCore: builtinCore,
     settingsPath: settingsPath ?? this.settingsPath,
+    promptPath: promptPath ?? this.promptPath,
     directories: directories,
     folderInstructions: folderInstructions,
     readable: readable,
-    instructions: instructions,
+    instructions: instructions ?? this.instructions,
     ownPrompt: ownPrompt,
     models: models,
+    additionalModels: additionalModels,
     sdkServers: sdkServers,
     tools: tools,
+    userServers: userServers,
     allowed: allowed,
-    promptSuggestions: promptSuggestions,
     variables: variables,
     switches: switches,
   );
@@ -230,7 +265,7 @@ class ClaudeLaunch {
 
   /// Given as flag settings, over the user's own: one `--settings`.
   Map<String, Object?> get settings => {
-    if (_agentCommand) 'hooks': sshHook,
+    if (agentCommand) 'hooks': sshHook,
     'attribution': ?_attribution,
     'useAutoModeDuringPlan': ?autoModeDuringPlan,
     'alwaysThinkingEnabled': ?thinking,
@@ -273,9 +308,9 @@ class ClaudeLaunch {
   }
 
   /// A provider's session's models, let through the user's own
-  /// `availableModels`: those it is switched to and starts on, and its
-  /// roles' (see [allowedModels]).
-  List<String> get allowlist => allowedModels(env, [...models, ?model]);
+  /// `availableModels`: its picker rows, routed refs and roles at launch.
+  List<String> get allowlist =>
+      allowedModels(env, [...models, ...additionalModels, ?model]);
 
   /// The user's own setup set empty, in the shell's environment or their
   /// settings' `env`: `CLAUDE_CODE_EFFORT_LEVEL` would hold every request
@@ -329,8 +364,6 @@ class ClaudeLaunch {
     'stdio',
     '--thinking-display',
     thinkingDisplay,
-    // A prompt_suggestion message after each turn.
-    if (promptSuggestions) '--prompt-suggestions',
     if (permissionMode case final mode?) ...['--permission-mode', mode],
     if (model case final model? when model != 'default') ...['--model', model],
     if (effort case final effort?) ...['--effort', effort],
@@ -365,11 +398,11 @@ class ClaudeLaunch {
       '--allowedTools',
       sdkServers.map((name) => 'mcp__$name').join(','),
     ],
-    if (ownPrompt) ...[
-      '--system-prompt',
-      instructions ?? '',
+    if (promptPath case final path?) ...[
+      ownPrompt ? '--system-prompt-file' : '--append-system-prompt-file',
+      path,
     ] else ...[
-      '--append-system-prompt',
+      ownPrompt ? '--system-prompt' : '--append-system-prompt',
       systemPrompt,
     ],
   ];
@@ -380,21 +413,11 @@ class ClaudeLaunch {
   static const appendedSystemPrompt =
       '$citingCode\n\n$fileLinks\n\n$formatting';
 
-  /// What goes after Claude Code's own prompt: [appendedSystemPrompt], how
-  /// to work on servers where BaoCode gives the agent its command, then
-  /// [instructions].
-  String get systemPrompt => [
-    appendedSystemPrompt,
-    if (_agentCommand) servers,
-    if (instructions case final instructions? when instructions.isNotEmpty)
-      instructions,
-  ].join('\n\n');
-
   /// The variable of BaoCode's command for its agents (AgentHost's
   /// `commandVariable`): there for an agent BaoCode can be reached from.
   static const agentCommandVariable = AgentInstructions.commandVariable;
 
-  bool get _agentCommand => variables.containsKey(agentCommandVariable);
+  bool get agentCommand => variables.containsKey(agentCommandVariable);
 
   /// Has the agent work on servers in a terminal the user watches, not in
   /// its shell (a hook in [settings] turns ssh there away).

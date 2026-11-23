@@ -263,7 +263,6 @@ class _CompactRow extends StatelessWidget {
         );
       },
     );
-    row = SelectionContainer.disabled(child: row);
     if (files == null || path == null) return row;
     return FileLinkMenuRegion(
       menu: files.menuFor(

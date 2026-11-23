@@ -47,15 +47,32 @@ typedef SshConnector = Future<SshConnection> Function(
   void Function(String message)? onProgress,
 });
 
+/// Opens what the `code` command was given in a terminal of [host]'s: its
+/// folder there and its arguments, [client] its connection; says what went
+/// wrong, for the command to print, or null.
+typedef SshCodeHandler = Future<String?> Function(
+  String host,
+  RemoteClient client,
+  String cwd,
+  List<String> args,
+);
+
 /// A host reached over SSH, and its projects' services ([ProjectHost]).
 /// The connection is made when first asked for, and shared by all that
 /// host's projects. Lost, it is made again to the same session there
 /// (see [SshConnection]): what ran goes on. A session gone, a new one is
 /// made (after 1, 2, 4… seconds, up to a minute), and [reconnected] says so.
 class SshHost extends ChangeNotifier implements ProjectHost {
-  SshHost(this.host, {required this._connect, this.maxBackoff = _max});
+  SshHost(
+    this.host, {
+    required this._connect,
+    this.maxBackoff = _max,
+    this.downAfter = _downAfter,
+    this.onCode,
+  });
 
   static const _max = Duration(minutes: 1);
+  static const _downAfter = Duration(seconds: 10);
 
   /// As the user gave it (see [SshTarget]).
   final String host;
@@ -109,6 +126,13 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   final SshConnector _connect;
   final Duration maxBackoff;
 
+  /// How long a lost connection is tried again before it is [down].
+  final Duration downAfter;
+
+  /// Opens what the `code` command was given in a terminal of the host's
+  /// (see [RemoteClient.onCode]), asking [client] of its paths.
+  final SshCodeHandler? onCode;
+
   SshHostState get state => _state;
   SshHostState _state = SshHostState.idle;
 
@@ -123,6 +147,19 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   /// When the next attempt is, while [SshHostState.reconnecting].
   DateTime? get retryAt => _retryAt;
   DateTime? _retryAt;
+
+  /// Whether the host is to be shown as not reachable: [SshHostState.failed],
+  /// or [SshHostState.reconnecting] for longer than [downAfter] (what is
+  /// asked of it meanwhile waits, and the user is to know). A connection
+  /// lost a moment is still just being made again.
+  bool get down =>
+      _state == SshHostState.failed ||
+      (_state == SshHostState.reconnecting && _losing && _downTimer == null);
+
+  /// Running from when the connection was lost until [downAfter]; null
+  /// once it has run (or while not reconnecting).
+  Timer? _downTimer;
+  bool _losing = false;
 
   SshConnection? _connection;
   StreamSubscription<void>? _changes;
@@ -204,6 +241,10 @@ class SshHost extends ChangeNotifier implements ProjectHost {
         throw const SshConnectException(SshFailure.server, 'Closed');
       }
       _connection = connection;
+      if (onCode case final onCode?) {
+        final client = connection.client;
+        client.onCode = (cwd, args) => onCode(host, client, cwd, args);
+      }
       _failures = 0;
       _permanent = false;
       _error = null;
@@ -316,6 +357,19 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   }
 
   void _set(SshHostState state) {
+    if (state == SshHostState.reconnecting) {
+      if (!_losing) {
+        _losing = true;
+        _downTimer = Timer(downAfter, () {
+          _downTimer = null;
+          notifyListeners();
+        });
+      }
+    } else {
+      _losing = false;
+      _downTimer?.cancel();
+      _downTimer = null;
+    }
     _state = state;
     notifyListeners();
   }
@@ -348,6 +402,7 @@ class SshHosts extends ChangeNotifier {
     SshPasswords? passwords,
     this.configFile,
     this.configIncludes,
+    this.downAfter = SshHost._downAfter,
   }) : _connectOverride = connect,
        passwords = passwords ?? SshPasswords() {
     this.passwords.savedIdOf = _savedPasswordId;
@@ -357,6 +412,13 @@ class SshHosts extends ChangeNotifier {
   static SshHosts instance = SshHosts();
 
   final SshConnector? _connectOverride;
+
+  /// Each host's [SshHost.downAfter].
+  final Duration downAfter;
+
+  /// Opens what the `code` command was given in the hosts' terminals (the
+  /// app's windows do, see AppWindows.handleRemoteCode).
+  SshCodeHandler? onCode;
 
   /// What `ssh` asks while signing in to the hosts.
   final SshPasswords passwords;
@@ -464,8 +526,17 @@ class SshHosts extends ChangeNotifier {
 
   /// The host named [host] (connected when first asked for).
   SshHost operator [](String host) => _hosts.putIfAbsent(host, () {
-    final made = SshHost(host, connect: _connectTo)
-      ..addListener(notifyListeners);
+    final made = SshHost(
+      host,
+      connect: _connectTo,
+      downAfter: downAfter,
+      onCode: (host, client, cwd, args) async {
+        final open = onCode;
+        return open == null
+            ? 'BaoCode cannot open files from here.'
+            : open(host, client, cwd, args);
+      },
+    )..addListener(notifyListeners);
     return made;
   });
 

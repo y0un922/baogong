@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import '../../chat/chat_models.dart';
+import '../../chat/compaction_text.dart';
+import '../../l10n/l10n.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../output_meter.dart';
@@ -40,6 +42,9 @@ class ClaudeTranslator {
 
   /// What a question was answered with in full access, the user not asked,
   /// as earlier versions did: a question so answered shows as skipped.
+  /// A workflow's card's [AgentItem.agentType] (see [_workflowProgress]).
+  static const workflowAgentType = 'workflow';
+
   static const unattendedAnswer =
       'The user has given full access and is not here to answer questions. '
       'Do not ask again: go with what seems best, say what you assumed, '
@@ -126,6 +131,11 @@ class ClaudeTranslator {
   final Map<String, int> _thinkingTokens = {};
   final Map<String, int> _textLength = {};
 
+  /// What a text block streaming has said while it is only blank, not
+  /// shown yet: some models write a line break or two before a tool call,
+  /// which would show as an empty row and break a run of steps.
+  final Map<String, String> _blankText = {};
+
   final Map<String, _Tool> _tools = {};
   final Map<String, _Agent> _agents = {};
 
@@ -133,6 +143,11 @@ class ClaudeTranslator {
   /// task's): one continued (`SendMessage`) runs again on a call of its
   /// own, and goes on in the card of the first.
   final Map<String, String> _agentCalls = {};
+
+  /// The card of each skill run from a slash command in a subagent of its
+  /// own (`context: fork`), by the id its messages give as their parent
+  /// (`forked-command-<name>`): no call started it (see [_forkedSkill]).
+  final Map<String, String> _forkedCommands = {};
   final Set<String> _denied = {};
 
   /// Calls made and not answered yet: those of a stopped turn never are.
@@ -184,17 +199,26 @@ class ClaudeTranslator {
       'Your plan is now shown to the user, who will start it or say what '
       'should change in their next message. End your turn here without '
       'repeating the plan: do not start implementing it, and do not call '
-      'ExitPlanMode again.';
+      'ExitPlanMode again. Approval does not go through this tool: the user '
+      'starts the plan in the app, and their message then tells you plan '
+      'mode is over.';
 
   /// Marks the note sent with the message that starts a plan.
   static const _planStarted = 'The user has started your plan';
 
   /// The note sent with the message that starts the plan in [path]: not
-  /// shown, it tells the model planning is over.
+  /// shown, it tells the model planning is over. It says outright that the
+  /// plan-mode reminders earlier on no longer hold, and that ExitPlanMode
+  /// is not to be called: a model that took the read-only ones as standing
+  /// called it again and again for an approval it already had.
   static String planStartedNote(String path) =>
-      '<system-reminder>$_planStarted: plan mode is over. Carry out the '
-      '${path.isEmpty ? 'plan you put to them' : 'plan in $path'} now.'
-      '</system-reminder>';
+      '<system-reminder>$_planStarted: plan mode is over and the plan is '
+      'approved. The plan-mode instructions earlier in this conversation '
+      '(read-only, superseding other instructions) no longer apply: you may '
+      'edit files, run commands and use any tool. Do not call ExitPlanMode: '
+      'there is nothing left to approve, and it would only fail. Carry out '
+      'the ${path.isEmpty ? 'plan you put to them' : 'plan in $path'} now, '
+      'from its first step.</system-reminder>';
 
   /// Whether [text] says the plan is started (see [planStartedNote]).
   static bool startsPlan(String text) => text.contains(_planStarted);
@@ -340,7 +364,8 @@ class ClaudeTranslator {
   }
 
   void translate(Map<String, Object?> message) {
-    final parent = message['parent_tool_use_id'] as String?;
+    final given = message['parent_tool_use_id'] as String?;
+    final parent = _forkedCommands[given] ?? given;
     switch (message['type']) {
       case 'stream_event' when parent == null:
         _streamEvent(
@@ -500,7 +525,7 @@ class ClaudeTranslator {
     }
     for (final id in [..._textLength.keys]) {
       _textLength.remove(id);
-      emit(ItemCompleted(nextSeq(), id));
+      if (_blankText.remove(id) == null) emit(ItemCompleted(nextSeq(), id));
     }
     for (final id in [..._unanswered]) {
       if (_inBackground(id)) continue;
@@ -602,7 +627,7 @@ class ClaudeTranslator {
             _messageBlocks[index] = id;
             (_unclaimed['$_messageId:text'] ??= []).add(id);
             _textLength[id] = 0;
-            _put(id, const AssistantTextItem(''), streaming: true);
+            _blankText[id] = '';
           case 'tool_use':
             final toolId = block['id'] as String;
             final name = block['name'] as String;
@@ -644,7 +669,17 @@ class ClaudeTranslator {
             if (offset == null) return;
             final text = delta['text'] as String? ?? '';
             _textLength[id] = offset + text.length;
-            emit(TextDelta(nextSeq(), id, offset, text));
+            if (_blankText[id] case final blank?) {
+              final written = blank + text;
+              if (written.trim().isEmpty) {
+                _blankText[id] = written;
+              } else {
+                _blankText.remove(id);
+                _put(id, AssistantTextItem(written), streaming: true);
+              }
+            } else {
+              emit(TextDelta(nextSeq(), id, offset, text));
+            }
         }
       case 'content_block_stop':
         _blockSince = DateTime.now();
@@ -652,7 +687,8 @@ class ClaudeTranslator {
         if (id == null) return;
         if (_thoughts.containsKey(id)) {
           _completeThought(id, null);
-        } else if (_textLength.remove(id) != null) {
+        } else if (_textLength.remove(id) != null &&
+            _blankText.remove(id) == null) {
           emit(ItemCompleted(nextSeq(), id));
         }
     }
@@ -784,7 +820,8 @@ class ClaudeTranslator {
             if (text.isNotEmpty) {
               _put(id, NoticeItem(NoticeKind.command, text), parent: parent);
             }
-          } else if (_textLength.remove(id) != null) {
+          } else if (_textLength.remove(id) != null &&
+              _blankText.remove(id) == null) {
             emit(ItemCompleted(nextSeq(), id, item: AssistantTextItem(text)));
           } else if (text.trim().isNotEmpty) {
             _put(id, AssistantTextItem(text), parent: parent);
@@ -829,6 +866,7 @@ class ClaudeTranslator {
         _thinkingStarted.remove(id);
         _thinkingTokens.remove(id);
         _textLength.remove(id);
+        _blankText.remove(id);
         emit(ItemRemoved(nextSeq(), id));
       } else if (_streamedCalls.remove(id)) {
         _dropCall(id);
@@ -857,6 +895,7 @@ class ClaudeTranslator {
       _thinkingStarted.remove(id);
       _thinkingTokens.remove(id);
       _textLength.remove(id);
+      _blankText.remove(id);
       emit(ItemRemoved(nextSeq(), id));
     }
   }
@@ -1007,12 +1046,12 @@ class ClaudeTranslator {
     }
     // A subagent's message to the agent (SendMessage), not the user's: by
     // what it was given to do.
-    if (_agentMessage.firstMatch(trimmed) case final match?) {
-      final from = match[1]!;
+    if (agentMessage(trimmed) case (:final from, :final session, :final text)) {
       final item = UserMessageItem(
-        text: match[2]!.trim(),
+        text: text,
         sentAt: _sentAt(message),
         fromAgent: _agents[_agentCalls[from]]?.item.description ?? from,
+        fromSession: session,
       );
       _put(id, item);
       if (replaying) _replayPrompt(id, item, message);
@@ -1073,6 +1112,29 @@ class ClaudeTranslator {
             description: _string(input['description']),
             agentType: _string(input['subagent_type']),
             prompt: _string(input['prompt']),
+          );
+        }
+        _putAgent(id);
+        return;
+      // A workflow (a script running subagents, in the background): a
+      // card as a subagent's, the ones it runs in it (see
+      // [_workflowProgress]).
+      case 'Workflow':
+        final agent = _agents[id] ??= _Agent(
+          AgentItem(
+            description: _workflowTitle(input) ?? 'Workflow',
+            id: id,
+            agentType: workflowAgentType,
+            status: replaying ? CommandStatus.succeeded : CommandStatus.running,
+            startedAt: replaying ? null : tool.startedAt,
+            background: true,
+          ),
+        );
+        // The streamed start has no input: the whole message fills it in.
+        if (agent.item.prompt == null) {
+          agent.item = agent.item.copyWith(
+            description: _workflowTitle(input),
+            prompt: _string(input['script']) ?? _string(input['name']),
           );
         }
         _putAgent(id);
@@ -1235,12 +1297,14 @@ class ClaudeTranslator {
       // Its verb the web kind's, in the app's language.
       'WebFetch' => ToolCallItem(
         kind: ToolKind.web,
+        tool: name,
         target: _string(input['url']) ?? '',
         status: status,
         output: output,
       ),
       'WebSearch' => ToolCallItem(
         kind: ToolKind.web,
+        tool: name,
         label: tense('Searched the web', 'Searching the web'),
         target: _string(input['query']) ?? '',
         status: status,
@@ -1252,8 +1316,10 @@ class ClaudeTranslator {
         target: _string(input['skill']) ?? _string(input['command']) ?? '',
         status: status,
       ),
+      // Loads tools' definitions, MCP tools' mostly: drawn with their mark.
       'ToolSearch' => ToolCallItem(
         kind: ToolKind.search,
+        tool: name,
         label: tense('Looked up tools', 'Looking up tools'),
         target: _string(input['query']) ?? '',
         status: status,
@@ -1422,6 +1488,37 @@ class ClaudeTranslator {
         );
         _putAgent(id);
         return;
+      // A skill run in a subagent of its own: its card (a kept session's
+      // has none yet), with what the subagent answered.
+      case 'Skill'
+          when _agents.containsKey(id) || structured?['status'] == 'forked':
+        final agent = _agents[id] ??= _Agent(
+          AgentItem(
+            description: '/${_string(tool.input['skill']) ?? ''}',
+            id: id,
+          ),
+        );
+        agent.item = agent.item.copyWith(
+          status: outcome == _Outcome.done
+              ? CommandStatus.succeeded
+              : CommandStatus.failed,
+          result: _string(structured?['result']) ?? text,
+        );
+        _putAgent(id);
+        return;
+      // Launched, it reports in a notification; one that failed to start
+      // says why.
+      case 'Workflow':
+        final agent = _agents[id];
+        if (agent == null) return;
+        if (outcome != _Outcome.done) {
+          agent.item = agent.item.copyWith(
+            status: CommandStatus.failed,
+            result: text,
+          );
+          _putAgent(id);
+        }
+        return;
       case 'Edit' || 'MultiEdit' || 'Write' || 'NotebookEdit'
           when outcome == _Outcome.done && structured != null:
         if (_diff(id, tool, structured)) return;
@@ -1517,7 +1614,11 @@ class ClaudeTranslator {
       _toolItem(
         tool,
         outcome,
-        output: outcome == _Outcome.done ? _short(text) : _tail(text),
+        output: outcome != _Outcome.done
+            ? _tail(text)
+            : tool.name == 'WebSearch'
+            ? _searchOutput(text)
+            : _short(text),
         images: _resultImages(block['content']),
         imageFiles: _savedImages(block['content']),
       ),
@@ -1799,20 +1900,27 @@ class ClaudeTranslator {
         }
       case 'compact_boundary':
         if (_activity?.kind == KernelActivityKind.compacting) _report(null);
+        // As it came, else as the transcript keeps it.
         final meta = _map(message['compact_metadata']);
-        final before = claudeInt(meta['pre_tokens']);
-        final after = claudeInt(meta['post_tokens']);
+        final kept = _map(message['compactMetadata']);
+        final auto = (meta['trigger'] ?? kept['trigger']) == 'auto';
+        final note = CompactionNote(
+          auto: auto,
+          // Refused by the API before the window set was full.
+          tooLong:
+              auto && (meta['reason'] ?? kept['reason']) == 'prompt_too_long',
+          before: claudeInt(meta['pre_tokens']) ?? claudeInt(kept['preTokens']),
+          after: claudeInt(meta['post_tokens']),
+          window:
+              claudeInt(meta['context_window']) ??
+              claudeInt(kept['contextWindow']),
+        );
         _put(
           uuid,
           NoticeItem(
             NoticeKind.compaction,
-            [
-              meta['trigger'] == 'auto'
-                  ? 'Conversation compacted automatically'
-                  : 'Conversation compacted',
-              if (before != null)
-                '${_tokens(before)}${after == null ? '' : ' → ${_tokens(after)}'} tokens',
-            ].join(' · '),
+            note.describe(englishLocalizations),
+            compaction: note,
           ),
         );
       case 'api_retry' when !replaying:
@@ -1841,6 +1949,12 @@ class ClaudeTranslator {
             content,
           ),
         );
+      // The model's safeguards flagged a message, answered on another: as
+      // the CLI says, which and until when.
+      case 'model_refusal_fallback':
+        if (_string(message['content']) case final text? when text.isNotEmpty) {
+          _put(uuid, NoticeItem(NoticeKind.warning, text));
+        }
       case 'notification' when !replaying:
         if (_string(message['text']) case final text? when text.isNotEmpty) {
           _put(
@@ -1880,10 +1994,21 @@ class ClaudeTranslator {
       case 'task_started' when !replaying:
         final taskId = message['task_id'] as String;
         final agent = message['task_type'] == 'local_agent';
+        final workflow = message['task_type'] == 'local_workflow';
         final call = message['tool_use_id'] as String?;
-        // A subagent's task is its card's, continued or not.
-        final card = agent ? _agentCard(taskId, call) : null;
+        // A subagent's task is its card's, continued or not; a workflow's
+        // too; a skill's run in a subagent of its own, a card of its own.
+        final card = agent || workflow
+            ? _agentCard(taskId, call) ??
+                  (agent ? _forkedSkill(taskId, call, message) : null)
+            : null;
         if (card != null) _agentCalls[taskId] = card;
+        if (_agents[card] case final run? when workflow) {
+          run.item = run.item.copyWith(
+            description: _string(message['description']),
+          );
+          _putAgent(card!);
+        }
         _tasks[taskId] = KernelTask(
           id: taskId,
           description: _string(message['description']) ?? '',
@@ -1895,15 +2020,16 @@ class ClaudeTranslator {
           status: CommandStatus.running,
           startedAt: DateTime.now(),
           toolUseId: card ?? call,
-          background: message['is_backgrounded'] == true,
+          // A workflow runs in the background, whatever it says.
+          background: workflow || message['is_backgrounded'] == true,
           outputFile: _string(message['output_file']) ?? _taskOutputs[taskId],
         );
         _reportTasks();
         // Continued: at work again, in its card.
         if (_agents[card] case final continued? when card != call) {
-          continued.item = continued.item.copyWith(
-            status: CommandStatus.running,
-          );
+          continued.item = continued.item.status == CommandStatus.running
+              ? continued.item
+              : continued.item.continuedAt(DateTime.now());
           _putAgent(card!);
         }
         if (message['is_backgrounded'] == true) {
@@ -1920,7 +2046,10 @@ class ClaudeTranslator {
         }
         final toolUseId = _agentCard(taskId, message['tool_use_id'] as String?);
         final agent = toolUseId == null ? null : _agents[toolUseId];
-        if (agent != null) {
+        if (agent != null && agent.item.agentType == workflowAgentType) {
+          _workflowProgress(agent, message);
+          _putAgent(toolUseId!);
+        } else if (agent != null) {
           agent.item = agent.item.copyWith(
             tokens: claudeInt(usage['total_tokens']),
             toolUses: claudeInt(usage['tool_uses']),
@@ -1976,6 +2105,41 @@ class ClaudeTranslator {
   String? _agentCard(String? taskId, String? toolUseId) =>
       _agents.containsKey(toolUseId) ? toolUseId : _agentCalls[taskId];
 
+  /// A skill run in a subagent of its own (`context: fork`), as the task
+  /// [started] says: a subagent's card, the one of the Skill call [call]
+  /// that ran it, else (run from a slash command, `/code-review`) one of
+  /// its own, which its messages go in once it is done (the CLI gives
+  /// them only then). Null for a task that is no such skill's.
+  String? _forkedSkill(
+    String taskId,
+    String? call,
+    Map<String, Object?> started,
+  ) {
+    final skill = call == null ? null : _tools[call];
+    final description = _string(started['description']);
+    final String id;
+    if (call == null) {
+      if (description == null || !description.startsWith('/')) return null;
+      id = taskId;
+      _forkedCommands['forked-command-${description.substring(1)}'] = id;
+    } else if (skill?.name == 'Skill') {
+      id = call;
+    } else {
+      return null;
+    }
+    _agents[id] = _Agent(
+      AgentItem(
+        description: description ?? '/${_string(skill?.input['skill']) ?? ''}',
+        id: id,
+        agentType: _string(started['subagent_type']),
+        prompt: _string(started['prompt']),
+        startedAt: skill?.startedAt ?? DateTime.now(),
+      ),
+    );
+    _putAgent(id);
+    return id;
+  }
+
   /// The subagent [toolUseId] started, if one did, now runs on its own.
   void _agentToBackground(String? toolUseId) {
     final agent = toolUseId == null ? null : _agents[toolUseId];
@@ -2025,6 +2189,14 @@ class ClaudeTranslator {
     final tool = toolUseId == null ? null : _tools[toolUseId];
     final card = _agentCard(taskId, toolUseId);
     if (_agents[card] case final agent?) {
+      // A workflow's subagents still at work when it ended end with it.
+      if (agent.item.agentType == workflowAgentType) {
+        for (final MapEntry(:key, :value) in [...agent.children.entries]) {
+          if (value is AgentItem && value.status == CommandStatus.running) {
+            agent.children[key] = value.copyWith(status: status);
+          }
+        }
+      }
       agent.item = agent.item.copyWith(
         status: status,
         tokens: claudeInt(usage['total_tokens']),
@@ -2053,6 +2225,69 @@ class ClaudeTranslator {
   }
 
   void _reportTasks() => emit(TasksReported(nextSeq(), [..._tasks.values]));
+
+  /// What a workflow's card says it is: the workflow's name, else its
+  /// script's `meta` description.
+  static String? _workflowTitle(Map<String, Object?> input) {
+    if (_string(input['name']) case final name? when name.isNotEmpty) {
+      return name;
+    }
+    final script = _string(input['script']);
+    if (script == null) return null;
+    return RegExp(r'''description\s*:\s*(['"`])((?:(?!\1).)+)\1''')
+        .firstMatch(script)
+        ?.group(2);
+  }
+
+  /// A workflow's progress on its card: what it does now, and its
+  /// subagents as the CLI lists them (each time all of them), each as a
+  /// subagent's card in it.
+  void _workflowProgress(_Agent workflow, Map<String, Object?> message) {
+    final usage = _map(message['usage']);
+    workflow.item = workflow.item.copyWith(
+      tokens: claudeInt(usage['total_tokens']),
+      toolUses: claudeInt(usage['tool_uses']),
+      activity: _string(message['description']),
+    );
+    final listed = _list(message['workflow_progress']);
+    if (listed.isEmpty) return;
+    DateTime? at(Object? ms) => switch (claudeInt(ms)) {
+      final ms? => DateTime.fromMillisecondsSinceEpoch(ms),
+      _ => null,
+    };
+    workflow.children.clear();
+    for (final raw in listed) {
+      final agent = _map(raw);
+      if (agent['type'] != 'workflow_agent') continue;
+      final state = _string(agent['state']);
+      final startedAt = at(agent['startedAt']);
+      final ended = state == 'done' || state == 'error';
+      final last = at(agent['lastProgressAt']);
+      final id = '${workflow.item.id}/${agent['index']}';
+      workflow.children[id] = AgentItem(
+        description: _string(agent['label']) ?? 'Subagent',
+        id: id,
+        agentType: _string(agent['agentType']),
+        prompt: _string(agent['promptPreview']),
+        status: switch (state) {
+          'done' => CommandStatus.succeeded,
+          'error' => CommandStatus.failed,
+          _ => CommandStatus.running,
+        },
+        // Queued until it starts.
+        activity: startedAt == null && !ended
+            ? 'Queued'
+            : _string(agent['phaseTitle']),
+        startedAt: ended ? null : startedAt,
+        duration: ended && startedAt != null && last != null
+            ? last.difference(startedAt)
+            : null,
+        model: _ownModelOf(_string(agent['model'])),
+        result: _string(agent['resultPreview']) ?? _string(agent['error']),
+        background: true,
+      );
+    }
+  }
 
   // --- Helpers ------------------------------------------------------------------------
 
@@ -2117,9 +2352,26 @@ class ClaudeTranslator {
 
   /// A subagent's message as the agent is given it: its id, and what it
   /// says.
+  /// Another conversation's has its session too (`session="…"`).
   static final _agentMessage = RegExp(
-    r'^<agent-message from="([^"]*)">([\s\S]*)</agent-message>$',
+    r'^<agent-message from="([^"]*)"(?: session="([^"]*)")?>'
+    r'([\s\S]*)</agent-message>$',
   );
+
+  /// [text] as a message another agent sent (`<agent-message from="…">`,
+  /// a subagent's or another conversation's): who from (and that one's
+  /// session, another conversation's), and what it says; null for any
+  /// other.
+  static ({String from, String? session, String text})? agentMessage(
+    String text,
+  ) => switch (_agentMessage.firstMatch(text.trim())) {
+    final match? => (
+      from: match[1]!,
+      session: match[2],
+      text: match[3]!.trim(),
+    ),
+    null => null,
+  };
 
   static String? _tag(String text, String tag) {
     final start = text.indexOf('<$tag>');
@@ -2193,6 +2445,20 @@ class ClaudeTranslator {
     return text.length > 2000 ? '${text.substring(0, 2000)}…' : text;
   }
 
+  /// A web search's output shortened as [_short], but its `Links: [...]`
+  /// line kept whole however long: the sites' icons are read from it, and
+  /// fifteen results with redirect URLs run past 2000 characters.
+  static String? _searchOutput(String text) {
+    if (text.isEmpty) return null;
+    if (text.length <= 2000) return text;
+    final lines = text.split('\n');
+    final at = lines.indexWhere((line) => line.startsWith('Links:'));
+    if (at < 0) return _short(text);
+    final links = lines[at];
+    final rest = _short([...lines.take(at), ...lines.skip(at + 1)].join('\n'));
+    return rest == null ? links : '$rest\n$links';
+  }
+
   /// The end of a long output, where errors are.
   static String _tail(String text) {
     const max = 4000;
@@ -2241,9 +2507,6 @@ class ClaudeTranslator {
     'failed' || 'killed' || 'stopped' => CommandStatus.failed,
     _ => null,
   };
-
-  static String _tokens(int tokens) =>
-      tokens >= 1000 ? '${(tokens / 1000).toStringAsFixed(1)}k' : '$tokens';
 }
 
 enum _Outcome { running, done, failed, denied }

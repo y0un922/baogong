@@ -33,6 +33,7 @@ import '../../ide/ide_modern_ui.dart';
 import '../../ide/ide_panes.dart';
 import '../../ide/ide_tab_bar.dart'
     show IdeEditorTab, IdeTabStrip, ideTabDescriptions;
+import '../../ide/ide_view_state.dart' show IdeViewState;
 import '../../ide/save_copy.dart';
 import '../../ide/tab_reorder.dart';
 import '../../ide/tab_strip_scroll.dart';
@@ -168,35 +169,95 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
   bool _dragging = false;
   ({double x, double width})? _dragStart;
 
-  /// Whether it is over the conversations: once the room was short for
-  /// longer than [overlayDelay]. Short a while only (the window's sidebar
-  /// giving way to it, which takes its animation; a window opening), it
-  /// stays beside them, narrower, not covering the window for a moment.
+  /// Whether it is over the conversations: asked for while the room is
+  /// short for it beside them, once short for longer than [overlayDelay].
+  /// Short a while only (the window's sidebar giving way to it, which takes
+  /// its animation; a window opening), it stays beside them, narrower, not
+  /// covering the window for a moment.
   bool _overlay = false;
 
-  /// Runs while the room is short: over them once it ends.
+  /// Whether it gave way to the conversations: shown beside them, the room
+  /// went short (the window or the pane made narrower, a window opening
+  /// narrow), and it was not asked for since. Out of their way, as hidden,
+  /// until the room is back (beside them again) or it is asked for (over
+  /// them). See [AgentSidePanel.gaveWay].
+  bool _gaveWay = false;
+
+  /// Whether it was asked for since the room went short: over the
+  /// conversations then, not out of their way.
+  bool _askedShort = false;
+
+  /// [AgentSidePanel.asks] (its pane's) as last seen.
+  late int _asksSeen = _asks;
+
+  int get _asks => switch (widget.conversation) {
+    final conversation? => _panel.asksIn(conversation),
+    null => _panel.asks,
+  };
+
+  /// Runs while the room is short: settled once it ends.
   Timer? _short;
 
   /// Runs a while from when it was built: a window opening gets its size
   /// meanwhile.
   Timer? _young;
 
+  /// [short]: whether it is wanted, and the room short for it beside the
+  /// conversations.
   void _roomShort(bool short) {
+    final asks = _asks;
+    final asked = asks != _asksSeen;
+    _asksSeen = asks;
     if (!short) {
       _short?.cancel();
       _short = null;
       _overlay = false;
+      _askedShort = false;
+      _setGaveWay(false);
       return;
     }
-    if (_overlay || _short != null) return;
-    // Short for good: over them at once, not beside them for a moment.
-    if (!widget.roomComing && _young == null) {
-      _overlay = true;
+    if (asked) _askedShort = true;
+    if (_overlay) return;
+    if (_gaveWay) {
+      // Asked for again: over them, as asked.
+      if (_askedShort) {
+        _setGaveWay(false);
+        _overlay = true;
+      }
       return;
     }
+    if (_short != null) return;
+    // Short for good: settled at once, not beside them for a moment.
+    if (!widget.roomComing && _young == null) return _settle();
     _short = Timer(AgentSidePanelArea.overlayDelay, () {
       _short = null;
-      if (mounted) setState(() => _overlay = true);
+      if (mounted) setState(_settle);
+    });
+  }
+
+  /// The room short for good: over the conversations where it was asked
+  /// for meanwhile, else out of their way.
+  void _settle() {
+    if (_askedShort) {
+      _overlay = true;
+    } else {
+      _setGaveWay(true);
+    }
+  }
+
+  void _setGaveWay(bool gaveWay) {
+    if (gaveWay == _gaveWay) return;
+    _gaveWay = gaveWay;
+    _tellGaveWay();
+  }
+
+  /// [_gaveWay] to the panel, for its toggles: after the frame, as it is
+  /// laid out.
+  void _tellGaveWay() {
+    final panel = _panel;
+    final conversation = widget.conversation;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      panel.setGaveWay(conversation, mounted && _gaveWay);
     });
   }
 
@@ -208,10 +269,15 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
 
   @override
   void dispose() {
+    if (_gaveWay) _tellGaveWay();
     _short?.cancel();
     _young?.cancel();
+    _rail.dispose();
     super.dispose();
   }
+
+  /// The rail, for what is under it (see [ChatColumnInset.rail]).
+  final ChatRail _rail = ChatRail();
 
   AgentSidePanel get _panel => widget.panel;
 
@@ -250,13 +316,14 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
     builder: (context, _) => LayoutBuilder(
       builder: (context, constraints) {
         final room = constraints.maxWidth;
-        final shown = _shownHere && !widget.hidden;
-        // Over the conversations only where it cannot be beside them at
-        // its least; else beside them, narrower than it would be where
-        // they need the room.
+        final wanted = _shownHere && !widget.hidden;
+        // Where it cannot be beside the conversations at its least, out of
+        // their way, or over them as asked for; else beside them, narrower
+        // than it would be where they need the room.
         _roomShort(
-          shown && room - AgentSidePanel.minWidth < AgentSidePanelArea.minChat,
+          wanted && room - AgentSidePanel.minWidth < AgentSidePanelArea.minChat,
         );
+        final shown = wanted && !_gaveWay;
         final overlay = _overlay;
         final atLeft = _panel.atLeft;
         final beside = shown && !overlay;
@@ -281,6 +348,7 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
               child: ChatColumnInset(
                 right: rail && !atLeft ? AgentSidePanelArea.railInset : 0,
                 left: rail && atLeft ? AgentSidePanelArea.railInset : 0,
+                rail: rail ? _rail : null,
                 child: widget.child,
               ),
             ),
@@ -290,7 +358,7 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
                 left: atLeft ? AgentSidePanelArea.railRight : null,
                 right: atLeft ? null : AgentSidePanelArea.railRight,
                 top: widget.railTop ?? AgentSidePanelArea.defaultRailTop,
-                child: widget.rail!,
+                child: ChatRailReport(rail: _rail, child: widget.rail!),
               ),
             if (shown) ...[
               if (overlay)
@@ -952,6 +1020,7 @@ class AgentSidePanelView extends StatelessWidget {
         files,
         path,
         text: edit != null && edit.dirty ? edit.controller.document.text : null,
+        context: context,
       ).then<void>(
         (_) {},
         onError: (Object error) {
@@ -1294,6 +1363,14 @@ class AgentSidePanelView extends StatelessWidget {
     onSource: (source) => tab.source = source,
     diffScroll: tab.diffScroll,
     onDiffScrolled: (offset) => tab.diffScroll = offset,
+    // Where the file's tab was left before.
+    viewState: tab.diff ? IdeViewState.empty : panel.viewStateOf(tab.path),
+    onPreviewLeft: tab.diff
+        ? null
+        : (line) => panel.keepViewState(
+            tab.path,
+            (kept) => kept.copyWith(previewLine: line),
+          ),
     agentEdit: tab.diff || tab.request.local || tab.request.readOnly
         ? null
         : IdeAgentEdit.inSession(session, tab.path),

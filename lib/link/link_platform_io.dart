@@ -168,6 +168,47 @@ class IoLinkPlatform implements LinkPlatform {
   final Map<String, (DateTime, String?)> _branches = {};
 
   @override
+  Future<(int, Object?)> postJson(Uri url, Map<String, Object?> body) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
+    try {
+      final request = await client.postUrl(url)
+        ..headers.contentType = ContentType.json
+        ..add(utf8.encode(jsonEncode(body)));
+      final response = await request.close().timeout(
+        const Duration(seconds: 30),
+      );
+      final text = await response.transform(utf8.decoder).join();
+      Object? json;
+      try {
+        json = text.isEmpty ? null : jsonDecode(text);
+      } on FormatException {
+        json = null;
+      }
+      return (response.statusCode, json);
+    } finally {
+      client.close();
+    }
+  }
+
+  @override
+  Future<bool> probeRelay(String url) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request = await client.getUrl(Uri.parse('$url/ping'));
+      final response = await request.close().timeout(
+        const Duration(seconds: 10),
+      );
+      await response.drain<void>();
+      return response.statusCode == 200;
+    } on Object {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  @override
   String? branchOf(String folder) {
     final now = DateTime.now();
     if (_branches[folder] case (final at, final branch)

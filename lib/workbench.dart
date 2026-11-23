@@ -24,6 +24,7 @@ import 'chat/aside_layers.dart';
 import 'chat/chat_keys.dart';
 import 'chat/chat_models.dart' show FileChange, FileChangeKind;
 import 'chat/chat_screen.dart';
+import 'chat/session_links.dart';
 import 'chat/chat_session.dart' show ChatSession, ComposerMessage;
 import 'chat/composer/composer_files.dart' show CodeReference, ComposerFile;
 import 'chat/composer/composer_mock_data.dart' show Suggestion;
@@ -129,6 +130,8 @@ import 'window/code_args.dart';
 import 'window/window_settings.dart';
 import 'remote/open_remote.dart';
 import 'remote/project_host.dart';
+import 'remote/remote_browser.dart';
+import 'remote/remote_browser_view.dart';
 import 'remote/remote_customization_disk.dart';
 import 'remote/remote_files.dart';
 import 'remote/remote_location.dart';
@@ -161,9 +164,9 @@ import 'workspace/project_workspace.dart' show ProjectWorkspace;
 import 'workspace/title_bar_double_click.dart';
 import 'workspace/window_controls.dart';
 import 'workspace/window_header/window_header.dart';
+import 'workspace/session_links_host.dart';
 import 'workspace/workspace.dart';
 import 'workspace/workspace_dialog.dart';
-import 'ide/host_paths.dart';
 import 'remote/local_tools.dart';
 import 'remote/port_forwards.dart';
 
@@ -313,6 +316,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// [AgentSidePanel.asks] as last seen.
   int _sidePanelAsks = 0;
 
+  /// [AgentSidePanel.gaveWay], the window's, as last seen.
+  bool _sidePanelGaveWay = false;
+
   /// The docked sidebar is sliding out, giving way to the side panel: the
   /// panel's room grows meanwhile (see [AgentSidePanelArea.roomComing]).
   bool _sidebarGivingWay = false;
@@ -350,6 +356,18 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   Workspace get _workspace => widget.workspace;
 
+  /// The conversations' names and states, for each conversation's steps,
+  /// cards and strip to show and open (see [SessionLinks]).
+  late final _sessionLinks = WorkspaceSessionLinks(
+    _workspace,
+    onOpen: _openLinkedAgent,
+  );
+
+  /// A conversation named in another's steps or cards, opened as the
+  /// sidebar would: in this window.
+  void _openLinkedAgent(AgentThread thread) =>
+      _agentWindow ? _showInWindow(thread) : _openAgent(thread);
+
   /// The IDE's workspaces by folder, each kept once shown; [_noFolder]'s is
   /// its empty window.
   final Map<String, IdeWorkspace> _ideSpaces = {};
@@ -371,7 +389,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// own).
   String get _ideFolder => _ideWindow
       ? widget.window!.folder ?? _noFolder
-      : _workspace.ideFolder ?? _noFolder;
+      : _agentThread?.project.path ?? _workspace.ideFolder ?? _noFolder;
   IdeWorkbenchState? get _ide => _ideKeys[_ideFolder]?.currentState;
 
   AppWindows? get _windows => widget.windows;
@@ -394,11 +412,30 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   int get _viewId => widget.window?.viewId ?? 0;
 
-  /// Whether the IDE shows: always in its own window; without them, as the
+  /// Whether the IDE shows: always in its own window; in an agent's, once
+  /// its Open in Fast Ide is clicked ([_agentInIde]); without them, as the
   /// workspace's layout says.
   bool get _showsIde =>
       _ideWindow ||
+      (_agentWindow && _agentInIde) ||
       (!_multi && !_agentWindow && _workspace.layout == WorkspaceLayout.ide);
+
+  /// Whether an agent's window shows its project's IDE in place of its
+  /// conversation: its own, not the workspace's layout, which is the main
+  /// window's (the IDE opening there was the window behind coming up).
+  bool _agentInIde = false;
+
+  /// An agent's window's Open in Fast Ide: its project's IDE here, the
+  /// agent the tab of its chat.
+  void _showAgentIde() {
+    final thread = _agentThread;
+    if (thread == null) return;
+    _workspace.openIdeChat(thread.project.path, thread);
+    setState(() => _agentInIde = true);
+  }
+
+  /// Back to Chat in an agent's window: its conversation again.
+  void _showAgentChat() => setState(() => _agentInIde = false);
 
   WindowSettings get _windowSettings =>
       WindowSettings.parse(widget.settings?.files?.settings.values ?? const {});
@@ -437,13 +474,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       // A remote project's on its host.
       backendFor: (location) => ProjectHost.of(location).terminals(backend),
       // A workspace's in its first folder (its own is only its settings).
-      pathOf: (location) => switch (_workspace.workspaceAt(location)) {
+      pathOf: (location) => switch (_workspace.multiRootAt(location)) {
         final multi? => multi.folders.firstOrNull ?? location,
         null => RemoteLocation.pathOf(location),
       },
       // New Terminal there asks which of them.
       foldersOf: (location) =>
-          _workspace.workspaceAt(location)?.folders ?? const [],
+          _workspace.multiRootAt(location)?.folders ?? const [],
     )..onLastClosed = _focusCurrentChat,
     _ => null,
   }?..addListener(_terminalsChanged);
@@ -512,13 +549,18 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// [_sidePanelLast]).
   void _sidePanelChanged() {
     final asked = _sidePanel.asks != _sidePanelAsks;
+    final gaveWay = _sidePanel.gaveWay();
     if (_sidePanel.isShown == _sidePanelShown &&
         _sidePanel.layout == _layout &&
         !asked) {
-      // Each pane's own, shown or hidden: their panes built anew.
-      if (_panesSidePanels && mounted) setState(() {});
+      // Each pane's own, shown or hidden, and the window's given way to
+      // the conversations or back: the toggles built anew.
+      if ((_panesSidePanels || gaveWay != _sidePanelGaveWay) && mounted) {
+        setState(() => _sidePanelGaveWay = gaveWay);
+      }
       return;
     }
+    _sidePanelGaveWay = gaveWay;
     final sidebarDocked = _sidebarDocked;
     _layout = _sidePanel.layout;
     if (asked) {
@@ -542,16 +584,20 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Toggle Side Panel, as the title bars' toggles show it: shown where it
   /// gave way, it is asked for again. Of agents side by side, the focused
   /// one's.
-  void _toggleSidePanel() => _sidePanel.isShown && !_sidePanelHidden
+  void _toggleSidePanel() =>
+      _sidePanel.isShown && !_sidePanelHidden && !_sidePanel.givenWay
       ? _sidePanel.hide()
       : _sidePanel.show();
 
   /// Whether the side panel shows for [thread]: of agents side by side, its
   /// pane's own; else the window's, the focused agent's.
   bool _sidePanelShownFor(AgentThread thread) => _panesSidePanels
-      ? _sidePanel.shownIn(thread.session) && !_sidePanelHidden
+      ? _sidePanel.shownIn(thread.session) &&
+            !_sidePanelHidden &&
+            !_sidePanel.gaveWay(thread.session)
       : _sidePanelShown &&
             !_sidePanelHidden &&
+            !_sidePanel.gaveWay() &&
             (_agentThread != null || identical(thread, _workspace.current));
 
   /// [thread]'s pane's side panel: hidden where it is its agent's already,
@@ -577,6 +623,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Back in the app, the list picks up sessions started elsewhere (e.g.
   /// in a terminal) meanwhile.
   AppLifecycleListener? _lifecycle;
+
+  /// Picks up the open ones talked in elsewhere while the app stays in
+  /// front too (beside a terminal, say: nothing is resumed to notice),
+  /// looking at their files every so often.
+  Timer? _sessionScan;
 
   /// Notifies of the agents that want the user, keeps the count on the
   /// app's icon and the tray icon (see lib/notifications/): the main
@@ -656,6 +707,14 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       _lifecycle = AppLifecycleListener(
         onResume: () => unawaited(_workspace.refresh()),
       );
+      _sessionScan = Timer.periodic(const Duration(seconds: 15), (_) {
+        // Only while the app is there to show it: not in the background,
+        // where the platform may pause timers anyway.
+        if (WidgetsBinding.instance.lifecycleState ==
+            AppLifecycleState.resumed) {
+          unawaited(_workspace.refreshIfChanged(modifiedAt));
+        }
+      });
       WidgetsBinding.instance.addPostFrameCallback((_) => _afterFirstFrame());
       _stopUpdateOffers = widget.settings?.updates?.listen(
         _notifications,
@@ -674,20 +733,51 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _workspace.addListener(_restoreSidePanel);
     _restoreSidePanel();
     _workspace.addListener(_syncWorkspaceFolders);
+    _workspace.addListener(_reloadedElsewhere);
   }
 
-  /// The IDE and side panel of a multi-folder workspace show the folders
-  /// it has now.
+  /// A conversation read anew elsewhere in the workspace (its session
+  /// swapped under a thread that stays): its chat and side panel as they
+  /// were (see [_reload]).
+  void _reloadedElsewhere() {
+    for (final thread in _workspace.threads) {
+      final was = _chatSessions[thread];
+      if (was == null || identical(was, thread.session)) continue;
+      _chatSessions[thread] = thread.session;
+      _sidePanel.carryOver(was, thread.session);
+      // A chat of the conversation before is not shown again: built anew.
+      _chatKeys[thread] = GlobalKey();
+      _ideChatWidgets.remove(thread);
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// The IDE and side panel of a multi-folder workspace, or of a project
+  /// with folders added to it, show the folders it has now.
   void _syncWorkspaceFolders() {
     for (final MapEntry(key: folder, value: space) in _ideSpaces.entries) {
-      if (_workspace.workspaceAt(folder) case final multi?) {
+      if (_workspace.multiRootAt(folder) case final multi?) {
         space.roots = multi.folders;
+      } else if (space.projectFolder) {
+        space.roots = const [];
       }
     }
     for (final multi in _workspace.workspaces) {
       _sidePanel.setRoots(multi.path, multi.folders);
     }
+    // Those folders were taken out of too, theirs alone again.
+    final added = {..._workspace.projectsWithFolders};
+    for (final path in {..._projectsWithFolders, ...added}) {
+      _sidePanel.setRoots(
+        path,
+        _workspace.multiRootAt(path)?.folders ?? const [],
+      );
+    }
+    _projectsWithFolders = added;
   }
+
+  /// The projects with folders added to them, as last synced.
+  Set<String> _projectsWithFolders = const {};
 
   /// Create Workspace...: asks for its name and folders, then opens it in
   /// the IDE ([inIde]) or has a new agent work in it.
@@ -701,13 +791,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     }
   }
 
-  /// Add Folder to Workspace...: one picked in the file manager.
+  /// Add Folder to Workspace...: one picked in the file manager, added
+  /// to the workspace, or to the project's folder.
   Future<void> _addWorkspaceFolder(String location) async {
     final path = await WindowControls.pickDirectory();
     if (path == null || !mounted) return;
-    if (_workspace.workspaceAt(location) case final multi?) {
-      _workspace.addWorkspaceFolder(multi, path);
-    }
+    _workspace.addFolder(location, path);
   }
 
   IdeRecentWorkspace? _recentWorkspace(String path) =>
@@ -856,6 +945,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   @override
   void dispose() {
+    _sessionLinks.dispose();
     ChannelGate.current?.removeListener(_channelGateChanged);
     for (final edits in _ideAgentEdits.values) {
       edits.dispose();
@@ -877,6 +967,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _chatCode?.dispose();
     _workspace.removeListener(_restoreSidePanel);
     _workspace.removeListener(_syncWorkspaceFolders);
+    _workspace.removeListener(_reloadedElsewhere);
     _givingWayTimer?.cancel();
     _sidePanel
       ..removeListener(_sidePanelChanged)
@@ -889,6 +980,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _looseChatFolder.dispose();
     _ideHistory.dispose();
     _lifecycle?.dispose();
+    _sessionScan?.cancel();
     _attention?.dispose();
     _stopUpdateOffers?.call();
     if (_tipsPresenter case final presenter?) {
@@ -1470,7 +1562,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       project.root,
       pathContext: RemoteLocation.pathsOf(project.path),
     ),
-  )..roots = _workspace.workspaceOf(project)?.folders;
+  )..roots = _workspace.multiRootAt(project.path)?.folders;
 
   final Map<String, FileMentions> _fileMentions = {};
 
@@ -2179,6 +2271,16 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
               label: 'Create Workspace...',
               run: () => unawaited(_createWorkspace(inIde: true)),
             ),
+          // To a workspace, or to a project's folder (see
+          // [Workspace.multiRootAt]).
+          if (folder != _noFolder && _workspace.canAddFolders(folder))
+            IdeCommand(
+              id: IdeWorkbench.addRootFolderCommandId,
+              category: 'Workspaces',
+              label: 'Add Folder to Workspace...',
+              enabled: WindowControls.canPickDirectory,
+              run: () => unawaited(_addWorkspaceFolder(folder)),
+            ),
           command('workbench.action.openRecent', _showOpenRecent),
           command(
             'workbench.action.clearRecentlyOpened',
@@ -2244,7 +2346,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _workspace.closeIdeFolder();
   }
 
+  /// Open Folder… in the IDE: a remote project's host's folders browsed,
+  /// as VS Code's in a remote window; else this machine's.
   Future<void> _pickIdeFolder() async {
+    if (_remoteBeside(_ideFolder) case (:final host, :final directory)) {
+      _openRemoteProject(host: host, directory: directory, inIde: true);
+      return;
+    }
     final held = _newWindowHeld;
     final path = await WindowControls.pickDirectory();
     if (path == null || !mounted) return;
@@ -2431,20 +2539,30 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// Asks where to save [doc] of [space] (Save As…, an untitled file's
   /// first save): where it is, or in the folder; noted among the recent.
-  Future<String?> _askSavePath(IdeWorkspace space, IdeDocument doc) async {
-    // A remote project's folders are not this machine's, where the panel is.
-    final local = space.files is! IdeHostFiles;
+  Future<String?> _askSavePath(
+    IdeWorkspace space,
+    IdeDocument doc, {
+    String? host,
+  }) async {
+    final directory = doc.isUntitled
+        ? (space.hasFolder ? space.root : null)
+        : space.paths.dirname(doc.path);
+    final name = doc.isUntitled ? doc.path : space.paths.basename(doc.path);
+    // A remote project's: its host's folders, not this machine's, where
+    // the save panel is.
+    if (host != null) {
+      return _browseRemote(
+        RemoteBrowseRequest(
+          host: host,
+          saveName: name,
+          directory: directory,
+          connect: SshHosts.instance[host].reconnect,
+        ),
+      );
+    }
     final path = await WindowControls.pickSaveFile(
-      directory: !local
-          ? null
-          : doc.isUntitled
-          ? (space.hasFolder ? space.root : null)
-          : p.dirname(doc.path),
-      name: doc.isUntitled
-          ? doc.path
-          : local
-          ? p.basename(doc.path)
-          : hostPathsFor(doc.path).basename(doc.path),
+      directory: directory,
+      name: name,
     );
     if (path != null) _workspace.addRecentFile(path);
     return path;
@@ -2887,7 +3005,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           // progress in the window's toasts.
           child: IdeNotificationsScope(
             notifications: _notifications,
-            child: content,
+            child: SessionLinks(host: _sessionLinks, child: content),
           ),
         );
       },
@@ -2913,7 +3031,18 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         ),
         showToggle: showToggle,
       );
-      return narrow ? _buildNarrow(body: chat) : _buildWide(body: chat);
+      // Its project's IDE, once opened here, kept built while the
+      // conversation shows (as the main window keeps its own).
+      final folder = _ideFolder;
+      final ide = _agentInIde;
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          if (ide || _ideSpaces.containsKey(folder))
+            _buildIde(folder, _ideSpace(folder), shown: ide),
+          if (!ide) narrow ? _buildNarrow(body: chat) : _buildWide(body: chat),
+        ],
+      );
     }
     final folder = _ideFolder;
     // An IDE window has its folder's alone.
@@ -2972,9 +3101,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                 ? Project.at(space.root)
                 : _workspace.projectAt(path),
             visible: shown,
-            // An IDE window's way back shows the chat's window.
+            // An IDE window's way back shows the chat's window; an agent's,
+            // its conversation.
             onBack: _ideWindow
                 ? _windows!.showChat
+                : _agentWindow
+                ? _showAgentChat
                 : () => _workspace.layout = WorkspaceLayout.chat,
             backLabel: _ideWindow ? context.l10n.cmdShowChatWindow : null,
             pinned: _pinned,
@@ -2986,16 +3118,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             commands: _ideCommandsFor(path),
             recentFolders: _workspace.recentFolders,
             recentWorkspaceOf: _recentWorkspace,
-            onAddFolder: _workspace.workspaceAt(path) == null
-                ? null
-                : () => unawaited(_addWorkspaceFolder(path)),
-            onRemoveFolder: switch (_workspace.workspaceAt(path)) {
-              final multi? => (folder) => _workspace.removeWorkspaceFolder(
-                multi,
-                folder,
-              ),
-              null => null,
-            },
+            onAddFolder: _workspace.canAddFolders(path)
+                ? () => unawaited(_addWorkspaceFolder(path))
+                : null,
+            onRemoveFolder: _workspace.canAddFolders(path)
+                ? (folder) => _workspace.removeFolder(path, folder)
+                : null,
             onOpenRecent: (folder) =>
                 _openIdeFolder(folder, held: _newWindowHeld),
             settings: widget.settings?.files?.settings,
@@ -3377,6 +3505,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             files: host.files(root),
             languages: widget.languagesFor?.call(folder),
             git: widget.gitFor?.call(folder),
+            // A folder of this machine's: those added to it its roots
+            // besides (see [Workspace.multiRootAt]).
+            roots: _workspace.multiRootAt(folder)?.folders ?? const [],
+            gitOf: host.name == null
+                ? (folder) => widget.gitFor?.call(folder)
+                : null,
+            projectFolder: host.name == null,
             repositoryDetection: _repositoryDetection(host),
             openWorktree: (path) =>
                 widget.gitFor?.call(RemoteLocation.of(host.name, path)),
@@ -3390,7 +3525,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     }
     if (_ideWindow) _trackEdited(space);
     if (folder == _noFolder) space.addListener(() => _followLooseFile(space));
-    return space..askSavePath = (doc) => _askSavePath(space, doc);
+    return space
+      ..askSavePath = (doc) => _askSavePath(space, doc, host: host.name);
   });
 
   /// Where the IDE's chat is without a folder open: in that of the file in
@@ -3482,8 +3618,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       project: project,
       ide: ide,
       hasFolder: _ideFolder != _noFolder,
-      onBack: _ideWindow ? windows!.showChat : null,
+      onBack: _ideWindow
+          ? windows!.showChat
+          : _agentWindow
+          ? _showAgentChat
+          : null,
       backLabel: _ideWindow ? context.l10n.cmdShowChatWindow : null,
+      onOpenIde: _agentWindow ? _showAgentIde : null,
       onNewWindow: windows == null
           ? null
           : () => unawaited(windows.newWindow()),
@@ -3505,7 +3646,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       onToggleTerminal: ide || _terminals?.root == null
           ? null
           : _toggleTerminal,
-      sidePanelShown: _sidePanel.isShown && !_sidePanelHidden,
+      sidePanelShown:
+          _sidePanel.isShown && !_sidePanelHidden && !_sidePanel.givenWay,
       onToggleSidePanel: ide || (agent ?? _workspace.current) == null
           ? null
           : _toggleSidePanel,
@@ -3556,6 +3698,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Each window's own: the same agent may show in two.
   GlobalKey _chatKey(AgentThread thread) => _chatKeys[thread] ??= GlobalKey();
   final Expando<GlobalKey> _chatKeys = Expando();
+
+  /// Each thread's session as last carried over into its chat (see
+  /// [_reloadedElsewhere]).
+  final Expando<ChatSession> _chatSessions = Expando();
 
   void _endDrag() {
     setState(() {
@@ -3627,12 +3773,14 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     bool inIde = false,
     ValueChanged<String>? onOpen,
     String? host,
+    String? directory,
     bool switchTo = false,
   }) {
     final held = _newWindowHeld;
     late final OpenRemoteFlow flow;
     flow = OpenRemoteFlow(
       show: showQuickPick,
+      browse: _browseRemote,
       l10n: context.l10n,
       added: _workspace.sshHosts,
       labelOf: _workspace.hostLabel,
@@ -3660,10 +3808,50 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       },
     );
     if (host != null) {
-      flow.startAt(host);
+      flow.startAt(host, directory: directory);
     } else {
       unawaited(flow.start());
     }
+  }
+
+  /// Where a folder is picked beside [location] (a project's, the IDE's):
+  /// on its host, in the folder holding it; null where it is this
+  /// machine's, for the file manager.
+  ({String host, String directory})? _remoteBeside(String? location) {
+    final host = location == null ? null : RemoteLocation.hostOf(location);
+    if (host == null || host.isEmpty) return null;
+    final path = RemoteLocation.pathOf(location!);
+    return (
+      host: host,
+      directory: RemoteLocation.pathsOf(location).dirname(path),
+    );
+  }
+
+  /// The remote browser for [request]: the host by its name, the folders
+  /// browsed or opened there lately at its left, what it shows kept.
+  Future<String?> _browseRemote(RemoteBrowseRequest request) async {
+    if (!mounted) return null;
+    final host = request.host;
+    final recent = <String>{
+      for (final location in [
+        ..._workspace.recentFolders,
+        for (final project in _workspace.projects) project.path,
+      ])
+        if (RemoteLocation.hostOf(location) == host)
+          RemoteLocation.pathOf(location),
+    };
+    return showRemoteBrowser(
+      context,
+      request,
+      hostLabel: _workspace.hostLabel(host),
+      // Those browsed, then those opened as projects there.
+      locations: [
+        ...{..._workspace.remoteLocations(host), ...recent},
+      ],
+      onLocations: (paths) => _workspace.keepRemoteLocations(host, paths),
+      view: RemoteBrowserView.fromJson(_workspace.remoteBrowserView),
+      onView: (view) => _workspace.keepRemoteBrowserView(view.toJson()),
+    );
   }
 
   /// The hosts of `~/.ssh/config`, as last read: edited there, not with
@@ -3762,6 +3950,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (host == null || host.isEmpty) return;
     final flow = OpenRemoteFileFlow(
       show: showQuickPick,
+      browse: _browseRemote,
       l10n: context.l10n,
       hosts: SshHosts.instance,
       onOpen: (location) {
@@ -3842,10 +4031,28 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// (set as the item is built).
   Rect _statusAnchor = Rect.zero;
 
+  /// Open Folder… on the chat's side: on the current agent's host, its
+  /// folders browsed (as VS Code's in a remote window), else this
+  /// machine's in the file manager.
   Future<void> _openFolder() async {
+    if (_remoteBeside(_workspace.current?.project.path) case (
+      :final host,
+      :final directory,
+    )) {
+      _openRemoteProject(
+        host: host,
+        directory: directory,
+        onOpen: (location) => unawaited(_openedFolder(location)),
+      );
+      return;
+    }
     final path = await WindowControls.pickDirectory();
     if (path == null || !mounted) return;
-    final thread = await _workspace.openFolder(path);
+    await _openedFolder(path);
+  }
+
+  Future<void> _openedFolder(String location) async {
+    final thread = await _workspace.openFolder(location);
     _closeDrawer();
     if (mounted) _watchFirstTurn(thread);
   }
@@ -3914,6 +4121,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                           workspace: _workspace,
                           project: thread.project,
                           agent: thread,
+                          onOpenIde: _agentWindow ? _showAgentIde : null,
                         ),
                       ],
                       if (showToggle && _sidebarAtRight) ...[
@@ -4257,7 +4465,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   );
 
   Widget _sidePanelRailOf(AgentThread thread) {
-    final multi = _workspace.workspaceAt(thread.project.path);
+    final multi = _workspace.multiRootAt(thread.project.path);
     return SidePanelRail(
       onSelect: (section) {
         if (_agentThread == null && !identical(thread, _workspace.current)) {
@@ -4285,7 +4493,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     bool windowTitleBar = true,
   }) {
     final location = thread.project.path;
-    final multi = _workspace.workspaceAt(location);
+    final multi = _workspace.multiRootAt(location);
     // Its IDE's repositories, found in the folders' subfolders as they are
     // looked for.
     if (_ideSpaces[multi?.path ?? location] case final space?) {
@@ -4330,7 +4538,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   }) {
     final (:files, :paths) = _projectFiles(thread);
     final location = thread.project.path;
-    final multi = _workspace.workspaceAt(location);
+    final multi = _workspace.multiRootAt(location);
     return AgentSidePanelView(
       panel: _sidePanel,
       session: thread.session,
@@ -4391,7 +4599,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           : () => unawaited(_addWorkspaceFolder(location)),
       onRemoveFolder: multi == null
           ? null
-          : (folder) => _workspace.removeWorkspaceFolder(multi, folder),
+          : (folder) => _workspace.removeFolder(location, folder),
       titleBarInset: titleBarInset,
       leading: leading,
       windowTitleBar: windowTitleBar,
@@ -4503,7 +4711,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     listenable: _worktreeSignals(thread),
     builder: (context, _) {
       final project = thread.project;
-      final multi = _workspace.workspaceOf(project);
+      final multi = _workspace.multiRootAt(project.path);
       final git = multi == null ? _shownGit(thread) : null;
       return ChatQuotaBar(
         session: thread.session,
@@ -4536,7 +4744,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// What changes which worktree [thread]'s repositories show: where its
   /// agent works, the worktree picked, and the worktrees read.
   Listenable _worktreeSignals(AgentThread thread) {
-    final multi = _workspace.workspaceAt(thread.project.path);
+    final multi = _workspace.multiRootAt(thread.project.path);
     return Listenable.merge([
       _agentWorkPathOf(thread),
       _sidePanel,
@@ -4610,6 +4818,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   }
 
   final Map<String, Future<bool> Function(String)> _projectFileChecks = {};
+  final Map<String, Future<bool> Function(String)> _projectFolderChecks = {};
   final Map<String, Future<Uint8List> Function(String)> _projectByteReaders =
       {};
 
@@ -4651,13 +4860,15 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         files,
         paths: paths,
       ),
+      folderExists: _projectFolderChecks[thread.project.path] ??=
+          folderExistsIn(files, paths: paths),
       // The same each build: the chat's images are kept by it.
       readBytes: _projectByteReaders[thread.project.path] ??= (path) =>
           readBytesThrough(files, path),
       sizeOf: (path) async => await byteSizeThrough(files, path) ?? 0,
       paths: paths,
       roots: () =>
-          _workspace.workspaceAt(thread.project.path)?.folders ?? const [],
+          _workspace.multiRootAt(thread.project.path)?.folders ?? const [],
       home: () => ProjectHost.of(thread.project.path).home,
       existsHere: _existsHere,
       openOnHost: (host, path, range) =>
@@ -5173,6 +5384,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           workspace: _workspace,
           project: thread.project,
           agent: thread,
+          onOpenIde: _agentWindow ? _showAgentIde : null,
         ),
       ],
       if (trailingToggle && !inPane) ...[
@@ -5225,6 +5437,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ],
     ];
     final draggable = !embedded && !place.alone && _agentThread == null;
+    // The session as built with, for the reload to tell a swap from (see
+    // [_reloadedElsewhere]).
+    _chatSessions[thread] = thread.session;
     // The layout's context keys, for the chat's keybindings (see ChatKeys).
     final chat = ChatKeyScope(
       lookup: embedded ? _ideChatKeyContext : _chatKeyContext,
@@ -5314,8 +5529,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             : NewChatFolderBar(
                 workspace: _workspace,
                 thread: thread,
-                openRemote: (onOpen, {host}) =>
-                    _openRemoteProject(onOpen: onOpen, host: host),
+                openRemote: (onOpen, {host, directory}) => _openRemoteProject(
+                  onOpen: onOpen,
+                  host: host,
+                  directory: directory,
+                ),
               ),
         // The setup checklist, over the new agent's composer.
         startHint: switch (_tips) {
@@ -5336,6 +5554,14 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         onSideQuestion: (question) => _askBeside(thread, question),
         onFork: (message) =>
             unawaited(_forkFromComposer(thread, message, embedded: embedded)),
+        onForkBefore: (before) => unawaited(
+          _forkFromComposer(
+            thread,
+            const ComposerMessage(text: ''),
+            embedded: embedded,
+            before: before,
+          ),
+        ),
         asideAt: _asideCards(thread, embedded: embedded),
         back: switch (_workspace.parentOf(thread)) {
           final parent? => (
@@ -5387,15 +5613,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   );
 
   /// Reads [thread]'s kept session anew, its chat and side panel as they
-  /// were.
+  /// were. What a reload swaps under the thread — by hand here, by itself
+  /// in the workspace (see [_reloadedElsewhere]) — is carried over there.
   void _reload(AgentThread thread) {
     final was = thread.session;
     _workspace.reload(thread);
     if (identical(thread.session, was)) return;
-    _sidePanel.carryOver(was, thread.session);
-    // A chat of the conversation before is not shown again: built anew.
-    _chatKeys[thread] = GlobalKey();
-    _ideChatWidgets.remove(thread);
+    _reloadedElsewhere();
   }
 
   // --- Asides (/btw) -------------------------------------------------------
@@ -5413,17 +5637,23 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// `/fork` in [thread]: copied as the sidebar's Fork does and the copy
   /// opened where [thread] shows (in the IDE's chat, as a tab of its own),
-  /// [message] sent there; a notice where [thread] cannot be copied.
+  /// [message] sent there; a notice where [thread] cannot be copied. Up to
+  /// the user's message [before] when given: a turn footer's fork.
   Future<void> _forkFromComposer(
     AgentThread thread,
     ComposerMessage message, {
     required bool embedded,
+    String? before,
   }) async {
     if (thread.id == null || !thread.session.canFork) {
       _notifications.notify(IdeSeverity.info, context.l10n.forkUnavailable);
       return;
     }
-    final forked = await _workspace.fork(thread, message: message);
+    final forked = await _workspace.fork(
+      thread,
+      message: message,
+      before: before,
+    );
     if (forked == null || !mounted) return;
     if (embedded) {
       _openIdeChat(thread.project.path, forked);

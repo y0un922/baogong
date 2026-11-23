@@ -8,6 +8,7 @@ import '../config/output_styles.dart';
 import '../prompts/bundled_skills.dart';
 import '../prompts/system_prompt.dart';
 import '../tools/skill_tool.dart';
+import '../util/processes.dart' show ShellKind;
 import 'agent_loop.dart';
 import 'session.dart';
 
@@ -174,10 +175,18 @@ class SessionContext {
   static String _date(DateTime now) =>
       '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 
+  /// The user's shell, as `SHELL` names it; else (Windows) the one
+  /// commands run in.
   String get _shell {
     final shell = session.environment['SHELL'];
-    if (shell == null || shell.isEmpty) return 'unknown';
-    return p.basename(shell);
+    if (shell != null && shell.isNotEmpty) return p.basename(shell);
+    final runs = session.shell;
+    if (runs.baoBash) return 'bash (BaoCode Bash)';
+    return switch (runs.kind) {
+      ShellKind.posix => 'bash',
+      ShellKind.cmd => 'cmd.exe',
+      ShellKind.powershell => 'PowerShell',
+    };
   }
 
   String _environment(String model) {
@@ -203,10 +212,12 @@ class SessionContext {
   };
 
   /// The main agent's prompt: its system prompt ([own] in place of the
-  /// agent's, when the host gave one), the notes with the first message,
-  /// and where it works.
+  /// agent's, when the host gave one; [core] in place of the default core
+  /// instructions while keeping memory, output style, budget and appended
+  /// instructions), the notes with the first message, and where it works.
   AgentPrompt main({
     String? own,
+    String? core,
     List<String> appended = const [],
     List<String> notes = const [],
     required ToolSet tools,
@@ -222,9 +233,11 @@ class SessionContext {
       system: own != null
           ? [own, ...extra]
           : [
-              identityLine(productName: productName),
+              if (core == null) identityLine(productName: productName),
               [
-                if (style == null || style.keepCodingInstructions)
+                if (core != null)
+                  core
+                else if (style == null || style.keepCodingInstructions)
                   coreInstructions(productName: productName),
                 ?_autoMemory(),
                 ?_outputStyle(),

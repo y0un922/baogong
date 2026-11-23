@@ -17,7 +17,6 @@ import '../claude_code/claude_sdk_tools.dart';
 import '../context_estimate.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
-import '../next_prompt.dart';
 import '../output_meter.dart';
 import '../queued_messages.dart';
 import 'codex_catalog.dart';
@@ -46,7 +45,6 @@ class CodexKernel
         RenamesSession,
         AcceptsImages,
         ManagesMcpServers,
-        SuggestsPrompts,
         LoadsHistory {
   CodexKernel(this.descriptor, this._context, {this._start = startCodexProcess})
     : _threadId = _context.resume?.id,
@@ -740,7 +738,6 @@ class CodexKernel
   void dispose() {
     _disposed = true;
     _live.remove(this);
-    _next.dispose();
     _teardown();
     closeEvents();
   }
@@ -748,16 +745,6 @@ class CodexKernel
   // --- The conversation -------------------------------------------------------
 
   final Set<String> _sentTurns = {};
-
-  /// What the user would likely send next, Codex suggesting none itself.
-  late final NextPrompt _next = NextPrompt(emitInfoChanged);
-
-  @override
-  String? get promptSuggestion => _next.suggestion;
-
-  /// What the turn under way was asked, and the last of its answer.
-  String _asked = '';
-  String _answer = '';
 
   /// Ours, and the server's for the same turn once it says.
   String? _turn;
@@ -883,7 +870,6 @@ class CodexKernel
   /// Starts a turn with [turn].
   void _startTurn(KernelTurn turn) {
     _beginTurn(turn.id);
-    _asked = turn.text;
     emit(
       ItemUpserted(
         nextSeq,
@@ -1003,8 +989,6 @@ class CodexKernel
     _serverTurn = null;
     _turnStarted = DateTime.now();
     _turnInput = _turnOutput = 0;
-    _asked = _answer = '';
-    _next.clear();
     _lastTokenUsageTotal = null;
     _meter.begin();
     _calls.asking();
@@ -1132,10 +1116,6 @@ class CodexKernel
     }
     if (_queue.isNotEmpty && _health.status != KernelHealthStatus.failed) {
       _startTurn(_queue.removeAt(0));
-    }
-    // Waiting for the user: what they would likely send next.
-    if (!interrupted && _turn == null) {
-      _next.turnEnded(asked: _asked, answer: _answer, location: _cwd);
     }
     if (_releaseWanted) release();
   }
@@ -1595,7 +1575,6 @@ class CodexKernel
             emit(ItemUpserted(nextSeq, id, AssistantTextItem(text)));
           }
         } else {
-          if (text.trim().isNotEmpty) _answer = text;
           emit(ItemCompleted(nextSeq, id, item: AssistantTextItem(text)));
         }
       case 'commandExecution':

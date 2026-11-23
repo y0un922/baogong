@@ -227,6 +227,7 @@ class IdeWorkspace extends ChangeNotifier
     Stream<void> Function(String directory)? watch,
     List<String> roots = const [],
     this._gitOf,
+    this.projectFolder = false,
     IdeRepositoryDetection? repositoryDetection,
     this.openWorktree,
     p.Context? paths,
@@ -243,7 +244,6 @@ class IdeWorkspace extends ChangeNotifier
            } {
     addListener(_watchOpenFiles);
     _setRoots(roots);
-    if (_gitOf == null && _git != null && hasFolder) _detectIn(root);
   }
 
   /// The project's folder; a multi-folder workspace's own (empty) folder
@@ -262,8 +262,14 @@ class IdeWorkspace extends ChangeNotifier
   final List<String> _roots = [];
 
   /// Whether it shows a multi-folder workspace (even one with no folders
-  /// yet).
-  bool get isMultiRoot => _gitOf != null;
+  /// yet); a [projectFolder] only while folders are added to it.
+  bool get isMultiRoot =>
+      _gitOf != null && (!projectFolder || _roots.isNotEmpty);
+
+  /// Whether [root] is a project's folder that folders may be added to:
+  /// then [roots], it the first of them, and a multi-folder workspace
+  /// while there are any; a folder's project again without.
+  final bool projectFolder;
 
   /// Makes the repository of a workspace folder.
   final IdeGitRepository? Function(String root)? _gitOf;
@@ -280,7 +286,9 @@ class IdeWorkspace extends ChangeNotifier
     final gitOf = _gitOf;
     for (final root in _roots) {
       if (roots.contains(root)) continue;
-      _repositories.remove(root)?.dispose();
+      // The project's own repository stays its own.
+      final gone = _repositories.remove(root);
+      if (!identical(gone, _git)) gone?.dispose();
       for (final (_, git)
           in _found.remove(root) ?? const <(String, IdeGitRepository)>[]) {
         git.dispose();
@@ -289,10 +297,18 @@ class IdeWorkspace extends ChangeNotifier
     _roots
       ..clear()
       ..addAll(roots);
-    if (gitOf == null) return;
-    for (final root in roots) {
-      if (!_repositories.containsKey(root)) _repositories[root] = gitOf(root);
-      _detectIn(root);
+    if (!isMultiRoot) {
+      // A folder's project: its repository, and those in its subfolders.
+      if (_git != null && hasFolder) _detectIn(root);
+    } else if (gitOf != null) {
+      for (final root in roots) {
+        if (!_repositories.containsKey(root)) {
+          _repositories[root] = projectFolder && paths.equals(root, this.root)
+              ? _git
+              : gitOf(root);
+        }
+        _detectIn(root);
+      }
     }
     for (final own in [..._worktrees.keys]) {
       if (!_ownRepositories.any((r) => identical(r.$2, own))) {
@@ -792,19 +808,33 @@ class IdeWorkspace extends ChangeNotifier
   }
 
   /// Opens [path]'s text at a revision, which [read] reads, read-only and
-  /// titled with [label], or selects it.
+  /// titled with [label], or selects it. When [refresh] is true and the tab
+  /// is already open, [read] is called again to update its content.
   Future<void> openRevision(
     String path, {
     required String label,
     required Future<String> Function() read,
+    bool refresh = false,
   }) async {
     if (_disposed) return;
     path = paths.normalize(paths.absolute(path));
     _dropReveal(path);
     final request = ++_selection;
     final key = '$path\u0000$label';
-    if (_documents.any((d) => d.key == key)) {
-      select(key);
+    final existing = _documents.where((d) => d.key == key).firstOrNull;
+    if (existing != null) {
+      if (refresh) {
+        try {
+          final text = await read();
+          if (_disposed || !_documents.contains(existing)) return;
+          if (text != existing.text) {
+            existing.text = text;
+            existing.savedText = text;
+            notifyListeners();
+          }
+        } catch (_) {}
+      }
+      if (request == _selection) select(key);
       return;
     }
     String text;
@@ -1246,19 +1276,13 @@ class IdeWorkspace extends ChangeNotifier
     return doc;
   }
 
-  /// Saves [doc] to a path asked for ([askSavePath]), its tab then that
-  /// file's: the new document, or null when not saved. A remote project's
-  /// file is saved to this machine, where the save panel is: a copy of its
-  /// text, its tab still the host's file.
+  /// Saves [doc] to a path asked for ([askSavePath]; a remote project's on
+  /// its host), its tab then that file's: the new document, or null when
+  /// not saved.
   Future<IdeDocument?> saveAs(IdeDocument doc) async {
     if (_disposed || !_documents.contains(doc) || doc.readOnly) return null;
-    final text = doc.text;
     final path = await askSavePath?.call(doc);
     if (path == null || _disposed || !_documents.contains(doc)) return null;
-    if (files is IdeHostFiles && !doc.isUntitled) {
-      await saveCopyTo(files, doc.path, path, text: text);
-      return null;
-    }
     return saveTo(doc, path);
   }
 
@@ -1369,7 +1393,7 @@ class IdeWorkspace extends ChangeNotifier
       worktree.dispose();
     }
     for (final repository in _repositories.values) {
-      repository?.dispose();
+      if (!identical(repository, _git)) repository?.dispose();
     }
     for (final found in _found.values) {
       for (final (_, git) in found) {

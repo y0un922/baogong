@@ -41,4 +41,12 @@ abstract interface class LinkPlatform {
 
   /// The Git branch checked out in [folder], if it is a repository.
   String? branchOf(String folder);
+
+  /// [body] sent to [url] as JSON (a push to the phones): the answer's
+  /// status, and its JSON if it has any. Throws when it is not reached.
+  Future<(int, Object?)> postJson(Uri url, Map<String, Object?> body);
+
+  /// Whether the relay at [url] answers now (its `/ping`), for one listed
+  /// before the one kept to to be gone back to.
+  Future<bool> probeRelay(String url);
 }

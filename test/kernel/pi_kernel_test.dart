@@ -9,7 +9,6 @@ import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
-import 'package:baocode/kernel/next_prompt.dart';
 import 'package:baocode/kernel/pi/pi_catalog.dart';
 import 'package:baocode/kernel/pi/pi_kernel.dart';
 import 'package:baocode/kernel/pi/pi_transport.dart';
@@ -155,12 +154,6 @@ piKernel(
   KernelContext context = const KernelContext(cwd: '/project'),
 }) {
   final starts = <({String cwd, String? session})>[];
-  // No model asked what would come next, unless the test says.
-  if (NextPrompt.asker == null) {
-    NextPrompt.asker = (_, _, {cancel, model, exact = false, location}) async =>
-        'NONE';
-    addTearDown(() => NextPrompt.asker = null);
-  }
   final kernel = PiKernel(
     _descriptor,
     context,
@@ -260,19 +253,11 @@ void main() {
     );
 
     test(
-      "each request is kept for the usage page, as Claude Code's are; "
-      'what the user would likely send next offered as the turn ends',
+      "each request is kept for the usage page, as Claude Code's are",
       () async {
         final kept = UsageLedger.current;
         final ledger = UsageLedger.current = UsageLedger(MemoryUsageStorage());
         addTearDown(() => UsageLedger.current = kept);
-        final asked = <String>[];
-        NextPrompt.asker =
-            (_, prompt, {cancel, model, exact = false, location}) async {
-              asked.add(prompt);
-              return 'commit it';
-            };
-        addTearDown(() => NextPrompt.asker = null);
         final pi = FakePi();
         final (:kernel, transcript: _, events: _, starts: _) = piKernel([pi]);
         addTearDown(kernel.dispose);
@@ -318,7 +303,6 @@ void main() {
             },
           });
         await pumpEventQueue();
-        expect(kernel.promptSuggestion, isNull);
         pi.emit({'type': 'agent_settled', 'aborted': false});
         await pumpEventQueue();
 
@@ -333,11 +317,6 @@ void main() {
         );
         expect(call.duration, const Duration(seconds: 2));
         expect(call.stopReason, 'stop');
-
-        expect(asked.single, allOf(contains('Tidy up'), contains('Tidied.')));
-        expect(kernel.promptSuggestion, 'commit it');
-        kernel.send(const KernelTurn(id: 't2', text: 'Commit'));
-        expect(kernel.promptSuggestion, isNull);
       },
     );
 

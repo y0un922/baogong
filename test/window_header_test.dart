@@ -261,8 +261,10 @@ void main() {
   }, variant: _windows);
 
   testWidgets('narrow, the session\'s title is in the header, as macOS\'s '
-      'title bar has it: the menus folded into one button, the '
-      'conversation\'s background, no line', (tester) async {
+      'title bar has it: the menus folded into one button, the window\'s '
+      'color all across as around the conversation\'s card, no line', (
+    tester,
+  ) async {
     final (workspace, _) = await pumpWindowsApp(tester);
     tester.view.physicalSize = const Size(520, 760);
     await tester.pump();
@@ -296,7 +298,8 @@ void main() {
     final material = tester.widget<Material>(
       find.descendant(of: header, matching: find.byType(Material)).first,
     );
-    expect(material.color, AppColors.conversationSurface);
+    // Not the card's own: the strip and the window around the card are one.
+    expect(material.color, AppColors.sidebarSurface);
     // The sidebar's toggle first, as by macOS's traffic lights, then the
     // menus' button, then the title.
     final menu = find.descendant(
@@ -563,6 +566,39 @@ void main() {
     expect(shown(), (true, false));
     await resize(1400);
     expect(shown(), (true, true));
+  }, variant: _windows);
+
+  // #1150: the window made narrow, the conversation keeps it all.
+  testWidgets('the window too narrow for the side panel beside the '
+      'conversation: its toggle off while it gives way, and on again as the '
+      'window widens; asked for meanwhile, it is over the conversation', (
+    tester,
+  ) async {
+    await pumpWindowsApp(tester);
+    final panelToggle = find.byType(SidePanelToggle);
+    final panelView = find.byType(AgentSidePanelView);
+    Future<void> resize(double width) async {
+      tester.view.physicalSize = Size(width, 900);
+      await tester.pumpAndSettle();
+    }
+
+    bool toggleOn() => tester.widget<SidePanelToggle>(panelToggle.first).shown;
+
+    await resize(1400);
+    await tester.tap(panelToggle.first);
+    await tester.pumpAndSettle();
+    expect((toggleOn(), panelView.evaluate().length), (true, 1));
+
+    await resize(600);
+    expect((toggleOn(), panelView.evaluate().length), (false, 0));
+    expect(tester.getSize(find.byType(ChatScreen)).width, greaterThan(500));
+    await resize(1400);
+    expect((toggleOn(), panelView.evaluate().length), (true, 1));
+
+    await resize(600);
+    await tester.tap(panelToggle.first);
+    await tester.pumpAndSettle();
+    expect((toggleOn(), panelView.evaluate().length), (true, 1));
   }, variant: _windows);
 
   testWidgets('over the IDE, the IDE\'s layout toggles as on its own title '

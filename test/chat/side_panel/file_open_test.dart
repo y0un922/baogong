@@ -97,7 +97,7 @@ void main() {
       // A script it wrote there, then ran to make the PDF beside it.
       seen: const ['/Users/me/sakura/proposal/build.py'],
       // And a folder it moved into.
-      folders: const ['/Users/me/out'],
+      visited: const ['/Users/me/out'],
       child: const SizedBox(),
     );
 
@@ -212,6 +212,59 @@ void main() {
           ('/nowhere/c.md', false),
         ]),
       );
+    });
+  });
+
+  group('a folder', () {
+    const folder = '$_root/lib/chat';
+    const makefile = '$_root/Makefile';
+
+    FileOpenScope withFolders(
+      List<FileOpenRequest> opened,
+      List<String> folders,
+    ) => FileOpenScope(
+      root: _root,
+      onOpen: opened.add,
+      existence: FileExistence((path) async => path == makefile),
+      folders: FileExistence((path) async => path == folder),
+      onOpenFolder: folders.add,
+      child: const SizedBox(),
+    );
+
+    void click(GestureRecognizer? recognizer) =>
+        (recognizer! as TapGestureRecognizer).onTap!();
+
+    test('a link to one in the project shows it in the tree', () async {
+      final opened = <FileOpenRequest>[];
+      final folders = <String>[];
+      final files = withFolders(opened, folders);
+      click(files.linkRecognizer('lib/chat'));
+      click(files.linkRecognizer('lib/chat/'));
+      await pumpEventQueue();
+      expect(folders, [folder, folder]);
+      expect(opened, isEmpty);
+    });
+
+    test('a file with no extension still opens as a file', () async {
+      final opened = <FileOpenRequest>[];
+      final folders = <String>[];
+      click(withFolders(opened, folders).linkRecognizer('Makefile'));
+      await pumpEventQueue();
+      expect(opened.single.path, makefile);
+      expect(folders, isEmpty);
+    });
+
+    test('inline code naming one with its folders is a link once known, '
+        'a word alone never', () async {
+      final folders = <String>[];
+      final files = withFolders([], folders);
+      expect(files.codeRecognizer('lib/chat'), isNull);
+      await pumpEventQueue();
+      expect(files.codeRecognizer('lib/chat'), isNull);
+      await pumpEventQueue();
+      click(files.codeRecognizer('lib/chat'));
+      expect(folders, [folder]);
+      expect(files.codeRecognizer('lib'), isNull);
     });
   });
 }

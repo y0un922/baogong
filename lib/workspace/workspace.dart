@@ -30,6 +30,7 @@ import 'chat_grid.dart';
 import 'editor_launcher.dart';
 import 'preference_store.dart';
 import 'project_workspace.dart';
+import 'temp_folder_stub.dart' if (dart.library.io) 'temp_folder_io.dart';
 
 /// The arrangement of the project and its conversation in the window.
 enum WorkspaceLayout { chat, ide }
@@ -429,7 +430,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   Future<void>? _refreshing;
 
   /// Picks up sessions the kernels kept since [load] (e.g. ones started in
-  /// a terminal). What is listed stays as it is.
+  /// a terminal). What is listed stays as it is, except one talked in
+  /// elsewhere while idle: it is read anew right away (see [reload]).
   Future<void> refresh() =>
       _refreshing ??= _refresh().whenComplete(() => _refreshing = null);
 
@@ -460,6 +462,47 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       }
     }
     if (_threads.length != before || goneOn) notifyListeners();
+    _reloadGoneOn();
+  }
+
+  /// Reads anew the ones talked in elsewhere since they were read here, as
+  /// they are come to, not left for the user to ask for (a reload notifies
+  /// itself; the threads are only swapped, not moved).
+  void _reloadGoneOn() {
+    for (final thread in [..._threads]) {
+      if (thread._goneOnElsewhere && canReload(thread)) reload(thread);
+    }
+  }
+
+  /// When each open conversation's kept file was last seen changed (see
+  /// [refreshIfChanged]).
+  final Expando<DateTime> _seenModified = Expando();
+
+  /// [refresh], only once an open conversation's kept file changed since it
+  /// was last looked at and since its agent went quiet, as [modified] tells
+  /// (null for none): cheap enough to ask every so often, where [refresh]
+  /// reads every kept session. The file is written to besides what is said
+  /// (titles, the last prompt), so [refresh] still tells whether it was.
+  Future<void> refreshIfChanged(
+    Future<DateTime?> Function(String path) modified,
+  ) async {
+    if (_loading) return;
+    var changed = false;
+    for (final thread in [..._threads]) {
+      final path = thread.record?.path;
+      final quiet = thread._quietSince;
+      if (path == null || !thread.isOpen || quiet == null) continue;
+      final at = await modified(path);
+      if (at == null || at == _seenModified[thread]) continue;
+      _seenModified[thread] = at;
+      if (at.isAfter(quiet.add(_ownMessageLag))) changed = true;
+    }
+    if (changed) {
+      await refresh();
+    } else {
+      // Noted while its agent was at work: read anew once it is done.
+      _reloadGoneOn();
+    }
   }
 
   /// A message of the conversation's own may be timed a moment after its
@@ -496,6 +539,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Reads [thread]'s kept session anew, in its place: what was said in it
   /// elsewhere since it was read here (gone on with in a terminal) shows.
+  /// Asked for by the sidebar's reload button, and by [refresh] once it
+  /// notes the conversation went on elsewhere while the agent was idle.
   /// The thread stays the same, its marks, draft and place with it; only
   /// its conversation is opened again, the one before stopped.
   void reload(AgentThread thread) {
@@ -523,7 +568,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Has [thread], a new agent nothing was sent to yet, work in [path]
   /// instead: a new agent there (an untouched one reused) takes its pane,
-  /// and it goes. [path] is opened as a project if it was not one.
+  /// and it goes. [path] is opened as a project if it was not one. What is
+  /// typed goes along: the project is often picked after it.
   AgentThread moveNew(AgentThread thread, String path) {
     final project = _openProject(path);
     if (project == thread.project || !_threads.contains(thread)) {
@@ -532,6 +578,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     // Into its pane: the focused one is what [create] shows the new in.
     if (_grid.contains(thread)) _focus(thread);
     final moved = create(project: project);
+    final draft = thread.session.draft;
+    if (draft.content?.trim().isNotEmpty ?? false) {
+      moved.session.draft.save(draft.content!, draft.selection, draft.images);
+    }
     if (_isUntouched(thread)) _discard(thread);
     return moved;
   }
@@ -558,6 +608,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         _save();
       }
       unawaited(_listKept(project));
+    } else if (inTempFolder(path) && !_folders.contains(path)) {
+      // Kept by Claude Code but off the sidebar until opened (see
+      // [isHidden]): opened now.
+      _folders.add(path);
+      _save();
+      notifyListeners();
     }
     return project;
   }
@@ -864,6 +920,27 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   void keepSidePanelView(Map<String, Object?> state) {
     _sidePanelView = state;
+    _save();
+  }
+
+  /// What the remote browser shows (its hidden entries; see
+  /// `RemoteBrowserView`), for the next run.
+  Map<String, Object?>? get remoteBrowserView => _remoteBrowserView;
+  Map<String, Object?>? _remoteBrowserView;
+
+  void keepRemoteBrowserView(Map<String, Object?> state) {
+    _remoteBrowserView = state;
+    _save();
+  }
+
+  /// The folders the remote browser was in on [host] lately, the latest
+  /// first.
+  List<String> remoteLocations(String host) =>
+      List.unmodifiable(_remoteLocations[host] ?? const <String>[]);
+  final Map<String, List<String>> _remoteLocations = {};
+
+  void keepRemoteLocations(String host, List<String> paths) {
+    _remoteLocations[host] = [...paths];
     _save();
   }
 
@@ -1240,6 +1317,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// The mode, model, context and effort a new agent starts with: the
   /// last ones picked.
   Map<String, String> get _preferredSettings => Map.unmodifiable(_settings);
+
+  /// The model a new agent starts on: Settings → Models' pick, else the
+  /// one last picked; null for its kernel's own.
+  String? get newAgentModel =>
+      ModelProviders.current.defaultModel ??
+      _settings[KernelChoiceKind.model.name];
   final Map<String, String> _settings = {};
 
   /// Language servers the Fast Ide is not to recommend installing again.
@@ -1481,7 +1564,23 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   final Map<String, DateTime> _hiddenProjects = {};
 
   bool isHidden(Project project) =>
-      _hiddenProjects.containsKey(project.path) || isAppFolder(project.path);
+      _hiddenProjects.containsKey(project.path) ||
+      isAppFolder(project.path) ||
+      _isUnopenedTemp(project.path);
+
+  /// Whether [path] is in the system's temporary folder and was never
+  /// opened here, nor sent anything from here: an agent's clone to run
+  /// other agents in with `claude -p`, say, whose sessions are no
+  /// conversations of the user's.
+  bool _isUnopenedTemp(String path) =>
+      !_folders.contains(path) &&
+      !_workspaces.containsKey(path) &&
+      inTempFolder(path);
+
+  /// Whether a path is in the system's temporary folder (see
+  /// [isTempFolder]); tests, whose projects are in `/tmp`, have none.
+  @visibleForTesting
+  static bool Function(String path) inTempFolder = isTempFolder;
 
   /// The setup of agents in a folder the app keeps for itself, by its path;
   /// null for a project's (see [AgentSetup]). Set, those folders' agents
@@ -1601,6 +1700,17 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// by [projectSort] the others, their latest agent's first or as the user
   /// dragged them (those not dragged yet, e.g. new, before).
   List<Project> get sidebarProjects {
+    if (_sidebarProjects case final projects?) return projects;
+    // Asked of each of the sidebar's groups as it builds, and of each key:
+    // ordered once for the work at hand, again after it (a project's
+    // activity, a bot's folder change without a notice) or a change.
+    scheduleMicrotask(() => _sidebarProjects = null);
+    return _sidebarProjects = List.unmodifiable(_orderSidebarProjects());
+  }
+
+  List<Project>? _sidebarProjects;
+
+  List<Project> _orderSidebarProjects() {
     final shown = [
       for (final project in _projects)
         if (!isHidden(project)) project,
@@ -1708,12 +1818,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// The SSH host whose projects and agents the sidebar lists; null for
   /// this machine's (and while there is no host to switch to, or it lists
   /// all of them, [sidebarAllHosts]).
-  String? get sidebarHost =>
-      !sidebarAllHosts &&
-          _sidebarHost != null &&
-          sshHosts.contains(_sidebarHost)
-      ? _sidebarHost
-      : null;
+  String? get sidebarHost => switch (_sidebarHost) {
+    final host? when !sidebarAllHosts && _isSshHost(host) => host,
+    _ => null,
+  };
   String? _sidebarHost;
   set sidebarHost(String? host) {
     if (host == _sidebarHost && !_sidebarAll) return;
@@ -1725,8 +1833,20 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Whether the sidebar lists the projects and agents of this machine and
   /// of every SSH host together (while there are hosts).
-  bool get sidebarAllHosts => _sidebarAll && sshHosts.isNotEmpty;
+  bool get sidebarAllHosts => _sidebarAll && _isSshHost(null);
   bool _sidebarAll = false;
+
+  /// Whether [host] is among [sshHosts] (any is, for null), without
+  /// ordering the sidebar's projects: the sidebar asks it of each agent it
+  /// lists ([listsHost]), on every key the window resolves.
+  bool _isSshHost(String? host) =>
+      (host == null ? _sshHosts.isNotEmpty : _sshHosts.contains(host)) ||
+      _projects.any(
+        (project) =>
+            project.host != null &&
+            (host == null || project.host == host) &&
+            !isHidden(project),
+      );
   set sidebarAllHosts(bool all) {
     if (all == _sidebarAll) return;
     _sidebarAll = all;
@@ -1880,13 +2000,18 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
-  /// Archives [project]'s agents (not a new one nothing was sent to).
+  /// Archives [project]'s agents (not a new one nothing was sent to): the
+  /// folder goes with them, off the sidebar, its agents under Archived
+  /// (back once one is unarchived, or the folder opened).
   void archiveAll(Project project) {
     setArchivedAll([
       for (final thread in [..._threads])
         if (thread.project == project && !thread.archived && !thread.untouched)
           thread,
     ], true);
+    if (_threads.any((t) => t.project == project && t.archived)) {
+      hideProject(project);
+    }
   }
 
   /// Unarchives every archived agent ([where] there is one, those it takes).
@@ -1895,6 +2020,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (!thread.archived || !(where?.call(thread) ?? true)) continue;
       thread.archived = false;
       _keepMarks(thread);
+      _unhide(thread.project.path);
     }
     notifyListeners();
   }
@@ -1925,14 +2051,87 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// [project]'s workspace; null when it is a folder.
   ProjectWorkspace? workspaceOf(Project project) => _workspaces[project.path];
 
-  KernelWorkspace? _kernelWorkspace(String? cwd) => switch (_workspaces[cwd]) {
-    final workspace? => KernelWorkspace(
-      folders: workspace.folders,
-      instructions: workspace.systemPrompt,
-    ),
-    null when cwd != null => agentSetup?.call(cwd)?.workspace(),
-    null => null,
-  };
+  /// The folders added to projects' own, by the project's folder: its
+  /// agents work across them too, its IDE shows each as a root besides
+  /// its own (see [multiRootAt]).
+  final Map<String, List<String>> _addedFolders = {};
+
+  /// The folders of the projects with folders added to them.
+  Iterable<String> get projectsWithFolders => _addedFolders.keys;
+
+  /// The folders the project at [path] spans, as roots: a workspace's, or
+  /// a project's with folders added to it ([ProjectWorkspace.inProject]);
+  /// null for a folder's alone.
+  ProjectWorkspace? multiRootAt(String path) =>
+      _workspaces[path] ??
+      switch (_addedFolders[path]) {
+        final added? when added.isNotEmpty => ProjectWorkspace(
+          id: '',
+          name: _projectNamed(path).name,
+          path: path,
+          folders: [path, ...added],
+          inProject: true,
+        ),
+        _ => null,
+      };
+
+  /// Whether folders can be added to the project at [path]: a workspace,
+  /// or a folder of this machine.
+  bool canAddFolders(String path) =>
+      _workspaces.containsKey(path) || !RemoteLocation.isRemote(path);
+
+  /// Adds [folder] to the project at [path] (see [canAddFolders]): its
+  /// agents started from then on work in it too.
+  void addFolder(String path, String folder) {
+    if (_workspaces[path] case final multi?) {
+      return addWorkspaceFolder(multi, folder);
+    }
+    final added = _addedFolders[path] ?? const [];
+    if (!canAddFolders(path) || folder == path || added.contains(folder)) {
+      return;
+    }
+    setAddedFolders(path, [...added, folder]);
+  }
+
+  /// Takes [folder] out of the project at [path]; nothing of it is
+  /// deleted. Not the project's own.
+  void removeFolder(String path, String folder) {
+    if (_workspaces[path] case final multi?) {
+      return removeWorkspaceFolder(multi, folder);
+    }
+    setAddedFolders(path, [
+      for (final kept in _addedFolders[path] ?? const <String>[])
+        if (kept != folder) kept,
+    ]);
+  }
+
+  /// Has the project at [path] (a folder's, not a workspace's) have
+  /// [folders] added to its own; none, it is its folder alone again.
+  void setAddedFolders(String path, List<String> folders) {
+    if (_workspaces.containsKey(path)) return;
+    final added = [
+      for (final folder in {...folders})
+        if (folder != path) folder,
+    ];
+    if (listEquals(added, _addedFolders[path] ?? const [])) return;
+    if (added.isEmpty) {
+      _addedFolders.remove(path);
+    } else {
+      _addedFolders[path] = added;
+    }
+    _save();
+    notifyListeners();
+  }
+
+  KernelWorkspace? _kernelWorkspace(String? cwd) =>
+      switch (cwd == null ? null : multiRootAt(cwd)) {
+        final multi? => KernelWorkspace(
+          folders: multi.added,
+          instructions: multi.systemPrompt,
+        ),
+        null when cwd != null => agentSetup?.call(cwd)?.workspace(),
+        null => null,
+      };
 
   /// Makes a workspace of [folders] named [name], listed first: new agents
   /// in it work across them. Null where workspaces cannot be kept (the
@@ -2211,6 +2410,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
     move(_projectNames);
     move(_projectIcons);
+    move(_addedFolders);
     move(_order);
     move(_ideViews);
     _hiddenProjects
@@ -2327,7 +2527,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// takes them once it is, until then the catalog lists the old title.
   final Map<String, String> _names = {};
 
-  /// Folders opened where no kernel keeps a session yet.
+  /// Folders opened where no kernel keeps a session yet; those in the
+  /// system's temporary folder opened here, sessions kept there or not.
   final List<String> _folders = [];
 
   /// Forgets what was kept for sessions and folders the catalogs no longer
@@ -2343,7 +2544,11 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _archived.retainAll(titles.keys);
     // A name the catalog lists is the CLI's now.
     _names.removeWhere((id, name) => titles[id] == null || titles[id] == name);
-    _folders.removeWhere(listed.contains);
+    // Not one in the temporary folder: listed only for being kept here
+    // (see [isHidden]).
+    _folders.removeWhere(
+      (path) => listed.contains(path) && !inTempFolder(path),
+    );
     final paths = {for (final project in _projects) project.path};
     bool gone(String group) =>
         group.startsWith(projectGroup('')) &&
@@ -2357,6 +2562,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _order.length,
       _projectIcons.length,
       _projectNames.length,
+      _addedFolders.length,
       for (final order in _order.values) order.length,
     ]);
     final before = size();
@@ -2370,6 +2576,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       (path, _) => !paths.contains(path) && !path.startsWith(_hostIcon),
     );
     _projectNames.removeWhere((path, _) => !paths.contains(path));
+    _addedFolders.removeWhere((path, _) => !paths.contains(path));
     for (final order in _order.values) {
       order.retainWhere(titles.containsKey);
     }
@@ -2477,13 +2684,27 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     'images': [
       for (final image in draft.images)
         {
-          'bytes': base64Encode(image.bytes),
+          'bytes': _base64Of(image.bytes),
           'mediaType': image.mediaType,
           'name': ?image.name,
           'number': ?image.number,
         },
     ],
   };
+
+  /// Each picture's bytes as base64, made once: a draft is encoded again
+  /// on every key, its pictures (megabytes each) with it (E0A7T8YQ).
+  static final _base64 = Expando<String>();
+
+  static String _base64Of(Uint8List bytes) =>
+      _base64[bytes] ??= base64Encode(bytes);
+
+  /// [base64]'s bytes, it kept for them.
+  static Uint8List _bytesOf(String base64) {
+    final bytes = base64Decode(base64);
+    _base64[bytes] = base64;
+    return bytes;
+  }
 
   /// Into [draft]; nothing of one that cannot be read.
   static void _decodeDraft(Map<String, Object?> kept, ComposerDraft draft) {
@@ -2495,7 +2716,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
             'mediaType': final String mediaType,
           })
             ImageAttachment(
-              bytes: base64Decode(bytes),
+              bytes: _bytesOf(bytes),
               mediaType: mediaType,
               name: image['name'] as String?,
               number: image['number'] as int?,
@@ -2628,6 +2849,16 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _layout = WorkspaceLayout.ide;
     }
     _settings.addAll(strings(kept['settings']));
+    // A provider's model's context (by its number of tokens) was kept as
+    // shown, picked or not, before #914: let go once, for each to follow
+    // its upstream until one is picked.
+    if (kept['contextPicks'] != 1) {
+      _settings.removeWhere(
+        (key, value) =>
+            key.startsWith(modelSettingKey(KernelChoiceKind.context, '')) &&
+            int.tryParse(value) != null,
+      );
+    }
     if (kept['ignoredRecommendations'] case final List<Object?> ignored) {
       _ignoredRecommendations.addAll(ignored.whereType<String>());
     }
@@ -2707,6 +2938,14 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         }
       }
     }
+    if (kept['addedFolders'] case final Map<Object?, Object?> added) {
+      for (final MapEntry(:key, :value) in added.entries) {
+        if ((key, value) case (final String path, final List<Object?> folders)
+            when folders.isNotEmpty) {
+          _addedFolders[path] = folders.whereType<String>().toList();
+        }
+      }
+    }
     if (kept['projectIcons'] case final Map<Object?, Object?> icons) {
       for (final MapEntry(:key, :value) in icons.entries) {
         if ((key, ProjectIcon.fromJson(value)) case (
@@ -2757,6 +2996,16 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (kept['sidePanel'] case final Map<Object?, Object?> panel) {
       _sidePanelView = panel.cast<String, Object?>();
     }
+    if (kept['remoteBrowser'] case final Map<Object?, Object?> view) {
+      _remoteBrowserView = view.cast<String, Object?>();
+    }
+    if (kept['remoteLocations'] case final Map<Object?, Object?> hosts) {
+      for (final MapEntry(:key, :value) in hosts.entries) {
+        if (key is String && value is List) {
+          _remoteLocations[key] = [...value.whereType<String>()];
+        }
+      }
+    }
     if (!_colorThemeStored) {
       _autoDetectColorScheme = kept['autoDetectColorScheme'] == true;
       if (kept['colorTheme'] case final String setting) _colorTheme = setting;
@@ -2779,6 +3028,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       'layout': _layout.name,
       if (_paneTabs) 'paneTabs': true,
       'settings': _settings,
+      'contextPicks': 1,
       'agents': _agentSettings,
       'ignoredRecommendations': [..._ignoredRecommendations],
       'sidebar': {
@@ -2834,6 +3084,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       'workspaces': [
         for (final workspace in _workspaces.values) workspace.toJson(),
       ],
+      'addedFolders': _addedFolders,
       'projectIcons': {
         for (final MapEntry(:key, :value) in _projectIcons.entries)
           key: value.toJson(),
@@ -2842,6 +3093,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       'emojiStyle': ?_emojiStyle?.name,
       'chat': ?_chatViewToSave(),
       'sidePanel': ?_sidePanelView,
+      'remoteBrowser': ?_remoteBrowserView,
+      if (_remoteLocations.isNotEmpty) 'remoteLocations': _remoteLocations,
       'colorTheme': ?_colorTheme,
       'colorThemeData': ?_colorThemeData,
       if (_autoDetectColorScheme) 'autoDetectColorScheme': true,
@@ -2957,7 +3210,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (thread._wantsTitle) _askTitle(thread);
     }
     // Sent something: its folder is a project now, if it was not.
-    if (!_isUntouched(thread) && !_projects.contains(thread.project)) {
+    if (!_isUntouched(thread) &&
+        (!_projects.contains(thread.project) ||
+            _isUnopenedTemp(thread.project.path))) {
       _listProject(thread.project);
     }
     if (_ideChatsUnkept.contains(thread) && thread.id != null) {
@@ -2998,11 +3253,15 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       remember(KernelChoiceKind.model, before.model, snapshot.model);
       remember(KernelChoiceKind.effort, before.effort, snapshot.effort);
       remember(KernelChoiceKind.context, before.context, snapshot.context);
-      // And each model's own, for it to go back to (see modelSettingKey).
+      // And each model's own, for it to go back to (see modelSettingKey):
+      // its context only as picked with it, not as it came with a switch
+      // to it (its upstream's, else another model's), for it to follow its
+      // upstream until one is (#914).
       if (snapshot.model case final model?) {
         for (final (kind, value) in [
           (KernelChoiceKind.effort, snapshot.effort),
-          (KernelChoiceKind.context, snapshot.context),
+          if (before.model == model)
+            (KernelChoiceKind.context, snapshot.context),
         ]) {
           final key = modelSettingKey(kind, model);
           if (value != null && _settings[key] != value) {
@@ -3203,6 +3462,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// closed or given its id.
   @override
   void notifyListeners() {
+    _sidebarProjects = null;
     if (_chatViewRestored && jsonEncode(_chatView) != _chatViewSaved) {
       _save();
     }
@@ -3526,14 +3786,18 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Copies [thread]'s conversation into a new agent of its project (see
   /// [ChatSession.fork]): listed, with [thread]'s settings, not shown. Null
   /// when it could not be (its conversation says why). [message], when not
-  /// empty, is sent there once what it copied is read (`/fork …`).
+  /// empty, is sent there once what it copied is read (`/fork …`). Up to
+  /// the user's message [before] (by its id) when given: a fork from the
+  /// turn before it.
   Future<AgentThread?> fork(
     AgentThread thread, {
     ComposerMessage? message,
+    String? before,
   }) async {
     final forked = await _fork(
       thread,
       '${thread.localizedTitle(l10n())} (fork)',
+      before: before,
     );
     if (forked != null && message != null && !message.isEmpty) {
       unawaited(_sendOnceRead(forked, message));
@@ -3555,9 +3819,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   /// [fork], the copy titled [title].
-  Future<AgentThread?> _fork(AgentThread thread, String title) async {
+  Future<AgentThread?> _fork(
+    AgentThread thread,
+    String title, {
+    String? before,
+  }) async {
     final session = thread.session;
-    final record = await session.fork(title: title);
+    final record = await session.fork(title: title, before: before);
     if (record == null || _disposed) return null;
     final settings = {
       for (final kind in KernelChoiceKind.values)
@@ -3971,6 +4239,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final changed = thread.archived != archived || (archived && thread.pinned);
     thread.archived = archived;
     if (archived) thread.pinned = false;
+    // Its folder, archived with it, back on the sidebar with it.
+    if (!archived && changed) _unhide(thread.project.path);
     final kept = _keepMarks(thread, save: save);
     if (archived && leave) _leave(thread);
     return changed || kept;

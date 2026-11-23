@@ -1770,11 +1770,13 @@ void main() {
   testWidgets('dragging the panel\'s edge past where it goes over the '
       'conversations keeps the panel, and lets the window go', (tester) async {
     final (:panel, :session, files: _) = await _pumpChat(tester);
-    panel.open(session, const FileOpenRequest('/p/lib/main.dart'));
-    // Too narrow for the panel beside the conversations: over them.
+    await tester.pump(AgentSidePanelArea.overlayDelay);
+    // Too narrow for the panel beside the conversations, and asked for:
+    // over them.
     tester.view.physicalSize = const Size(600, 800);
     await tester.pumpAndSettle();
-    await tester.pump(AgentSidePanelArea.overlayDelay);
+    panel.open(session, const FileOpenRequest('/p/lib/main.dart'));
+    await tester.pumpAndSettle();
     expect(_scrim, findsOneWidget);
     final sash = find.byKey(const ValueKey('side-panel-sash'));
     final drag = await tester.startGesture(tester.getCenter(sash));
@@ -1850,12 +1852,71 @@ void main() {
     await tester.pump(AgentSidePanelArea.overlayDelay * 2);
     expect(_scrim, findsNothing);
 
-    // Short for longer: over them.
+    // Short for longer: out of their way.
     tester.view.physicalSize = const Size(600, 800);
     await tester.pump();
     expect(_scrim, findsNothing);
+    expect(find.byType(AgentSidePanelView), findsOneWidget);
     await tester.pump(AgentSidePanelArea.overlayDelay);
+    await tester.pump();
+    expect(_scrim, findsNothing);
+    expect(find.byType(AgentSidePanelView), findsNothing);
+    expect(panel.gaveWay(), isTrue);
+  });
+
+  // #1150: the window made narrow (beside a browser, say), the conversation
+  // has it all; made wide again, the panel is back.
+  testWidgets('the window made too narrow for it, the panel gives way to the '
+      'conversations, and is back as it widens', (tester) async {
+    final (:panel, :session, files: _) = await _pumpChat(tester);
+    panel.showSection(session, SidePanelSection.changes);
+    await tester.pumpAndSettle();
+    await tester.pump(AgentSidePanelArea.overlayDelay);
+    expect(find.byType(AgentSidePanelView), findsOneWidget);
+
+    tester.view.physicalSize = const Size(600, 800);
+    await tester.pumpAndSettle();
+    expect(_scrim, findsNothing);
+    expect(find.byType(AgentSidePanelView), findsNothing);
+    expect(tester.getSize(find.byType(ChatScreen)).width, 600);
+    // Shown still, as kept; out of the way meanwhile, as its toggles have
+    // it.
+    expect(panel.shown, isTrue);
+    expect(panel.gaveWay(), isTrue);
+
+    tester.view.physicalSize = const Size(1600, 800);
+    await tester.pumpAndSettle();
+    expect(find.byType(AgentSidePanelView), findsOneWidget);
+    expect(_scrim, findsNothing);
+    expect(panel.gaveWay(), isFalse);
+    expect(panel.tabsOf(session).section, SidePanelSection.changes);
+  });
+
+  testWidgets('given way, the panel asked for again is over the '
+      'conversations; closed, it is not back as the window widens', (
+    tester,
+  ) async {
+    final (:panel, session: _, files: _) = await _pumpChat(tester);
+    panel.show();
+    await tester.pumpAndSettle();
+    await tester.pump(AgentSidePanelArea.overlayDelay);
+    tester.view.physicalSize = const Size(600, 800);
+    await tester.pumpAndSettle();
+    expect(panel.gaveWay(), isTrue);
+
+    panel.show();
+    await tester.pumpAndSettle();
     expect(_scrim, findsOneWidget);
+    expect(find.byType(AgentSidePanelView), findsOneWidget);
+    expect(panel.gaveWay(), isFalse);
+
+    await tester.tapAt(const Offset(10, 400));
+    await tester.pumpAndSettle();
+    expect(panel.shown, isFalse);
+    expect(find.byType(AgentSidePanelView), findsNothing);
+    tester.view.physicalSize = const Size(1600, 800);
+    await tester.pumpAndSettle();
+    expect(find.byType(AgentSidePanelView), findsNothing);
   });
 
   testWidgets('shown where the room is short for good, the panel is over '
@@ -2510,6 +2571,50 @@ void main() {
     expect(tabs.active, isNull);
     expect(tabs.section, SidePanelSection.files);
     expect(find.text('Select a file to preview it'), findsOneWidget);
+  });
+
+  testWidgets('a file closed and opened again shows where it was left, on '
+      'the next run too; lines asked for show over it', (tester) async {
+    const path = '/p/lib/long.dart';
+    final (:panel, :session, files: _) = await _pumpChat(
+      tester,
+      texts: {path: _lines(400, 'long line')},
+    );
+    final editor = find.descendant(
+      of: find.byType(FilePreview),
+      matching: find.byType(IdeCodeEditor),
+    );
+    int? top() =>
+        tester.state<IdeCodeEditorState>(editor).view?.viewState?.firstLine;
+    Future<void> reopen([FileLineRange? range]) async {
+      panel.close(session, panel.tabsOf(session).active!);
+      await tester.pumpAndSettle();
+      expect(editor, findsNothing);
+      panel.open(session, FileOpenRequest(path, range: range));
+      await tester.pumpAndSettle();
+    }
+
+    panel.open(session, const FileOpenRequest(path));
+    await tester.pumpAndSettle();
+    expect(top(), 1);
+    tester.binding.handlePointerEvent(
+      PointerScrollEvent(
+        position: tester.getCenter(editor),
+        scrollDelta: const Offset(0, 3000),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final scrolled = top()!;
+    expect(scrolled, greaterThan(50));
+
+    await reopen();
+    expect(top(), scrolled);
+    final next = AgentSidePanel(state: panel.toJson());
+    addTearDown(next.dispose);
+    expect(next.viewStateOf(path).editor?.firstLine, scrolled);
+
+    await reopen(const FileLineRange(5));
+    expect(top(), lessThan(5));
   });
 
   testWidgets('a link to a file in the project opens it in the side panel, '

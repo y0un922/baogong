@@ -56,6 +56,27 @@ class FakeLinkPlatform implements LinkPlatform {
 
   @override
   String? branchOf(String folder) => 'main';
+
+  /// What was posted ([postJson]), the latest last; answered with
+  /// [answer] (204 by default).
+  final List<(Uri, Map<String, Object?>)> posted = [];
+  (int, Object?) Function(Uri url, Map<String, Object?> body)? answer;
+
+  @override
+  Future<(int, Object?)> postJson(Uri url, Map<String, Object?> body) async {
+    posted.add((url, body));
+    return answer?.call(url, body) ?? (204, null);
+  }
+
+  /// The relays probed ([probeRelay]), the latest last; those in
+  /// [network]'s [MemoryLinkNetwork.relaysDown] do not answer.
+  final List<String> probed = [];
+
+  @override
+  Future<bool> probeRelay(String url) async {
+    probed.add(url);
+    return !network.relaysDown.contains(url);
+  }
 }
 
 class _Advertising implements LinkAdvertising {

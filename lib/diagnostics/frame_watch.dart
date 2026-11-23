@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io' show ProcessInfo;
-import 'dart:ui' show FrameTiming, PlatformDispatcher;
+import 'dart:ui' show FramePhase, FrameTiming, PlatformDispatcher;
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
@@ -32,6 +32,11 @@ class FrameWatch {
   /// view: its size): read only for a slow frame's line. Never what the
   /// user wrote.
   static final Map<Object, String Function()> notes = {};
+
+  /// How much the app holds that its work grows with (its agents, projects,
+  /// bots), each by what holds it: read only for a slow frame's line, to
+  /// tell an app grown slow over a long run.
+  static final Map<Object, String Function()> counts = {};
 
   static FrameWatch? _current;
 
@@ -118,8 +123,11 @@ class FrameWatch {
 
   void _timings(List<FrameTiming> timings) {
     for (final timing in timings) {
+      // The frame's own time, not now: a release build's engine tells of
+      // them a second's worth at a time, each batch a "pause" since the
+      // last, and no span was ever whole (E0A7T8YQ: none in weeks).
       final summary = _jank.add(
-        _clock.elapsedMicroseconds,
+        timing.timestampInMicroseconds(FramePhase.vsyncStart),
         ui: timing.buildDuration.inMicroseconds,
         raster: timing.rasterDuration.inMicroseconds,
       );
@@ -209,6 +217,8 @@ class FrameWatch {
       binding.semanticsEnabled ? 'semantics on, $nodes nodes' : 'semantics off',
       '$objects render objects',
       if (shown.isNotEmpty) 'chats ${shown.join(' / ')}',
+      for (final count in counts.values)
+        if (count() case final text when text.isNotEmpty) text,
       '${ProcessInfo.currentRss >> 20} MB',
       binding.lifecycleState?.name ?? 'no lifecycle',
       if (root != null && objects >= heavyObjects && _heavyDue())

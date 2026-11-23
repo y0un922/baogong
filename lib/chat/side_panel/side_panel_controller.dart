@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
 import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
@@ -13,6 +14,7 @@ import '../../ide/ide_explorer.dart';
 import '../../ide/search/ide_search_view.dart';
 import '../../ide/search/text_search.dart';
 import '../../ide/ide_diff_options.dart';
+import '../../ide/ide_view_state.dart';
 import '../../settings/user_settings.dart';
 import 'file_edit.dart';
 import 'file_open.dart';
@@ -51,14 +53,17 @@ class SidePanelTab {
   /// Its text differs from the file's, not saved.
   bool get dirty => edit?.dirty ?? false;
 
-  /// Its edit let go of, with its highlighting in [highlights], once its
-  /// preview (built with it until the tab closed) is gone.
-  void _dropEdit(IdeCodeHighlights highlights) {
+  /// Its edit let go of, with its highlighting in [panel]'s highlights,
+  /// once its preview (built with it until the tab closed) is gone: where
+  /// it was left kept in [panel], for the file opened again to show there.
+  void _dropEdit(AgentSidePanel panel) {
     final edit = this.edit;
     this.edit = null;
     if (edit != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        highlights.release(edit.controller);
+        // Its editor, gone, left its view in the controller.
+        panel._keepViewState(path, edit.controller);
+        panel.highlights.release(edit.controller);
         edit.dispose();
       });
     }
@@ -209,6 +214,7 @@ class AgentSidePanel extends ChangeNotifier {
         if (value is Map) _keptSearches['$key'] = value.cast<String, Object?>();
       }
     }
+    _viewStates.restore(state?['viewStates']);
   }
 
   /// Told when what [toJson] gives changed, to keep it.
@@ -225,6 +231,34 @@ class AgentSidePanel extends ChangeNotifier {
 
   /// The favorite branches, the same in every conversation.
   final IdeGitFavoriteBranches _favoriteBranches = IdeGitFavoriteBranches();
+
+  /// Where each file's tab was left (its editor's scroll and carets, its
+  /// markdown preview's line), by path: shown there when opened again, in
+  /// any conversation, as the IDE's editors are; kept between runs.
+  final IdeViewStates _viewStates = IdeViewStates();
+
+  /// Where [path]'s tab was left.
+  IdeViewState viewStateOf(String path) => _viewStates[path];
+
+  /// Keeps where [path]'s tab is, [update]d.
+  void keepViewState(
+    String path,
+    IdeViewState Function(IdeViewState kept) update,
+  ) {
+    if (_disposed) return;
+    _viewStates.keep(path, update(_viewStates[path]));
+    onSave?.call();
+  }
+
+  /// Keeps where [controller], [path]'s editor's, was left.
+  void _keepViewState(String path, EditorSurfaceController controller) =>
+      keepViewState(
+        path,
+        (kept) => kept.copyWith(
+          selections: controller.selections,
+          editor: controller.viewState,
+        ),
+      );
 
   /// [conversation]'s commit message, choices and log of [git]; its
   /// changes as a tree or a list as last picked ([changesAsTree]).
@@ -335,6 +369,7 @@ class AgentSidePanel extends ChangeNotifier {
   void setShownIn(Object conversation, bool shown) {
     if (shown) {
       _asks += 1;
+      _asksIn[conversation] = asksIn(conversation) + 1;
       _listAway = false;
     }
     if (shownIn(conversation) == shown && !shown) return;
@@ -497,6 +532,31 @@ class AgentSidePanel extends ChangeNotifier {
   int get asks => _asks;
   int _asks = 0;
 
+  /// As [asks], for [conversation]'s pane alone, of agents side by side.
+  int asksIn(Object conversation) => _asksIn[conversation] ?? 0;
+  final Expando<int> _asksIn = Expando();
+
+  /// Whether it gave way to the conversations, though shown: the window's
+  /// (or, of agents side by side, [conversation]'s pane's) too narrow for it
+  /// beside them, it is out of their way until the room is back, or it is
+  /// asked for again (see AgentSidePanelArea). Its toggles show it hidden
+  /// meanwhile, and show it again.
+  bool gaveWay([Object? conversation]) =>
+      _gaveWay[conversation ?? _window] ?? false;
+  final Expando<bool> _gaveWay = Expando();
+  static final _window = Object();
+
+  /// [gaveWay] the focused pane's, of agents side by side, else the
+  /// window's: what [show] and [hide] are for.
+  bool get givenWay => gaveWay(_pane);
+
+  /// As AgentSidePanelArea lays it out.
+  void setGaveWay(Object? conversation, bool gaveWay) {
+    if (this.gaveWay(conversation) == gaveWay) return;
+    _gaveWay[conversation ?? _window] = gaveWay;
+    notifyListeners();
+  }
+
   /// Shown: the focused pane's, of agents side by side ([pane]), else the
   /// window's.
   void show() {
@@ -626,7 +686,7 @@ class AgentSidePanel extends ChangeNotifier {
       // but for edits not saved.
       list.removeWhere((tab) {
         final other = tab.path != request.path && !tab.dirty;
-        if (other) tab._dropEdit(highlights);
+        if (other) tab._dropEdit(this);
         return other;
       });
     }
@@ -638,7 +698,7 @@ class AgentSidePanel extends ChangeNotifier {
           ? list.indexWhere((tab) => tab.preview)
           : -1;
       if (looked >= 0) {
-        list[looked]._dropEdit(highlights);
+        list[looked]._dropEdit(this);
         list[looked] = tab;
       } else {
         list.add(tab);
@@ -647,7 +707,7 @@ class AgentSidePanel extends ChangeNotifier {
       while (list.length > maxTabs) {
         final oldest = list.indexWhere((tab) => !tab.dirty);
         if (oldest < 0 || oldest == list.length - 1) break;
-        list.removeAt(oldest)._dropEdit(highlights);
+        list.removeAt(oldest)._dropEdit(this);
       }
     } else {
       // Opened for itself: kept.
@@ -681,7 +741,7 @@ class AgentSidePanel extends ChangeNotifier {
         ..request = request
         ..reveal += 1;
     } else {
-      tabs.plan?._dropEdit(highlights);
+      tabs.plan?._dropEdit(this);
       tabs.plan = SidePanelTab(request);
     }
     tabs.section = SidePanelSection.plan;
@@ -798,7 +858,7 @@ class AgentSidePanel extends ChangeNotifier {
   /// its tab shows whether it has unsaved changes.
   void keepEdit(SidePanelTab tab, SidePanelFileEdit edit) {
     if (identical(tab.edit, edit)) return;
-    tab._dropEdit(highlights);
+    tab._dropEdit(this);
     tab.edit = edit
       ..addListener(() {
         // A save may end once the panel is gone.
@@ -812,7 +872,7 @@ class AgentSidePanel extends ChangeNotifier {
   /// page with it, back to the changes page.
   void close(Object conversation, SidePanelTab tab) {
     final tabs = tabsOf(conversation);
-    tab._dropEdit(highlights);
+    tab._dropEdit(this);
     if (identical(tabs.plan, tab)) {
       tabs.plan = null;
       if (tabs.section == SidePanelSection.plan) {
@@ -856,6 +916,9 @@ class AgentSidePanel extends ChangeNotifier {
     'changesAsTree': _changesAsTree,
     if (_layout != ChatLayout.sidebarChatPanel) 'layout': _layout.name,
     if (_keptSearches.isNotEmpty) 'searches': {..._keptSearches},
+    if (_viewStates.toJson((_) => true) case final states
+        when states.isNotEmpty)
+      'viewStates': states,
   };
 
   bool _disposed = false;

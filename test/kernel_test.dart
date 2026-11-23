@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+
+import 'package:baocode/chat/widgets/web_step_icons.dart';
+
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -8,6 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:bao_remote/claude.dart'
     show ClaudeHistoryPage, ClaudeNotInstalled;
 import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/chat/compaction_text.dart';
+import 'package:baocode/l10n/app_localizations_zh.dart';
 import 'package:baocode/chat/widgets/agent_step.dart' show AgentStep;
 import 'package:baocode/models/model_provider.dart' show ModelProvider;
 import 'package:baocode/models/model_providers.dart' show ModelProviders;
@@ -30,7 +35,6 @@ import 'package:baocode/kernel/commit_attribution.dart';
 import 'package:baocode/kernel/extension_switches.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
-import 'package:baocode/kernel/next_prompt.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
@@ -58,6 +62,34 @@ Map<String, Object?> recordedResponse(String name, bool Function(Map) match) {
   throw StateError('no such response in $name');
 }
 
+/// A CLI that can hold `get_context_usage` answers until [answerContexts].
+class _DelayedContextCli extends FakeCli {
+  _DelayedContextCli({super.answers});
+
+  bool delayed = false;
+  final _pending = <Map<String, Object?>>[];
+
+  @override
+  void write(Map<String, Object?> message) {
+    final request = message['request'];
+    if (delayed &&
+        request is Map &&
+        request['subtype'] == 'get_context_usage') {
+      _pending.add(message);
+      return;
+    }
+    super.write(message);
+  }
+
+  void answerContexts() {
+    delayed = false;
+    for (final message in _pending) {
+      super.write(message);
+    }
+    _pending.clear();
+  }
+}
+
 /// Claude Code as the test speaks it: answers control requests the way the
 /// CLI does (from recordings), and records what the kernel wrote.
 /// A CLI that answers nothing: one that exits before it does.
@@ -67,11 +99,14 @@ class _SilentCli extends FakeCli {
 }
 
 class FakeCli implements ClaudeCodeTransport {
-  FakeCli({this.answers = const {}});
+  FakeCli({this.answers = const {}, this.refused = const {}});
 
   /// Responses by control request subtype; `initialize` and
   /// `get_context_usage` default to the recorded ones.
   final Map<String, Map<String, Object?>> answers;
+
+  /// Control request subtypes answered with an error.
+  final Set<String> refused;
   final StreamController<Map<String, Object?>> _out =
       StreamController.broadcast();
   final List<Map<String, Object?>> written = [];
@@ -116,6 +151,17 @@ class FakeCli implements ClaudeCodeTransport {
     written.add(message);
     if (message['type'] != 'control_request') return;
     final subtype = (message['request'] as Map)['subtype'] as String;
+    if (refused.contains(subtype)) {
+      push({
+        'type': 'control_response',
+        'response': {
+          'subtype': 'error',
+          'request_id': message['request_id'],
+          'error': 'refused',
+        },
+      });
+      return;
+    }
     final payload =
         answers[subtype] ??
         switch (subtype) {
@@ -195,11 +241,17 @@ class _SlowStartCli extends FakeCli {
 
 /// A kernel on [cli], with its events applied to a transcript.
 ({ClaudeCodeKernel kernel, Transcript transcript, List<KernelEvent> events})
-claude(FakeCli cli, {KernelContext context = const KernelContext(cwd: '/p')}) {
+claude(
+  FakeCli cli, {
+  KernelContext context = const KernelContext(cwd: '/p'),
+  ModelProviders? providers,
+}) {
   final kernel = ClaudeCodeKernel(
     MockKernels.claudeCode,
     context,
     start: (_) async => cli,
+    providers: providers,
+    providerEnvironment: (_, _) async => const {},
   );
   final transcript = Transcript();
   final events = <KernelEvent>[];
@@ -233,6 +285,60 @@ List<String> shown(Transcript transcript) => [
 ].where((line) => line.isNotEmpty).toList();
 
 void main() {
+  test("BaoCode's own core for Antigravity's: the session's model, or one "
+      'its roles pick', () async {
+    Future<bool> builtinCore(Map<String, Object?> roles, String model) async {
+      final providers = ModelProviders.memory(
+        providers: [
+          ModelProvider.fromJson({
+            'id': 'ds',
+            'name': 'DeepSeek',
+            'protocol': 'anthropic',
+            'baseUrl': 'https://example.com',
+            'models': [
+              {'id': 'deepseek-v4'},
+            ],
+            'roles': roles,
+          })!,
+          ModelProvider.fromJson({
+            'id': 'ag',
+            'name': 'Antigravity',
+            'protocol': 'antigravity',
+            'models': [
+              {'id': 'gemini-4-neon'},
+            ],
+          })!,
+        ],
+      );
+      final launches = <ClaudeLaunch>[];
+      final kernel = ClaudeCodeKernel(
+        MockKernels.claudeCode,
+        KernelContext(cwd: '/p', settings: {'model': model}),
+        start: (launch) async {
+          launches.add(launch);
+          return FakeCli();
+        },
+        providers: providers,
+        providerEnvironment: (_, _) async => const {},
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      kernel.dispose();
+      return launches.single.builtinCore;
+    }
+
+    expect(await builtinCore(const {}, '@ds/deepseek-v4'), isFalse);
+    expect(await builtinCore(const {}, '@ag/gemini-4-neon'), isTrue);
+    expect(
+      await builtinCore({'subagent': '@ag/gemini-4-neon'}, '@ds/deepseek-v4'),
+      isTrue,
+    );
+    expect(
+      await builtinCore({'haiku': '@ag/gemini-4-neon'}, '@ds/deepseek-v4'),
+      isTrue,
+    );
+  });
+
   group('Claude Code translator (recorded)', () {
     test('tools, a background command and a subagent', () {
       final transcript = Transcript();
@@ -335,6 +441,65 @@ void main() {
         [for (var i = 0; i < transcript.length; i++) transcript.itemAt(i)]
             .whereType<UserMessageItem>(),
         hasLength(1),
+      );
+    });
+
+    test('a compaction the provider forced says so: live or kept', () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      );
+      translator
+        ..translate({
+          'type': 'system',
+          'subtype': 'compact_boundary',
+          'uuid': 'at-window',
+          'compact_metadata': {'trigger': 'auto', 'pre_tokens': 467000},
+        })
+        ..translate({
+          'type': 'system',
+          'subtype': 'compact_boundary',
+          'uuid': 'live',
+          'compact_metadata': {
+            'trigger': 'auto',
+            'pre_tokens': 253000,
+            'post_tokens': 12000,
+            'reason': 'prompt_too_long',
+            'context_window': 500000,
+          },
+        })
+        ..translate({
+          'type': 'system',
+          'subtype': 'compact_boundary',
+          'uuid': 'kept',
+          'compactMetadata': {
+            'trigger': 'auto',
+            'preTokens': 253000,
+            'reason': 'prompt_too_long',
+            'contextWindow': 500000,
+          },
+        });
+      final notices = [
+        for (var i = 0; i < transcript.length; i++) transcript.itemAt(i),
+      ].whereType<NoticeItem>().toList();
+      expect(notices, hasLength(3));
+      expect(
+        notices[0].text,
+        startsWith('Conversation compacted automatically'),
+      );
+      expect(notices[0].compaction!.tooLong, isFalse);
+      for (final notice in notices.skip(1)) {
+        expect(notice.text, contains('refused it as too long'));
+        expect(notice.text, contains('500.0k context set'));
+        expect(notice.compaction!.tooLong, isTrue);
+      }
+      // Said in the app's language.
+      expect(
+        notices[1].compaction!.describe(AppLocalizationsZh()),
+        '对话已提前压缩：服务商以超出模型上下文为由拒绝了请求，'
+        '模型实际能用的比设定的 500.0k 小 · 253.0k → 12.0k token',
       );
     });
 
@@ -494,6 +659,61 @@ void main() {
       expect(toolVerb(ToolKind.message), 'Said');
     });
 
+    test("a web search's long result keeps its Links line whole", () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      )..turnId = '11111111-1111-4111-8111-111111111111';
+      // Fifteen results with long redirect URLs: the list alone runs past
+      // the 2000 characters an output is cut to.
+      final links = jsonEncode([
+        for (var i = 0; i < 15; i++)
+          {
+            'title': 'Result $i',
+            'url': 'https://site$i.example/go/${'x' * 180}',
+          },
+      ]);
+      final result =
+          'Web search results for query: "q"\n\nLinks: $links\n\n'
+          '${'Summary line.\n' * 200}';
+      translator
+        ..translate({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': 'msg-w1',
+            'role': 'assistant',
+            'content': [
+              {
+                'type': 'tool_use',
+                'id': 'w1',
+                'name': 'WebSearch',
+                'input': {'query': 'q'},
+              },
+            ],
+          },
+        })
+        ..translate({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {'type': 'tool_result', 'tool_use_id': 'w1', 'content': result},
+            ],
+          },
+        });
+      final item = [
+        for (var i = 0; i < transcript.length; i++) transcript.itemAt(i),
+      ].whereType<ToolCallItem>().single;
+      expect(item.output, contains('Links: $links'));
+      expect(item.output, endsWith(links));
+      expect(item.output!.length, lessThan(result.length));
+      expect(webSearchResultSites(item.output), hasLength(15));
+    });
+
     test('todos written read as a step: the list its text', () {
       final transcript = Transcript();
       var seq = 0;
@@ -618,6 +838,87 @@ void main() {
       ));
     });
 
+    test('a workflow is a card, its subagents in it as they go (#836)', () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      )..turnId = '11111111-1111-4111-8111-111111111111';
+      AgentItem card() =>
+          [for (var i = 0; i < transcript.length; i++) transcript.itemAt(i)]
+              .whereType<AgentItem>()
+              .single;
+      var queued = false;
+      for (final message in recorded('workflow')) {
+        translator.translate(message);
+        if (message['subtype'] == 'task_progress' &&
+            message['workflow_progress'] != null &&
+            !queued) {
+          // The first look: one started, the other waiting its turn.
+          queued = true;
+          final [a, b] = card().children.cast<AgentItem>();
+          expect(a.status, CommandStatus.running);
+          expect(a.startedAt, isNotNull);
+          expect(a.prompt, startsWith('Read the file at /p/a.txt'));
+          expect(b.activity, 'Queued');
+        }
+      }
+      expect(queued, isTrue);
+      final workflow = card();
+      expect(workflow.agentType, ClaudeTranslator.workflowAgentType);
+      expect(
+        workflow.description,
+        'Fan out two agents in parallel to read a.txt and b.txt and return '
+        'their contents',
+      );
+      expect(workflow.background, isTrue);
+      expect(workflow.status, CommandStatus.succeeded);
+      expect(workflow.duration, const Duration(milliseconds: 14722));
+      expect(workflow.prompt, contains('export const meta'));
+      expect(
+        [
+          for (final agent in workflow.children.cast<AgentItem>())
+            (agent.description, agent.status, agent.result?.trim()),
+        ],
+        [
+          ('read:a.txt', CommandStatus.succeeded, 'hello'),
+          ('read:b.txt', CommandStatus.succeeded, 'world'),
+        ],
+      );
+      expect(transcript.tasks.single.background, isTrue);
+    });
+
+    test('a subagent continued once it ended counts the time it ran '
+        'before (#751)', () {
+      final done = AgentItem(
+        description: 'Read',
+        status: CommandStatus.succeeded,
+        duration: const Duration(seconds: 40),
+        startedAt: DateTime(2026),
+      );
+      final again = done.continuedAt(DateTime(2026, 1, 1, 0, 10));
+      expect(again.status, CommandStatus.running);
+      expect(again.ranBefore, const Duration(seconds: 40));
+      expect(
+        AgentStep.elapsed(again, now: DateTime(2026, 1, 1, 0, 10, 5)),
+        const Duration(seconds: 45),
+      );
+      final ended = again.copyWith(
+        status: CommandStatus.succeeded,
+        duration: const Duration(seconds: 20),
+      );
+      expect(AgentStep.elapsed(ended), const Duration(seconds: 60));
+      expect(
+        AgentStep.elapsed(
+          ended
+              .continuedAt(DateTime(2026, 1, 2))
+              .copyWith(duration: const Duration(seconds: 1)),
+        ),
+        const Duration(seconds: 61),
+      );
+    });
+
     test('a subagent shows the model its messages ran on, as it runs; '
         'the one the CLI resolved only without them', () {
       final transcript = Transcript();
@@ -682,6 +983,190 @@ void main() {
       start('a2');
       done('a2');
       expect(model('a2'), 'claude-sonnet-5-5');
+    });
+
+    group('a skill run in a subagent of its own (context: fork)', () {
+      Map<String, Object?> started(String task, {String? call}) => {
+        'type': 'system',
+        'subtype': 'task_started',
+        'task_id': task,
+        'tool_use_id': ?call,
+        'description': '/count-lines',
+        'subagent_type': 'general-purpose',
+        'is_backgrounded': false,
+        'task_type': 'local_agent',
+        'prompt': 'Run `wc -l a.py`, then answer with the number.',
+      };
+      Map<String, Object?> ended(String task, {String? call}) => {
+        'type': 'system',
+        'subtype': 'task_notification',
+        'task_id': task,
+        'tool_use_id': ?call,
+        'status': 'completed',
+        'summary': '/count-lines',
+      };
+      Map<String, Object?> said(String? parent, String text) => {
+        'type': 'assistant',
+        'parent_tool_use_id': parent,
+        'message': {
+          'id': 'msg-${parent ?? 'main'}-$text',
+          'role': 'assistant',
+          'content': [
+            {'type': 'text', 'text': text},
+          ],
+        },
+      };
+      AgentItem card(Transcript transcript) =>
+          [for (final (_, item) in transcript.liveItems) item]
+              .whereType<AgentItem>()
+              .single;
+
+      test('called by the model: the Skill call is a subagent\'s card, its '
+          'messages in it as they come', () {
+        final transcript = Transcript();
+        var seq = 0;
+        final translator = ClaudeTranslator(
+          emit: transcript.apply,
+          nextSeq: () => ++seq,
+        )..turnId = '11111111-1111-4111-8111-111111111111';
+        translator.translate({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': 'msg-1',
+            'role': 'assistant',
+            'content': [
+              {
+                'type': 'tool_use',
+                'id': 'toolu_1',
+                'name': 'Skill',
+                'input': {'skill': 'count-lines'},
+              },
+            ],
+          },
+        });
+        translator
+          ..translate(started('a1', call: 'toolu_1'))
+          ..translate(said('toolu_1', 'Counting'));
+        expect(shown(transcript), ['agent: /count-lines']);
+        expect(card(transcript).status, CommandStatus.running);
+        expect(card(transcript).agentType, 'general-purpose');
+        expect(card(transcript).children, hasLength(1));
+
+        translator
+          ..translate(ended('a1', call: 'toolu_1'))
+          ..translate({
+            'type': 'user',
+            'parent_tool_use_id': null,
+            'message': {
+              'role': 'user',
+              'content': [
+                {
+                  'type': 'tool_result',
+                  'tool_use_id': 'toolu_1',
+                  'content':
+                      'Skill "count-lines" completed (forked execution).'
+                      '\n\nResult:\n7',
+                },
+              ],
+            },
+            'tool_use_result': {
+              'success': true,
+              'commandName': 'count-lines',
+              'status': 'forked',
+              'agentId': 'a1',
+              'result': '7',
+            },
+          });
+        expect(shown(transcript), ['agent: /count-lines']);
+        expect(card(transcript).status, CommandStatus.succeeded);
+        expect(card(transcript).result, '7');
+      });
+
+      test('run from a slash command: a card from the start, its messages in '
+          'it once done, as the CLI gives them only then', () {
+        final transcript = Transcript();
+        var seq = 0;
+        final translator = ClaudeTranslator(
+          emit: transcript.apply,
+          nextSeq: () => ++seq,
+        )..turnId = '11111111-1111-4111-8111-111111111111';
+        translator.translate(started('a2'));
+        expect(shown(transcript), ['agent: /count-lines']);
+        expect(card(transcript).status, CommandStatus.running);
+        expect(card(transcript).startedAt, isNotNull);
+
+        translator
+          ..translate(ended('a2'))
+          ..translate(said('forked-command-count-lines', 'Counting'))
+          ..translate(said('forked-command-count-lines', '7'))
+          ..translate(said(null, 'a.py has 7 lines.'));
+        expect(shown(transcript), [
+          'agent: /count-lines',
+          'text: a.py has 7 lines.',
+        ]);
+        expect(card(transcript).status, CommandStatus.succeeded);
+        expect(card(transcript).children, hasLength(2));
+      });
+
+      test(
+        'a subagent\'s task no call or slash command started gets no card',
+        () {
+          final transcript = Transcript();
+          var seq = 0;
+          ClaudeTranslator(emit: transcript.apply, nextSeq: () => ++seq)
+            ..turnId = '11111111-1111-4111-8111-111111111111'
+            ..translate({
+              ...started('a3'),
+              'description': 'Watch',
+              'is_backgrounded': true,
+            });
+          expect(shown(transcript), isEmpty);
+        },
+      );
+
+      test('kept: a Skill call run forked shows as a subagent\'s card', () {
+        final transcript = Transcript();
+        var seq = 0;
+        final translator = ClaudeTranslator(
+          emit: transcript.apply,
+          nextSeq: () => ++seq,
+        )..turnId = '11111111-1111-4111-8111-111111111111';
+        translator
+          ..translate({
+            'type': 'assistant',
+            'parent_tool_use_id': null,
+            'message': {
+              'id': 'msg-1',
+              'role': 'assistant',
+              'content': [
+                {
+                  'type': 'tool_use',
+                  'id': 'toolu_2',
+                  'name': 'Skill',
+                  'input': {'skill': 'count-lines'},
+                },
+              ],
+            },
+          })
+          ..translate({
+            'type': 'user',
+            'parent_tool_use_id': null,
+            'message': {
+              'role': 'user',
+              'content': [
+                {
+                  'type': 'tool_result',
+                  'tool_use_id': 'toolu_2',
+                  'content': '',
+                },
+              ],
+            },
+            'toolUseResult': {'status': 'forked', 'result': '7'},
+          });
+        expect(shown(transcript), ['agent: /count-lines']);
+        expect(card(transcript).result, '7');
+      });
     });
 
     test('a subagent\'s model reads as people read it', () {
@@ -1608,6 +2093,50 @@ void main() {
         event({'type': 'message_stop'});
         expect(shown(transcript), ['text: The answer']);
       });
+
+      test('a text block only blank never shows; one that goes on to say '
+          'something shows from then, all of it', () {
+        event({
+          'type': 'message_start',
+          'message': {'id': 'msg-1'},
+        });
+        streamText('msg-1', 0, '\n\n');
+        expect(shown(transcript), isEmpty);
+        event({
+          'type': 'content_block_start',
+          'index': 1,
+          'content_block': {'type': 'text', 'text': ''},
+        });
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': '\n'},
+        });
+        expect(shown(transcript), isEmpty);
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': 'Hi'},
+        });
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': ' there'},
+        });
+        event({'type': 'content_block_stop', 'index': 1});
+        expect(transcript.length, 1);
+        expect(transcript.itemAt(0), isA<AssistantTextItem>());
+        expect((transcript.itemAt(0) as AssistantTextItem).text, '\nHi there');
+        translator.translate(
+          whole('u-1', 'msg-1', [
+            {'type': 'text', 'text': '\n\n'},
+            {'type': 'text', 'text': '\nHi there'},
+          ]),
+        );
+        event({'type': 'message_stop'});
+        expect(transcript.length, 1);
+        expect((transcript.itemAt(0) as AssistantTextItem).text, '\nHi there');
+      });
     });
   });
 
@@ -2190,6 +2719,130 @@ void main() {
       kernel.dispose();
     });
 
+    test("in full access one of the app's tools that asks is answered "
+        'without asking', () async {
+      ClaudeSdkTools.register(
+        ClaudeSdkTool(
+          name: 'ask_me',
+          description: 'Asks.',
+          inputSchema: const {'type': 'object'},
+          asksItself: true,
+          run: (input, call) async =>
+              '${await call.ask!(const ApprovalRequest(id: '', title: 'Run it here?', toolName: 'mcp__baocode__ask_me'))}',
+        ),
+      );
+      addTearDown(() => ClaudeSdkTools.unregister('ask_me'));
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(
+        cli,
+        context: const KernelContext(
+          cwd: '/p',
+          settings: {'permission': 'bypassPermissions'},
+        ),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'go'));
+      await pumpEventQueue();
+      cli.push({
+        'type': 'control_request',
+        'request_id': 'm1',
+        'request': {
+          'subtype': 'mcp_message',
+          'server_name': 'baocode',
+          'message': {
+            'jsonrpc': '2.0',
+            'id': 5,
+            'method': 'tools/call',
+            'params': {'name': 'ask_me', 'arguments': <String, Object?>{}},
+          },
+        },
+      });
+      await pumpEventQueue();
+      expect(transcript.pendingInteraction, isNull);
+      final mcp = cli.responses.last['mcp_response']! as Map;
+      expect(((mcp['result'] as Map)['content'] as List).single, {
+        'type': 'text',
+        'text': 'ApprovalDecision.allowOnce',
+      });
+      kernel.dispose();
+    });
+
+    test("the picked model's safeguards flag a message: the one answering "
+        'instead is shown until the picked one is switched back to', () async {
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(
+        cli,
+        context: const KernelContext(cwd: '/p', settings: {'model': 'opus'}),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'go'));
+      await pumpEventQueue();
+      expect(kernel.model.selected, 'opus');
+      expect(kernel.fallbackModel, isNull);
+
+      // A subagent's alone leaves the session's model as it is.
+      cli.push({
+        'type': 'system',
+        'subtype': 'model_refusal_fallback',
+        'direction': 'retry',
+        'scope': 'local',
+        'original_model': 'claude-opus-5-5',
+        'fallback_model': 'claude-opus-4-8',
+        'uuid': 'f0',
+      });
+      await pumpEventQueue();
+      expect(kernel.fallbackModel, isNull);
+
+      cli.push({
+        'type': 'system',
+        'subtype': 'model_refusal_fallback',
+        'direction': 'retry',
+        'scope': 'session',
+        'original_model': 'claude-opus-5-5',
+        'fallback_model': 'claude-opus-4-8',
+        'content': 'Switched to Opus 4.8.',
+        'uuid': 'f1',
+      });
+      await pumpEventQueue();
+      expect(kernel.fallbackModel, 'Opus 4.8');
+      // Still the one picked, the one to go back to.
+      expect(kernel.model.selected, 'opus');
+      expect(
+        shown(transcript),
+        contains('notice warning: Switched to Opus 4.8.'),
+      );
+
+      // Picking it again switches back, though it is the one picked.
+      final asked = cli.requests('set_model').length;
+      kernel.model.select('opus');
+      await pumpEventQueue();
+      expect(cli.requests('set_model'), hasLength(asked + 1));
+      expect(cli.requests('set_model').last['model'], 'opus');
+      expect(kernel.fallbackModel, isNull);
+
+      // As endFallback does.
+      cli.push({
+        'type': 'system',
+        'subtype': 'model_refusal_fallback',
+        'scope': 'session',
+        'fallback_model': 'claude-opus-4-8',
+        'uuid': 'f2',
+      });
+      await pumpEventQueue();
+      expect(kernel.fallbackModel, 'Opus 4.8');
+      kernel.endFallback();
+      await pumpEventQueue();
+      expect(cli.requests('set_model'), hasLength(asked + 2));
+      expect(kernel.fallbackModel, isNull);
+      kernel.dispose();
+    });
+
+    test('Claude model ids as names', () {
+      expect(claudeModelName('claude-opus-4-8'), 'Opus 4.8');
+      expect(claudeModelName('claude-sonnet-4-5-20250929'), 'Sonnet 4.5');
+      expect(claudeModelName('claude-opus-5-5[1m]'), 'Opus 5.5');
+      expect(claudeModelName('claude-haiku-5'), 'Haiku 5');
+      expect(claudeModelName('gpt-5'), 'gpt-5');
+    });
+
     test('a tool asks leave; always allowing sends its rules', () async {
       final cli = FakeCli();
       final (:kernel, :transcript, events: _) = claude(cli);
@@ -2401,7 +3054,7 @@ void main() {
       );
       expect(
         ClaudeTranslator.planStartedNote(''),
-        contains('Carry out the plan you put to them now.'),
+        contains('Carry out the plan you put to them now,'),
       );
       kernel.dispose();
     });
@@ -2593,6 +3246,30 @@ void main() {
           const ApprovalAnswer(ApprovalDecision.allowOnce),
         );
       }
+      // In Plan, what the classifier never weighed (auto mode not there for
+      // the account, though the model has it) is approved as in Agent;
+      // what it held back is the user's.
+      kernel.mode.select('plan');
+      ask('r2-plan', 'Bash', command, {
+        'decision_reason_type': 'other',
+        'decision_reason': 'This command requires approval',
+      });
+      await pumpEventQueue();
+      expect(transcript.pendingInteraction, isNull);
+      expect(cli.responses.last, {
+        'behavior': 'allow',
+        'updatedInput': command,
+      });
+      ask('r2-classified', 'Bash', command, {
+        'decision_reason_type': 'classifier',
+      });
+      await pumpEventQueue();
+      expect(transcript.pendingInteraction, isA<ApprovalRequest>());
+      kernel.answer(
+        'r2-classified',
+        const ApprovalAnswer(ApprovalDecision.allowOnce),
+      );
+      kernel.mode.select('agent');
       // The plan is put to the user, not asked about.
       ask('r3', 'ExitPlanMode', {'plan': '1. Do it'});
       await pumpEventQueue();
@@ -2619,6 +3296,46 @@ void main() {
       await pumpEventQueue();
       expect(transcript.pendingInteraction, isNull);
       expect(cli.responses.last['message'], ClaudeTranslator.planPresented);
+      kernel.dispose();
+    });
+
+    test('full access picked with a card up answers what it approves, and '
+        'leaves what it would ask all the same', () async {
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel.permission.select('acceptEdits');
+      kernel.send(const KernelTurn(id: 'u1', text: 'go'));
+      await pumpEventQueue();
+      const command = {'command': 'npm test', 'description': 'Test'};
+      void ask(String id, [Map<String, Object?> why = const {}]) => cli.push({
+        'type': 'control_request',
+        'request_id': id,
+        'request': {
+          'subtype': 'can_use_tool',
+          'tool_name': 'Bash',
+          'input': command,
+          ...why,
+        },
+      });
+      ask('plain', {'decision_reason': 'This command requires approval'});
+      ask('ruled', {
+        'decision_reason_type': 'rule',
+        'matched_ask_rule': {'toolName': 'Bash'},
+      });
+      await pumpEventQueue();
+      expect(cli.responses, isEmpty);
+      expect(transcript.pendingInteraction, isA<ApprovalRequest>());
+
+      kernel.permission.select('bypassPermissions');
+      await pumpEventQueue();
+      expect(cli.responses, [
+        {'behavior': 'allow', 'updatedInput': command},
+      ]);
+      expect(transcript.pendingInteraction?.id, 'ruled');
+      kernel.answer('ruled', const ApprovalAnswer(ApprovalDecision.deny));
+      await pumpEventQueue();
+      expect(cli.responses.last['behavior'], 'deny');
+      expect(transcript.pendingInteraction, isNull);
       kernel.dispose();
     });
 
@@ -3911,6 +4628,272 @@ void main() {
       kernel.dispose();
     });
 
+    Future<void> checkContextSequence({
+      required int provisional,
+      required Map<String, Object?> finalUsage,
+      required int finalTotal,
+      required int resultTotal,
+      bool custom = false,
+      bool finalAfterStop = false,
+      bool nextRequest = false,
+    }) async {
+      Map<String, Object?> counted(int total) => {
+        'totalTokens': total,
+        'maxTokens': 200000,
+        'categories': [
+          {'name': 'Messages', 'tokens': total},
+          {'name': 'Free space', 'tokens': 200000 - total, 'kind': 'free'},
+        ],
+      };
+      final answers = {'get_context_usage': counted(1000)};
+      final cli = _DelayedContextCli(answers: answers);
+      final providers = custom
+          ? ModelProviders.memory(
+              providers: [
+                ModelProvider.fromJson({
+                  'id': 'od',
+                  'name': 'open-design',
+                  'protocol': 'anthropic',
+                  'baseUrl': 'https://example.com',
+                  'models': [
+                    {'id': 'kimi-k3.1-pro', 'label': 'Kimi'},
+                  ],
+                })!,
+              ],
+            )
+          : null;
+      final (:kernel, :transcript, events: _) = claude(
+        cli,
+        providers: providers,
+        context: custom
+            ? const KernelContext(
+                cwd: '/p',
+                settings: {'model': '@od/kimi-k3.1-pro'},
+              )
+            : const KernelContext(cwd: '/p'),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      expect(transcript.usage!.used, 1000);
+
+      Future<void> push(Map<String, Object?> message) async {
+        cli.push(message);
+        await pumpEventQueue();
+      }
+
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {
+          'type': 'message_start',
+          'message': {
+            'id': 'm1',
+            'model': 'claude-opus-5-5',
+            'usage': {'input_tokens': provisional, 'output_tokens': 0},
+          },
+        },
+      });
+      final provisionalUsage = {
+        'input_tokens': provisional,
+        'output_tokens': 0,
+      };
+      Map<String, Object?> reply(
+        Map<String, Object?> usage, {
+        String? stopReason,
+      }) => {
+        'type': 'assistant',
+        'parent_tool_use_id': null,
+        'message': {
+          'id': 'm1',
+          'model': 'claude-opus-5-5',
+          'role': 'assistant',
+          'content': const [],
+          'stop_reason': stopReason,
+          'usage': usage,
+        },
+      };
+      await push(reply(provisionalUsage));
+      expect(
+        transcript.usage!.used,
+        1000,
+        reason: 'a streamed provisional snapshot does not move the total',
+      );
+
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {
+          'type': 'message_delta',
+          'delta': {'stop_reason': 'end_turn'},
+          'usage': finalAfterStop ? const {'output_tokens': 0} : finalUsage,
+        },
+      });
+      if (!finalAfterStop) {
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'the final merged request replaces its provisional usage',
+        );
+      }
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {'type': 'message_stop'},
+      });
+      await push(
+        finalAfterStop
+            ? reply(finalUsage, stopReason: 'end_turn')
+            : reply(provisionalUsage, stopReason: 'end_turn'),
+      );
+      expect(
+        transcript.usage!.used,
+        finalTotal,
+        reason: finalAfterStop
+            ? 'a late final assistant replaces its provisional usage'
+            : 'a late provisional snapshot cannot undo the final usage',
+      );
+      answers['get_context_usage'] = counted(resultTotal);
+      cli.delayed = true;
+      await push({'type': 'result', 'subtype': 'success'});
+      if (nextRequest) {
+        await push({
+          'type': 'stream_event',
+          'parent_tool_use_id': null,
+          'event': {
+            'type': 'message_start',
+            'message': {
+              'id': 'm2',
+              'model': 'claude-opus-5-5',
+              'usage': {'input_tokens': 7000, 'output_tokens': 0},
+            },
+          },
+        });
+        cli.answerContexts();
+        await pumpEventQueue();
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'the previous result cannot clear the next request',
+        );
+        await push({
+          'type': 'stream_event',
+          'parent_tool_use_id': null,
+          'event': {
+            'type': 'message_delta',
+            'delta': {'stop_reason': 'end_turn'},
+            'usage': {
+              'input_tokens': 2000,
+              'cache_read_input_tokens': 10000,
+              'output_tokens': 100,
+            },
+          },
+        });
+        expect(transcript.usage!.used, 12100);
+      } else {
+        await push({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {'type': 'tool_result', 'tool_use_id': 'tool1', 'content': 'ok'},
+            ],
+          },
+        });
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'a result waiting for fresh CLI usage keeps the final total',
+        );
+        cli.answerContexts();
+        await pumpEventQueue();
+        expect(
+          transcript.usage!.used,
+          custom ? finalTotal : resultTotal,
+          reason: custom
+              ? 'a proxy result keeps the model total, not the proxy estimate'
+              : 'the result lets the CLI recalibrate the completed request',
+        );
+      }
+      kernel.dispose();
+    }
+
+    test('final streamed usage corrects a provisional context below it, '
+        'then the result recalibrates it', () async {
+      await checkContextSequence(
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
+    });
+
+    test('final streamed usage corrects a provisional context above it, '
+        'then the result recalibrates it', () async {
+      await checkContextSequence(
+        provisional: 200000,
+        finalUsage: {
+          'input_tokens': 1000,
+          'cache_read_input_tokens': 50000,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 100,
+        },
+        finalTotal: 51100,
+        resultTotal: 50000,
+      );
+    });
+
+    test('custom upstream final usage survives the result', () async {
+      await checkContextSequence(
+        custom: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 3400000,
+      );
+    });
+
+    test('a late final assistant after message_stop replaces provisional '
+        'usage', () async {
+      await checkContextSequence(
+        finalAfterStop: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
+    });
+
+    test('a delayed result does not clear the next request', () async {
+      await checkContextSequence(
+        nextRequest: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
+    });
+
     group("the tools' results are counted here, an image as one", () {
       // As Claude Code counts them: a screenshot's base64 as text.
       final told = {
@@ -3975,10 +4958,9 @@ void main() {
         await pumpEventQueue();
         var detail = transcript.usage!.detail!;
         expect(detail.toolResults, 1500);
-        expect(
-          detail.toolUses.map((item) => (item.name, item.results)),
-          [('Screenshot', 1500)],
-        );
+        expect(detail.toolUses.map((item) => (item.name, item.results)), [
+          ('Screenshot', 1500),
+        ]);
 
         cli.push({'type': 'system', 'subtype': 'compact_boundary'});
         await pumpEventQueue();
@@ -5992,31 +6974,6 @@ void main() {
       });
     });
 
-    test(
-      'suggests the next prompt once a turn ends, until one is sent',
-      () async {
-        final cli = FakeCli();
-        final (:kernel, :transcript, events: _) = claude(cli);
-        kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
-        await pumpEventQueue();
-        expect(cli.requests('initialize').single['promptSuggestions'], isTrue);
-        cli
-          ..push({'type': 'result', 'subtype': 'success', 'is_error': false})
-          ..push({'type': 'prompt_suggestion', 'suggestion': 'Run the tests'});
-        await pumpEventQueue();
-        expect(transcript.activeTurn, isNull);
-        expect(kernel.promptSuggestion, 'Run the tests');
-
-        kernel.send(const KernelTurn(id: 'u2', text: 'something else'));
-        expect(kernel.promptSuggestion, isNull);
-        // Late, for a turn now past: not offered.
-        cli.push({'type': 'prompt_suggestion', 'suggestion': 'Stale'});
-        await pumpEventQueue();
-        expect(kernel.promptSuggestion, isNull);
-        kernel.dispose();
-      },
-    );
-
     test('lists MCP servers; toggling and signing in go to the CLI', () async {
       final cli = FakeCli(
         answers: {
@@ -6224,6 +7181,38 @@ void main() {
     final theirs = arguments(userServers: true);
     expect(theirs[theirs.indexOf('--tools') + 1], 'Bash,Read');
     expect(theirs, isNot(contains('--strict-mcp-config')));
+  });
+
+  test('the system prompt in a file: not on the command line, whose length '
+      'Windows limits', () {
+    const own = ClaudeLaunch(
+      cwd: '/p',
+      instructions: 'a bot',
+      ownPrompt: true,
+      tools: ['Read'],
+      userServers: true,
+    );
+    final filed = own.withPromptFile('/t/prompt.md');
+    expect(
+      filed.arguments,
+      containsAllInOrder(['--system-prompt-file', '/t/prompt.md']),
+    );
+    expect(filed.arguments, isNot(contains('a bot')));
+    expect(filed.arguments, isNot(contains('--system-prompt')));
+    expect(filed.systemPrompt, 'a bot');
+    // Copied whole: its MCP servers kept.
+    expect(filed.arguments, isNot(contains('--strict-mcp-config')));
+    const appended = ClaudeLaunch(cwd: '/p', instructions: 'a workspace');
+    final arguments = appended.withPromptFile('/t/prompt.md').arguments;
+    expect(
+      arguments,
+      containsAllInOrder(['--append-system-prompt-file', '/t/prompt.md']),
+    );
+    expect(arguments, isNot(contains('--append-system-prompt')));
+    expect(
+      appended.systemPrompt,
+      '${ClaudeLaunch.appendedSystemPrompt}\n\na workspace',
+    );
   });
 
   group('commit attribution', () {
@@ -6799,14 +7788,22 @@ exec /usr/bin/env "\$@"
         '<command-name>/model</command-name>\n'
             '<command-args></command-args>',
       );
+      // The app's note alone, as the bots' world is sent when the user
+      // said nothing: kept, for it to go on in.
       session('notes', [
         {
           'type': 'text',
           'text':
-              '<system-reminder>The user no longer has a file open in the '
-              'editor.</system-reminder>',
+              '<system-reminder>Now: Thursday 2026-11-12 15:37:56.\n'
+              'What is new: …</system-reminder>',
         },
       ]);
+      // A bot's, told only by the app: kept, for it to go on in.
+      session(
+        'bot',
+        '<bao-event>\n[group g1] The group chat "Team": you, Leo.\n'
+            'New in it: message #3.\n</bao-event>',
+      );
 
       final sessions = (await ClaudeStorage(
         configDir: config,
@@ -6819,6 +7816,8 @@ exec /usr/bin/env "\$@"
           'phone': 'why is this red',
           'goal': '/goal fix #149 and #148',
           'design': '/design a settings page',
+          'bot': '[group g1] The group chat "Team": you, Leo.',
+          'notes': '',
         },
       );
     });
@@ -7075,6 +8074,81 @@ exec /usr/bin/env "\$@"
       expect(storage.fork('../p', into), throwsArgumentError);
     });
 
+    test('a fork keeps tools called at once, each with its result', () async {
+      final root = await Directory.systemTemp.createTemp('baocode-storage-');
+      addTearDown(() => root.delete(recursive: true));
+      final config = '${root.path}/config';
+      const id = 'aaaaaaaa-1111-4111-8111-111111111111';
+      const into = 'bbbbbbbb-2222-4222-8222-222222222222';
+      Map<String, Object?> call(String uuid, String parent, String tool) => {
+        'type': 'assistant',
+        'uuid': uuid,
+        'parentUuid': parent,
+        'message': {
+          'id': 'msg_1',
+          'role': 'assistant',
+          'content': [
+            {'type': 'tool_use', 'id': tool, 'name': 'Read'},
+          ],
+        },
+      };
+      Map<String, Object?> result(String uuid, String parent, String tool) => {
+        'type': 'user',
+        'uuid': uuid,
+        'parentUuid': parent,
+        'sourceToolAssistantUUID': parent,
+        'message': {
+          'role': 'user',
+          'content': [
+            {'type': 'tool_result', 'tool_use_id': tool},
+          ],
+        },
+      };
+      // As the CLI writes two reads at once: the second result hangs off
+      // the second call, the first off the first, and the turn goes on
+      // from the first's.
+      File('$config/projects/-p/$id.jsonl')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          [
+            {
+              'type': 'user',
+              'uuid': 'u1',
+              'parentUuid': null,
+              'message': {'role': 'user', 'content': 'read both'},
+            },
+            call('c1', 'u1', 't1'),
+            call('c2', 'c1', 't2'),
+            result('r2', 'c2', 't2'),
+            result('r1', 'c1', 't1'),
+            {
+              'type': 'assistant',
+              'uuid': 'a2',
+              'parentUuid': 'r1',
+              'message': {'id': 'msg_2', 'role': 'assistant', 'content': 'ok'},
+            },
+            // A subagent's line: not the conversation's.
+            {
+              'type': 'assistant',
+              'uuid': 'side',
+              'parentUuid': 'u1',
+              'isSidechain': true,
+              'message': {'id': 'msg_1', 'role': 'assistant', 'content': []},
+            },
+          ].map((line) => '${jsonEncode(line)}\n').join(),
+        );
+      final storage = ClaudeStorage(configDir: config);
+
+      final path = await storage.fork(id, into);
+      expect(
+        [
+          for (final line in File(path).readAsLinesSync())
+            (jsonDecode(line) as Map)['uuid'],
+        ],
+        ['u1', 'c1', 'c2', 'r2', 'r1', 'a2'],
+      );
+    });
+
     test('a folder\'s sessions move to another\'s, with what is kept beside '
         'them and its memory; a folder dashed alike keeps its own', () async {
       final root = await Directory.systemTemp.createTemp('baocode-move-');
@@ -7162,16 +8236,6 @@ exec /usr/bin/env "\$@"
 
     setUp(() {
       server = _FakeServer();
-      // No model asked what would come next.
-      NextPrompt.asker = (
-        _,
-        _, {
-        cancel,
-        model,
-        exact = false,
-        location,
-      }) async => 'NONE';
-      addTearDown(() => NextPrompt.asker = null);
       kernel = CodexKernel(
         MockKernels.codex,
         const KernelContext(cwd: '/project'),
