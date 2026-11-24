@@ -60,6 +60,7 @@ class ClaudeLaunch {
     this.persist = true,
     this.env,
     this.builtinCore = false,
+    this.agy = false,
     this.settingsPath,
     this.promptPath,
     this.directories = const [],
@@ -178,6 +179,11 @@ class ClaudeLaunch {
   /// the session's model or one its roles pick (ModelProviders.builtinCoreOnly).
   final bool builtinCore;
 
+  /// Whether it runs on Google's Antigravity CLI (`agy`, over ACP), the
+  /// session's model one of its: [model] its id, [effort] its thinking
+  /// level, [env] none.
+  final bool agy;
+
   /// A file the flag settings ([settings]) are written to, given in their
   /// place: so that a key in them is in no command line.
   final String? settingsPath;
@@ -237,6 +243,7 @@ class ClaudeLaunch {
     persist: persist,
     env: env ?? this.env,
     builtinCore: builtinCore,
+    agy: agy,
     settingsPath: settingsPath ?? this.settingsPath,
     promptPath: promptPath ?? this.promptPath,
     directories: directories,
