@@ -1384,13 +1384,15 @@ class CodexKernel
   }
 
   /// Whether the notification [params] is of the turn under way here (its
-  /// server turn, taken for it if not known yet).
-  bool _ofTurn(Map<String, Object?> params) {
+  /// server turn, taken for it if not known yet, unless [adopt] is false:
+  /// what Codex tells of a turn gone by, as it resumes a thread, is not a
+  /// new turn's).
+  bool _ofTurn(Map<String, Object?> params, {bool adopt = true}) {
     if (_turn == null) return false;
     final turnId = params['turnId'];
     if (turnId is! String) return true;
     if (_abandoned.contains(turnId)) return false;
-    if (_stopping == 0) _adopt(turnId);
+    if (adopt && _stopping == 0) _adopt(turnId);
     return turnId == _serverTurn;
   }
 
@@ -1455,7 +1457,9 @@ class CodexKernel
       _cache = PromptCache(last: request, conversation: all);
       _reportStats();
     }
-    if (!_ofTurn(params)) return;
+    // Not adopting its turn: Codex tells the last turn's usage as a thread
+    // resumes, which is not of the turn sent meanwhile.
+    if (!_ofTurn(params, adopt: false)) return;
     final output = switch (last['outputTokens']) {
       final num tokens when tokens.isFinite && tokens >= 0 => tokens.toInt(),
       _ => null,

@@ -62,10 +62,15 @@ class FakeCodex implements CodexTransport {
     this.turn = const [],
     this.history = const [],
     this.rollout = '/codex/$_thread.jsonl',
+    this.replayUsageOf,
   });
 
   final List<Map<String, Object?>> turn;
   final List<Map<String, Object?>> history;
+
+  /// A thread resumed is told, as Codex does, the usage of its last turn
+  /// (this id's) just after it is resumed.
+  final String? replayUsageOf;
 
   /// The thread's file, as Codex says it is.
   final String rollout;
@@ -201,6 +206,19 @@ class FakeCodex implements CodexTransport {
       });
     }
     emit({'id': id, 'result': result});
+    if (method == 'thread/resume' && replayUsageOf != null) {
+      emit({
+        'method': 'thread/tokenUsage/updated',
+        'params': {
+          'threadId': _thread,
+          'turnId': replayUsageOf,
+          'tokenUsage': {
+            'last': {'inputTokens': 100, 'outputTokens': 40},
+            'total': {'totalTokens': 140},
+          },
+        },
+      });
+    }
     if (method == 'turn/start') {
       if (turn.isEmpty) {
         emit({
@@ -1167,6 +1185,41 @@ void main() {
         shown(transcript).last,
         startsWith('notice error: Could not fork:'),
       );
+    });
+
+    test('sent as a thread is resumed: the usage Codex replays of its last '
+        'turn is not this turn\'s, which still ends', () async {
+      final codex = FakeCodex(
+        replayUsageOf: 'h1',
+        history: [
+          {'id': 'h1', 'status': 'completed', 'items': <Object?>[]},
+        ],
+      );
+      final (:kernel, transcript: _, :events) = codexKernel(
+        [codex],
+        context: KernelContext(
+          resume: SessionRecord(
+            id: _thread,
+            title: 'One',
+            updatedAt: DateTime(2026),
+            cwd: '/project',
+          ),
+        ),
+      );
+      kernel.send(const KernelTurn(id: 't1', text: 'Hello'));
+      await pumpEventQueue();
+      codex.emit({
+        'method': 'turn/completed',
+        'params': {
+          'threadId': _thread,
+          'turn': {'id': 'st1', 'status': 'completed'},
+        },
+      });
+      await pumpEventQueue();
+
+      expect(events.whereType<TurnEnded>(), hasLength(1));
+      // Nothing of the turn's own was said yet: not the replayed.
+      expect(events.whereType<OutputReported>(), isEmpty);
     });
 
     test('a thread resumed: its history; a message edited reverts the '
