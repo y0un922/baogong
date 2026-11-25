@@ -41,11 +41,12 @@ abstract final class LiveTurnStatsSetting {
   static Listenable? changes;
 }
 
-/// Under a finished turn: a button to copy its answer, one to fork the
-/// conversation from there and one to put it in Chinese, then, faint, how
-/// long the turn took, how fast the model wrote, what it cost, the tokens
-/// it used and when it ended (for the prompt cache, which lasts a while
-/// from the last request), as far as known. Out of the history's selection.
+/// Under a finished turn: a button to copy its answer, one to run it again
+/// (the last, stopped or failed), one to fork the conversation from there and
+/// one to put it in Chinese, then, faint, how long the turn took, how fast
+/// the model wrote, what it cost, the tokens it used and when it ended (for
+/// the prompt cache, which lasts a while from the last request), as far as
+/// known. Out of the history's selection.
 ///
 /// Under a turn under way ([live]), the last of all: how long the turn has
 /// taken ([since] its start), how fast the model writes (as last sampled)
@@ -57,6 +58,7 @@ class TurnFooter extends StatelessWidget {
   const TurnFooter({
     super.key,
     this.answer,
+    this.onRetry,
     this.onFork,
     this.worked,
     this.usage,
@@ -70,6 +72,10 @@ class TurnFooter extends StatelessWidget {
 
   /// What the copy button copies; no button when null.
   final String? answer;
+
+  /// Runs the turn again from its message, as sent (#1251): the last turn,
+  /// stopped or failed, perhaps on another model now; no button when null.
+  final VoidCallback? onRetry;
 
   /// Copies the conversation up to the end of this turn into a new one;
   /// no button when null.
@@ -134,16 +140,18 @@ class TurnFooter extends StatelessWidget {
     final l10n = context.l10n;
     final live = this.live;
     if (live == null) {
+      final onRetry = this.onRetry;
       final onFork = this.onFork;
       return _padded(
         _line([
-          if (answer != null || onFork != null)
+          if (answer != null || onRetry != null || onFork != null)
             Row(
               mainAxisSize: MainAxisSize.min,
               spacing: 2,
               children: [
                 if (answer case final answer?)
                   CopyButton(text: answer, tooltip: l10n.turnCopy),
+                if (onRetry != null) _RetryButton(onTap: onRetry),
                 if (onFork != null) _ForkButton(onTap: onFork),
                 if (answer != null && onTranslate != null)
                   _TranslateButton(translated: translated, onTap: onTranslate!),
@@ -341,6 +349,39 @@ class _ForkButton extends StatelessWidget {
                 hovered ? AppColors.text : AppColors.textFaint,
                 BlendMode.srcIn,
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A faint icon beside the copy button, as the fork's: runs the turn again.
+class _RetryButton extends StatelessWidget {
+  const _RetryButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return IdeHover(
+      message: context.l10n.turnRetry,
+      child: HoverBuilder(
+        cursor: SystemMouseCursors.click,
+        builder: (context, hovered) => GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: hovered ? AppColors.hover : null,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Icon(
+              Codicons.refresh,
+              size: 13,
+              color: hovered ? AppColors.text : AppColors.textFaint,
             ),
           ),
         ),

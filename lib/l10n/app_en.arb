@@ -1564,6 +1564,23 @@
       }
     }
   },
+  "quoteChip": "Quote #{number}",
+  "@quoteChip": {
+    "description": "Text quoted from the conversation, as a small tag in a message: the quote's number in the message.",
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "chatQuote": "Quote",
+  "@chatQuote": {
+    "description": "Over text selected in the conversation: puts it in the message being written, as a quote of it."
+  },
+  "chatQuoteAside": "By the Way",
+  "@chatQuoteAside": {
+    "description": "Over text selected in the conversation: quotes it in a /btw message, asked in a conversation of its own beside this one."
+  },
   "pastedTextGone": "This paste is no longer at {path}.",
   "@pastedTextGone": {
     "description": "Shown in place of a long paste kept in a file that has since gone.",
@@ -1681,6 +1698,7 @@
     }
   },
   "turnFork": "Fork from here",
+  "turnRetry": "Run this turn again",
   "@turnFork": {
     "description": "Hint of the button at the end of a finished turn that copies the conversation up to there into a new one."
   },
@@ -2261,9 +2279,14 @@
   "queuedEdit": "Take back to edit",
   "queuedSendNow": "Stop the agent and send this now",
   "queuedRemove": "Remove from the queue",
-  "replySuggestionHint": "Click to put it in the input, double-click to send it",
+  "replySuggestionHint": "Click to put it in the input, double-click to send it, {key}-click to pick more than one",
   "@replySuggestionHint": {
-    "description": "Hover of a reply the agent suggests, over the composer."
+    "description": "Hover of a reply the agent suggests, over the composer. {key} is ⌘ on macOS, Ctrl elsewhere.",
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
   },
   "stopConfirmMessage": "Stop the agent?",
   "stopConfirmDetail": "{count, plural, =1{The task running in the background will stop too.} other{The {count} tasks running in the background will stop too.}}",
@@ -2656,7 +2679,7 @@
   "@generalSettingsPromptSuggestions": {
     "description": "Settings → General switch: whether the agent suggests, at the end of each turn, what the user might send next, shown over the composer."
   },
-  "generalSettingsPromptSuggestionsDescription": "After each turn, two or three things you might send next, over the composer: click one to put it in the input and edit it, double-click to send it as it is; Tab in an empty input takes the first. The agent writes them at the end of its reply, with no extra request. Applies from the next message.",
+  "generalSettingsPromptSuggestionsDescription": "After each turn, two to four things you might send next, over the composer: click one to put it in the input and edit it, double-click to send it as it is; click with ⌘ or Ctrl held to put in more than one, each on its own line; Tab in an empty input takes the first. The agent writes them at the end of its reply, with no extra request. Applies from the next message.",
   "generalSettingsCommitAttributionLabel": "Commit Attribution: {name}",
   "@generalSettingsCommitAttributionLabel": {
     "description": "The commit attribution dropdown, as read out: its setting and the choice in effect.",
@@ -5280,6 +5303,7 @@
   "modelsTestModel": "Test",
   "modelsTestModels": "Test All",
   "modelsTestModelFailed": "Failed",
+  "modelsCopyTestError": "Copy Error",
   "modelsTestFirstText": "First token {seconds}s",
   "@modelsTestFirstText": {
     "placeholders": {

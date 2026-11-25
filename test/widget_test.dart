@@ -497,7 +497,9 @@ void main() {
     await drag.moveTo(middle);
     await tester.pump();
     final wheel = TestPointer(2, PointerDeviceKind.mouse);
-    wheel.hover(middle);
+    // Beside the pointer that drags: the selection's bar may be under it
+    // by then, and takes the wheel.
+    wheel.hover(middle + const Offset(-250, 0));
     // As far up as a wheel goes in ninety notches of 40.
     for (var i = 0; i < 90; i++) {
       await tester.sendEventToBinding(wheel.scroll(const Offset(0, -40)));

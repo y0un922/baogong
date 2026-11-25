@@ -1124,10 +1124,15 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         ChatCommandIds.newChat: () => unawaited(_openFolder()),
       if (current != null && panes.length > 1)
         ChatCommandIds.closePane: () => _workspace.closePane(current),
-      if (current != null && _workspace.splitSide(current) != null) ...{
-        ChatCommandIds.splitPane: () => _workspace.splitPane(current),
-        ChatCommandIds.splitPaneDown: () =>
-            _workspace.splitPane(current, down: true),
+      if (current != null &&
+          _workspace.splitSide(current, fits: _splitFits(current)) != null) ...{
+        ChatCommandIds.splitPane: () =>
+            _workspace.splitPane(current, fits: _splitFits(current)),
+        ChatCommandIds.splitPaneDown: () => _workspace.splitPane(
+          current,
+          down: true,
+          fits: _splitFits(current),
+        ),
       },
       if (agents.isNotEmpty) ...{
         ChatCommandIds.nextAgent: () => _openAgentBy(1),
@@ -5127,6 +5132,23 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     );
   }
 
+  /// Whether the window has the room for [thread]'s pane to split on a side,
+  /// each pane at its least; where the conversations were not laid out yet,
+  /// it has.
+  bool Function(PaneSide side) _splitFits(AgentThread thread) {
+    final room = _drag.gridSize;
+    return (side) {
+      if (room == null) return true;
+      final least = _workspace.grid.leastAfterSplit(
+        thread,
+        side,
+        ChatGridView.minPane,
+        ChatGridView.gap,
+      );
+      return least.width <= room.width + .5 && least.height <= room.height + .5;
+    };
+  }
+
   /// An agent from the sidebar, or a pane's title bar, released over the
   /// conversations.
   void _drop(ChatDrop drop) {
@@ -5369,7 +5391,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     // so each is where it was after a switch. The terminal and the side
     // panel, the IDE's [panel][chat], are the conversation's, on its card.
     // A new agent beside this one, where its pane has room to split.
-    final split = !embedded && _workspace.splitSide(thread) != null;
+    final split =
+        !embedded &&
+        _workspace.splitSide(thread, fits: _splitFits(thread)) != null;
     final under = _workspace.grid.under(thread);
     // A pane's, before its title on its card: closing it, and those it
     // covers.
@@ -5424,7 +5448,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
               icon: Codicons.splitHorizontal,
               tooltip: context.l10n.workspaceSplitPane,
               command: ChatCommandIds.splitPane,
-              onTap: () => _workspace.splitPane(thread),
+              onTap: () =>
+                  _workspace.splitPane(thread, fits: _splitFits(thread)),
             ),
           ),
         // Only once it was talked in elsewhere: nothing new to read before.

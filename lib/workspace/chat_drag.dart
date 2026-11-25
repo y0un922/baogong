@@ -105,6 +105,10 @@ class ChatDrag extends ChangeNotifier {
   /// Moved this far, a press on an agent drags it (rather than opening it).
   static const threshold = 4.0;
 
+  /// The size the conversations were last laid out at: the room a split
+  /// must leave each pane its least of. Null until they are.
+  Size? gridSize;
+
   /// The agent dragged; null when there is no drag.
   AgentThread? get thread => _thread;
   AgentThread? _thread;

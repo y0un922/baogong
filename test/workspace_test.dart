@@ -25,6 +25,8 @@ import 'package:baocode/workspace/editor_launcher.dart';
 import 'package:baocode/workspace/preference_store.dart';
 import 'package:baocode/workspace/workspace.dart';
 
+import 'kernel_test.dart' show FakeCli;
+
 /// Sessions as Claude Code keeps them: one recorded, in one project, and
 /// any [started] since (e.g. in a terminal).
 class _CountingPreferenceStore extends MemoryPreferenceStore {
@@ -397,6 +399,59 @@ void main() {
     expect((await drafts.read()).keys, {'new:/tmp/project'});
   });
 
+  testWidgets('messages queued as the app quits are back in the composer '
+      'the next run, after what was typed', (tester) async {
+    final drafts = MemoryPreferenceStore();
+    // A CLI that keeps at its turn: the messages after it wait.
+    final cli = FakeCli();
+    late final KernelDescriptor busy;
+    busy = KernelDescriptor(
+      id: 'claude-code',
+      label: 'Claude Code',
+      icon: Icons.auto_awesome_rounded,
+      description: '',
+      catalog: FakeCatalog(),
+      create: (context) => ClaudeCodeKernel(
+        busy,
+        context,
+        start: (_) async => cli,
+        readHistory: _readHistory,
+      ),
+    );
+    var workspace = await pumpLoaded(tester, drafts: drafts, kernel: busy);
+    AgentThread keptThread() => workspace.threads.firstWhere(
+      (thread) => thread.id == FakeCatalog.kept.id,
+    );
+    workspace.select(keptThread());
+    await tester.pump();
+    final session = keptThread().session;
+    session.send(const ComposerMessage(text: 'Fix the build'));
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(session.isStreaming, isTrue);
+    session
+      ..send(const ComposerMessage(text: 'and lint'))
+      ..send(const ComposerMessage(text: 'then commit'));
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(
+      [for (final (_, item) in session.queued) item.text],
+      ['and lint', 'then commit'],
+    );
+    session.draft.save(
+      'Half typed',
+      const TextSelection.collapsed(offset: 4),
+      const [],
+    );
+
+    await tester.runAsync(workspace.keepQueued);
+    await tester.pumpWidget(const SizedBox());
+    workspace = await pumpLoaded(tester, drafts: drafts);
+    expect(
+      keptThread().session.draft.content,
+      'Half typed\n\nand lint\n\nthen commit',
+    );
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('a draft kept by a version before, as the old editor\'s '
       'operations, comes back as text, its tags tags', (tester) async {
     final tag = ComposerTokenEmbed.file('/tmp/project/lib/main.dart');
@@ -725,10 +780,7 @@ void main() {
       isNot(contains(modelSettingKey(KernelChoiceKind.context, '@gw/m'))),
     );
     expect(settings[modelSettingKey(KernelChoiceKind.context, 'opus')], '1m');
-    expect(
-      settings[modelSettingKey(KernelChoiceKind.effort, '@gw/m')],
-      'high',
-    );
+    expect(settings[modelSettingKey(KernelChoiceKind.effort, '@gw/m')], 'high');
 
     // Once: one picked since stays.
     (store.preferences['settings'] as Map)[modelSettingKey(
@@ -1227,8 +1279,8 @@ void main() {
         await tester.pumpWidget(const SizedBox());
         workspace = await pumpLoaded(tester, preferences: store);
         expect(workspace.grid.panes, hasLength(2));
-        expect(workspace.grid.at(0)?.id, isNull);
-        expect(workspace.grid.at(2)?.id, FakeCatalog.kept.id);
+        expect(workspace.grid.panes.first.id, isNull);
+        expect(workspace.grid.panes.last.id, FakeCatalog.kept.id);
         expect(workspace.grid.rowsSplit, isTrue);
         expect(workspace.grid.columnsSplit, isFalse);
         expect(workspace.current?.id, FakeCatalog.kept.id);
@@ -1244,7 +1296,7 @@ void main() {
         (thread) => thread.record?.id == FakeCatalog.kept.id,
       );
       workspace.openBeside(kept, draft, PaneSide.right);
-      workspace.grid.setColumnRatioIn(0, .3);
+      workspace.grid.setRatio((group: null, index: 0), .3);
       workspace.keepGridLines();
 
       // The next run.
@@ -1256,10 +1308,10 @@ void main() {
       expect(panes.first.id, isNull);
       expect(panes.first.project.path, '/tmp/project');
       expect(panes.last.record?.id, FakeCatalog.kept.id);
-      expect(workspace.grid.at(0), same(panes.first));
-      expect(workspace.grid.at(1), same(panes.last));
+      expect(workspace.grid.topLeft, same(panes.first));
+      expect(workspace.grid.topRight, same(panes.last));
       expect(workspace.selected, same(panes.last));
-      expect(workspace.grid.columnRatios, [.3, .3]);
+      expect(workspace.grid.ratioOf((group: null, index: 0)), .3);
     });
 
     testWidgets('a pane splits for a new agent in its project, at its right '
@@ -1269,21 +1321,35 @@ void main() {
         (thread) => thread.record?.id == FakeCatalog.kept.id,
       );
       workspace.select(kept);
+      // Room for two columns.
+      bool twoColumns(PaneSide side) =>
+          side != PaneSide.right || workspace.grid.groups.length < 2;
 
-      final right = workspace.splitPane(kept)!;
+      final right = workspace.splitPane(kept, fits: twoColumns)!;
       expect(right.record, isNull);
       expect(right.project, kept.project);
-      expect(workspace.grid.cells, [kept, right, kept, right]);
+      expect(workspace.grid.groups, [
+        [kept],
+        [right],
+      ]);
       expect(workspace.selected, same(right));
 
-      final below = workspace.splitPane(kept)!;
+      final below = workspace.splitPane(kept, fits: twoColumns)!;
       expect(below, isNot(same(right)));
-      expect(workspace.grid.cells, [kept, right, below, right]);
-      final last = workspace.splitPane(right)!;
-      expect(workspace.grid.cells, [kept, right, below, last]);
-      // Four is all there is room for.
-      expect(workspace.splitSide(kept), isNull);
-      expect(workspace.splitPane(kept), isNull);
+      expect(workspace.grid.groups, [
+        [kept, below],
+        [right],
+      ]);
+      final last = workspace.splitPane(right, fits: twoColumns)!;
+      expect(workspace.grid.groups, [
+        [kept, below],
+        [right, last],
+      ]);
+      // With no room, it does not split.
+      expect(workspace.splitSide(kept, fits: (_) => false), isNull);
+      expect(workspace.splitPane(kept, fits: (_) => false), isNull);
+      // Where the room is not known, there is always some: at its right.
+      expect(workspace.splitSide(kept), PaneSide.right);
     });
 
     testWidgets('split down, below first, else at its right', (tester) async {
@@ -1292,11 +1358,20 @@ void main() {
         (thread) => thread.record?.id == FakeCatalog.kept.id,
       );
       workspace.select(kept);
+      // Room for two rows: the groups are rows once one splits down.
+      bool twoRows(PaneSide side) =>
+          side != PaneSide.bottom || workspace.grid.panes.length < 2;
 
-      final below = workspace.splitPane(kept, down: true)!;
-      expect(workspace.grid.cells, [kept, kept, below, below]);
-      final right = workspace.splitPane(kept, down: true)!;
-      expect(workspace.grid.cells, [kept, right, below, below]);
+      final below = workspace.splitPane(kept, down: true, fits: twoRows)!;
+      expect(workspace.grid.groups, [
+        [kept],
+        [below],
+      ]);
+      final right = workspace.splitPane(kept, down: true, fits: twoRows)!;
+      expect(workspace.grid.groups, [
+        [kept, right],
+        [below],
+      ]);
     });
 
     testWidgets("each pane's tabs, and the one shown, survive a restart", (
@@ -1324,19 +1399,19 @@ void main() {
         ..openInPlaceOf(byId('tab-a'), byId('tab-b'))
         ..raiseCovered(byId('tab-b'), byId('tab-a'));
       List<String?> tabs() => [
-        for (final tab in workspace.grid.tabs(workspace.grid.at(1)!)) tab.id,
+        for (final tab in workspace.grid.tabs(workspace.grid.topRight!)) tab.id,
       ];
       expect(tabs(), [FakeCatalog.kept.id, 'tab-a', 'tab-b']);
-      expect(workspace.grid.at(1)?.id, 'tab-a');
+      expect(workspace.grid.topRight?.id, 'tab-a');
 
       await tester.pumpWidget(const SizedBox());
       workspace = await pumpLoaded(tester, preferences: store);
       expect(workspace.grid.panes, hasLength(2));
       expect(tabs(), [FakeCatalog.kept.id, 'tab-a', 'tab-b']);
-      expect(workspace.grid.at(1)?.id, 'tab-a');
-      expect(workspace.grid.tabs(workspace.grid.at(0)!), hasLength(1));
+      expect(workspace.grid.topRight?.id, 'tab-a');
+      expect(workspace.grid.tabs(workspace.grid.topLeft!), hasLength(1));
       // The one covered last shows when the shown one closes.
-      expect(workspace.grid.uncover(workspace.grid.at(1)!)?.id, 'tab-b');
+      expect(workspace.grid.uncover(workspace.grid.topRight!)?.id, 'tab-b');
     });
 
     testWidgets("an agent that is no more leaves its pane to the others", (
@@ -1352,7 +1427,9 @@ void main() {
       });
       final workspace = await pumpLoaded(tester, preferences: store);
       expect(workspace.grid.panes.single.record?.id, FakeCatalog.kept.id);
-      expect(workspace.grid.at(3), same(workspace.grid.panes.single));
+      expect(workspace.grid.groups, [
+        [workspace.grid.panes.single],
+      ]);
       expect(workspace.selected, same(workspace.grid.panes.single));
     });
   });

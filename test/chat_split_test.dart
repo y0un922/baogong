@@ -345,21 +345,23 @@ void main() {
     expect(workspace.threads.length, count + 1);
   });
 
-  testWidgets('a third beside either, a fourth beside the one with a whole '
-      'column; four full, one only takes a pane\'s place', (tester) async {
+  testWidgets('a third beside either, or a column of its own; a fourth '
+      'beside the one with a whole column; a fifth in a column of its own', (
+    tester,
+  ) async {
     final workspace = await pumpApp(tester);
     await dropAgent(tester, second, near(gridRect(tester), PaneSide.right));
 
-    // Side by side, each splits top or bottom only: near the left of the
-    // right pane, the drop is its place.
-    var gesture = await dragAgent(
-      tester,
-      third,
-      near(tester.getRect(pane(second)), PaneSide.left),
-    );
+    // Side by side: near the left of the right pane, a column between them,
+    // each of the three at least its least.
+    final right = tester.getRect(pane(second));
+    var gesture = await dragAgent(tester, third, near(right, PaneSide.left));
     await tester.pumpAndSettle();
-    expect(tester.getRect(preview()), tester.getRect(pane(second)).deflate(4));
-    await gesture.moveTo(near(tester.getRect(pane(second)), PaneSide.bottom));
+    final between = tester.getRect(preview());
+    final least = ChatGridView.minPane.width;
+    expect(between.left, greaterThanOrEqualTo(gridRect(tester).left + least));
+    expect(between.right, lessThanOrEqualTo(right.right - least));
+    await gesture.moveTo(near(right, PaneSide.bottom));
     await gesture.up();
     await tester.pumpAndSettle();
     expect(paneTitles(tester), unorderedEquals([first, second, third]));
@@ -372,19 +374,30 @@ void main() {
 
     await dropAgent(tester, fourth, near(left, PaneSide.top));
     expect(workspace.grid.length, 4);
-    // A strict 2×2: the lines across both halves.
+    // The line between the columns straight through both rows.
     left = tester.getRect(pane(first));
     top = tester.getRect(pane(second));
     bottom = tester.getRect(pane(third));
     final corner = tester.getRect(pane(fourth));
-    expect(corner.bottom, top.bottom);
-    expect(left.top, bottom.top);
     expect(corner.right, left.right);
+    expect(top.left, bottom.left);
 
-    // Full: near an edge is the pane's place too.
-    await dropAgent(tester, fifth, near(bottom, PaneSide.right));
-    expect(paneTitles(tester), unorderedEquals([first, second, fifth, fourth]));
-    expect(tester.getRect(pane(fifth)), bottom);
+    // Near a pane's top, a third in its column, above it.
+    gesture = await dragAgent(tester, fifth, near(bottom, PaneSide.top));
+    await tester.pumpAndSettle();
+    final above = tester.getRect(preview());
+    expect(above.left, bottom.left + 4);
+    expect(above.right, bottom.right - 4);
+    expect(above.top, greaterThan(top.top));
+    expect(above.bottom, lessThan(bottom.bottom));
+    // Near its right, a column of its own, the grid's whole height.
+    await gesture.moveTo(near(bottom, PaneSide.right));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(workspace.grid.length, 5);
+    final column = tester.getRect(pane(fifth));
+    expect(column.height, gridRect(tester).height);
+    expect(column.right, gridRect(tester).right);
     expect(workspace.current!.title, fifth);
   });
 
@@ -486,7 +499,7 @@ void main() {
   });
 
   testWidgets('a pane\'s split button opens a new agent beside it, focused; '
-      'with four, there is none', (tester) async {
+      'with no room for another, there is none', (tester) async {
     final workspace = await pumpApp(tester);
     final alone = workspace.current!;
     const label = 'Split pane: a new agent beside this one';
@@ -500,12 +513,20 @@ void main() {
     final added = workspace.current!;
     expect(added, isNot(same(alone)));
     expect(added.project, alone.project);
-    expect(workspace.grid.cells, [alone, added, alone, added]);
+    expect(workspace.grid.groups, [
+      [alone],
+      [added],
+    ]);
 
     await tester.tap(split(first));
     await tester.pumpAndSettle();
     final below = workspace.current!;
-    expect(workspace.grid.cells, [alone, added, below, added]);
+    // At its right again: there is room for a third column.
+    expect(workspace.grid.groups, [
+      [alone],
+      [below],
+      [added],
+    ]);
     // ⌘\ splits the focused one.
     workspace.select(added);
     await tester.pump();
@@ -513,7 +534,21 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.backslash);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     await tester.pumpAndSettle();
-    expect(workspace.grid.cells, [alone, added, below, workspace.current]);
+    // No room for a fourth column: below it is.
+    expect(workspace.grid.groups, [
+      [alone],
+      [below],
+      [added, workspace.current!],
+    ]);
+    // The columns' rows are their own: the first two still split below.
+    var splits = 0;
+    while (find.bySemanticsLabel(label).evaluate().isNotEmpty) {
+      expect(splits++, lessThan(8));
+      await tester.tap(find.bySemanticsLabel(label).first);
+      await tester.pumpAndSettle();
+    }
+    // Three columns of two panes fill the window: no room for another.
+    expect(workspace.grid.groups.map((group) => group.length), [2, 2, 2]);
     expect(find.bySemanticsLabel(label), findsNothing);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
@@ -556,7 +591,7 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
     expect(windowDrags, 2);
-    expect(workspace.grid.cells.first.title, second);
+    expect(workspace.grid.topLeft!.title, second);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('a title dragged to another pane\'s center swaps their places '
@@ -651,21 +686,21 @@ void main() {
       'does not rearrange the grid', (tester) async {
     final workspace = await pumpApp(tester);
     await dropAgent(tester, second, near(gridRect(tester), PaneSide.right));
-    final original = workspace.grid.cells;
+    final original = workspace.grid.groups;
     final right = tester.getRect(pane(second));
 
     var gesture = await dragTitle(tester, first, right.center);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(workspace.grid.cells, original);
+    expect(workspace.grid.groups, original);
     expect(preview(), findsNothing);
 
     gesture = await dragTitle(tester, first, const Offset(20, 80));
     expect(preview(), findsNothing);
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(workspace.grid.cells, original);
+    expect(workspace.grid.groups, original);
 
     gesture = await dragTitle(
       tester,
@@ -675,7 +710,7 @@ void main() {
     expect(preview(), findsNothing);
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(workspace.grid.cells, original);
+    expect(workspace.grid.groups, original);
   });
 
   testWidgets('side by side, each pane names its project; alone, none '
@@ -706,7 +741,7 @@ void main() {
       'start a pane drag', (tester) async {
     final workspace = await pumpApp(tester);
     await dropAgent(tester, second, near(gridRect(tester), PaneSide.right));
-    final original = workspace.grid.cells;
+    final original = workspace.grid.groups;
     final title = find.descendant(of: pane(first), matching: find.text(first));
     await tester.tap(title, kind: PointerDeviceKind.mouse);
     await tester.pump(const Duration(milliseconds: 80));
@@ -729,7 +764,7 @@ void main() {
     expect(preview(), findsNothing);
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(workspace.grid.cells, original);
+    expect(workspace.grid.groups, original);
   });
 
   testWidgets('a sidebar agent already shown still only focuses its pane', (
@@ -737,9 +772,9 @@ void main() {
   ) async {
     final workspace = await pumpApp(tester);
     await dropAgent(tester, second, near(gridRect(tester), PaneSide.right));
-    final original = workspace.grid.cells;
+    final original = workspace.grid.groups;
     await dropAgent(tester, first, tester.getRect(pane(second)).center);
-    expect(workspace.grid.cells, original);
+    expect(workspace.grid.groups, original);
     expect(workspace.current!.title, first);
   });
 

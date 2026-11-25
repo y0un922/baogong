@@ -1109,6 +1109,55 @@ void main() {
         expect(card(transcript).children, hasLength(2));
       });
 
+      test('run from a slash command, read as it goes: its lines in its '
+          'card while it works, not shown again once done (#1131)', () {
+        final transcript = Transcript();
+        var seq = 0;
+        final told = <String>[];
+        final translator =
+            ClaudeTranslator(emit: transcript.apply, nextSeq: () => ++seq)
+              ..turnId = '11111111-1111-4111-8111-111111111111'
+              ..onForkedCommand = ((command) => told.add('start $command'))
+              ..onForkedCommandEnded = ((command) => told.add('end $command'));
+        translator.translate(started('a4'));
+        expect(told, ['start forked-command-count-lines']);
+
+        // As the subagent's transcript has them: no parent of the CLI's.
+        Map<String, Object?> line(String uuid, String text) => {
+          'type': 'assistant',
+          'uuid': uuid,
+          'isSidechain': true,
+          'message': {
+            'id': 'msg-$uuid',
+            'role': 'assistant',
+            'content': [
+              {'type': 'text', 'text': text},
+            ],
+          },
+        };
+        translator.forkedLine(
+          'forked-command-count-lines',
+          line('u1', 'Counting'),
+        );
+        expect(card(transcript).status, CommandStatus.running);
+        expect(card(transcript).children, hasLength(1));
+        translator.forkedLine('forked-command-count-lines', line('u2', '7'));
+        expect(card(transcript).children, hasLength(2));
+
+        translator.translate(ended('a4'));
+        expect(told.last, 'end forked-command-count-lines');
+        translator
+          ..translate(said('forked-command-count-lines', 'Counting'))
+          ..translate(said('forked-command-count-lines', '7'))
+          ..translate(said(null, 'a.py has 7 lines.'));
+        expect(card(transcript).status, CommandStatus.succeeded);
+        expect(card(transcript).children, hasLength(2));
+        expect(shown(transcript), [
+          'agent: /count-lines',
+          'text: a.py has 7 lines.',
+        ]);
+      });
+
       test(
         'a subagent\'s task no call or slash command started gets no card',
         () {
@@ -4219,6 +4268,81 @@ void main() {
       kernel.send(const KernelTurn(id: 'u3', text: 'again'));
       await pumpEventQueue();
       cli.push(result);
+      await pumpEventQueue();
+      kernel.release();
+      expect(cli.closed, isTrue);
+      kernel.dispose();
+    });
+
+    test('out of view, a process with jobs scheduled is kept until they are '
+        'deleted, a loop\'s round until it comes (#994)', () async {
+      final cli = FakeCli();
+      final (:kernel, transcript: _, events: _) = claude(cli);
+      const result = {
+        'type': 'result',
+        'subtype': 'success',
+        'is_error': false,
+      };
+      Future<void> called(
+        String turn,
+        String call,
+        String tool,
+        Map<String, Object?> input, {
+        Map<String, Object?>? answered,
+      }) async {
+        kernel.send(KernelTurn(id: turn, text: 'schedule it'));
+        await pumpEventQueue();
+        cli
+          ..push({
+            'type': 'assistant',
+            'parent_tool_use_id': null,
+            'message': {
+              'id': 'msg-$call',
+              'role': 'assistant',
+              'content': [
+                {'type': 'tool_use', 'id': call, 'name': tool, 'input': input},
+              ],
+            },
+          })
+          ..push({
+            'type': 'user',
+            'parent_tool_use_id': null,
+            'message': {
+              'role': 'user',
+              'content': [
+                {'type': 'tool_result', 'tool_use_id': call, 'content': 'ok'},
+              ],
+            },
+            'tool_use_result': ?answered,
+          })
+          ..push(result);
+        await pumpEventQueue();
+      }
+
+      await called(
+        'u1',
+        'toolu_1',
+        'CronCreate',
+        {'cron': '0 23 * * *', 'prompt': 'report', 'recurring': false},
+        answered: {'id': 'job1'},
+      );
+      kernel.release();
+      expect(cli.closed, isFalse, reason: 'its job comes at 23:00');
+      await called('u2', 'toolu_2', 'CronDelete', {'id': 'job1'});
+      kernel.release();
+      expect(cli.closed, isTrue);
+
+      cli.closed = false;
+      await called('u3', 'toolu_3', 'ScheduleWakeup', {
+        'delaySeconds': 1200,
+        'prompt': '/loop check',
+      });
+      kernel.release();
+      expect(cli.closed, isFalse, reason: 'the next round is to come');
+      // The round comes: a prompt of the CLI's own.
+      cli
+        ..push({'type': 'system', 'subtype': 'status', 'status': 'requesting'})
+        ..push(result);
       await pumpEventQueue();
       kernel.release();
       expect(cli.closed, isTrue);

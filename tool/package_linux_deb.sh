@@ -88,14 +88,16 @@ if [ -z "$glibc" ]; then
 fi
 
 # libgtk-3-0 is what the engine links. libblkid1 and liblzma5 are the
-# extra libraries Flutter's Linux bundle expects on the system.
+# extra libraries Flutter's Linux bundle expects on the system. libegl1 and
+# libgles2 are what it opens for GL: without libGLESv2.so.2 it aborts at
+# start, and a minimal desktop (UKUI, some Kylin installs) lacks it (#1115).
 cat > "$stage/DEBIAN/control" << EOF
 Package: baogong
 Version: ${marketing}
 Section: devel
 Priority: optional
 Architecture: ${package_arch}
-Depends: libc6 (>= ${glibc}), libgtk-3-0, libblkid1, liblzma5${webkit}
+Depends: libc6 (>= ${glibc}), libgtk-3-0, libblkid1, liblzma5, libegl1, libgles2${webkit}
 Maintainer: y0un922 <y0un92@linux.do>
 Homepage: https://github.com/y0un922/baogong
 Description: Baogong (包工头), an unofficial fork of BaoCode

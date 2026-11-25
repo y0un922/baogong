@@ -4760,6 +4760,24 @@ abstract class AppLocalizations {
   /// **'Pasted text #{number}'**
   String pastedTextChip(int number);
 
+  /// Text quoted from the conversation, as a small tag in a message: the quote's number in the message.
+  ///
+  /// In en, this message translates to:
+  /// **'Quote #{number}'**
+  String quoteChip(int number);
+
+  /// Over text selected in the conversation: puts it in the message being written, as a quote of it.
+  ///
+  /// In en, this message translates to:
+  /// **'Quote'**
+  String get chatQuote;
+
+  /// Over text selected in the conversation: quotes it in a /btw message, asked in a conversation of its own beside this one.
+  ///
+  /// In en, this message translates to:
+  /// **'By the Way'**
+  String get chatQuoteAside;
+
   /// Shown in place of a long paste kept in a file that has since gone.
   ///
   /// In en, this message translates to:
@@ -4873,6 +4891,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Fork from here'**
   String get turnFork;
+
+  /// No description provided for @turnRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Run this turn again'**
+  String get turnRetry;
 
   /// No description provided for @turnCopied.
   ///
@@ -5822,11 +5846,11 @@ abstract class AppLocalizations {
   /// **'Remove from the queue'**
   String get queuedRemove;
 
-  /// Hover of a reply the agent suggests, over the composer.
+  /// Hover of a reply the agent suggests, over the composer. {key} is ⌘ on macOS, Ctrl elsewhere.
   ///
   /// In en, this message translates to:
-  /// **'Click to put it in the input, double-click to send it'**
-  String get replySuggestionHint;
+  /// **'Click to put it in the input, double-click to send it, {key}-click to pick more than one'**
+  String replySuggestionHint(String key);
 
   /// No description provided for @stopConfirmMessage.
   ///
@@ -6545,7 +6569,7 @@ abstract class AppLocalizations {
   /// No description provided for @generalSettingsPromptSuggestionsDescription.
   ///
   /// In en, this message translates to:
-  /// **'After each turn, two or three things you might send next, over the composer: click one to put it in the input and edit it, double-click to send it as it is; Tab in an empty input takes the first. The agent writes them at the end of its reply, with no extra request. Applies from the next message.'**
+  /// **'After each turn, two to four things you might send next, over the composer: click one to put it in the input and edit it, double-click to send it as it is; click with ⌘ or Ctrl held to put in more than one, each on its own line; Tab in an empty input takes the first. The agent writes them at the end of its reply, with no extra request. Applies from the next message.'**
   String get generalSettingsPromptSuggestionsDescription;
 
   /// The commit attribution dropdown, as read out: its setting and the choice in effect.
@@ -11924,6 +11948,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Failed'**
   String get modelsTestModelFailed;
+
+  /// No description provided for @modelsCopyTestError.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Error'**
+  String get modelsCopyTestError;
 
   /// No description provided for @modelsTestFirstText.
   ///
