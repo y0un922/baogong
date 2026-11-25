@@ -1222,6 +1222,67 @@ void main() {
       expect(events.whereType<OutputReported>(), isEmpty);
     });
 
+    test('sent before the history of a thread resumed is read: the history '
+        'goes before the message, not after it', () async {
+      final codex = FakeCodex(
+        history: [
+          {
+            'id': 'h1',
+            'status': 'completed',
+            'items': [
+              {
+                'type': 'userMessage',
+                'id': 'u-h1',
+                'content': [
+                  {'type': 'text', 'text': 'One'},
+                ],
+              },
+              {'type': 'agentMessage', 'id': 'a-h1', 'text': 'Uno'},
+            ],
+          },
+        ],
+      );
+      final (:kernel, :transcript, :events) = codexKernel(
+        [codex],
+        context: KernelContext(
+          resume: SessionRecord(
+            id: _thread,
+            title: 'One',
+            updatedAt: DateTime(2026),
+            cwd: '/project',
+          ),
+        ),
+      );
+      kernel.send(const KernelTurn(id: 't1', text: 'Hello'));
+      await pumpEventQueue();
+      codex.emit({
+        'method': 'item/completed',
+        'params': {
+          'threadId': _thread,
+          'turnId': 'st1',
+          'item': {'type': 'agentMessage', 'id': 'a-new', 'text': 'Hi'},
+        },
+      });
+      codex.emit({
+        'method': 'turn/completed',
+        'params': {
+          'threadId': _thread,
+          'turn': {'id': 'st1', 'status': 'completed'},
+        },
+      });
+      await pumpEventQueue();
+
+      expect(shown(transcript), [
+        'user: One',
+        'text: Uno',
+        'user: Hello',
+        'text: Hi',
+      ]);
+      // Told to the views, which move their places on by it.
+      expect(events.whereType<HistoryPrepended>(), hasLength(1));
+      expect(transcript.prepended, 2);
+    });
+
     test('a thread resumed: its history; a message edited reverts the '
         'thread before it; forked, a thread of its own', () async {
       final codex = FakeCodex(

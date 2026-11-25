@@ -549,11 +549,32 @@ class CodexKernel
     _historyShown = true;
     _applyThreadSettings(resumed);
     try {
-      _showHistory(await _turnsBefore(null, _firstTurns));
+      _showFirstHistory(await _turnsBefore(null, _firstTurns));
     } finally {
       _loadingHistory = false;
       emitInfoChanged();
     }
+  }
+
+  /// The first [turns] read of the thread resumed. A message sent before
+  /// they were read is in the conversation already: they go before it,
+  /// as those read on asking do.
+  void _showFirstHistory(List<Map<String, Object?>> turns) {
+    if (_turn == null && _sentTurns.isEmpty) {
+      _showHistory(turns);
+      return;
+    }
+    final items = _gathering = {};
+    try {
+      _showHistory(turns, earlier: true);
+    } finally {
+      _gathering = null;
+    }
+    emit(
+      HistoryPrepended(nextSeq, [
+        ...items.entries.map((e) => (e.key, e.value)),
+      ]),
+    );
   }
 
   /// What a thread starts or goes on with where BaoCode can be reached from
