@@ -1833,6 +1833,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentImageUntitled => '图片';
 
   @override
+  String get welcomeDemoTitle => '演示：对比并重写一个限流中间件';
+
+  @override
+  String get welcomeDemoNoModel => '这是演示。要开始真正的对话，请先配置你自己的模型。';
+
+  @override
   String get chatTitleSummarize => '总结新标题';
 
   @override
@@ -1963,27 +1969,6 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get sidebarDeleteAgentTitle => '删除智能体？';
-
-  @override
-  String sidebarDeleteAgentMessage(String title) {
-    return '“$title”及其对话将被移除。';
-  }
-
-  @override
-  String get sidebarDeleteAgentsTitle => '删除智能体？';
-
-  @override
-  String sidebarDeleteAgentsMessage(int count) {
-    return '$count 个智能体及其对话将被删除，内核中的记录也会一并删除。此操作无法撤销。';
-  }
-
-  @override
-  String sidebarDeleteAgentMessageKernel(String title, String kernel) {
-    return '“$title”及其对话将被删除，$kernel 中的记录也会一并删除。此操作无法撤销。';
-  }
-
-  @override
   String get sidebarSearchAgents => '搜索智能体…';
 
   @override
@@ -2054,7 +2039,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String sidebarDeleteCount(int count) {
-    return '删除 $count 个智能体…';
+    return '删除 $count 个智能体';
   }
 
   @override
@@ -2070,11 +2055,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sidebarDetachAside => '从主对话分离';
-
-  @override
-  String sidebarDeleteAsidesToo(int count) {
-    return '它的 $count 个 /btw 子对话也会一并删除。';
-  }
 
   @override
   String get btwCommandDetail => '在旁边另开一个对话提问';
@@ -2119,18 +2099,30 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidebarUnarchiveAll => '全部取消归档';
 
   @override
-  String get sidebarDeleteArchived => '删除全部已归档…';
-
-  @override
-  String get sidebarDeleteArchivedTitle => '删除已归档的智能体？';
-
-  @override
-  String sidebarDeleteArchivedMessage(int count) {
-    return '$count 个已归档的智能体及其对话将被删除，内核中的记录也会一并删除。此操作无法撤销。';
-  }
+  String get sidebarDeleteArchived => '删除全部已归档';
 
   @override
   String get sidebarRemoveFromList => '从列表移除';
+
+  @override
+  String sidebarAgentDeleted(String title) {
+    return '已删除「$title」';
+  }
+
+  @override
+  String sidebarAgentsDeleted(int count) {
+    return '已删除 $count 个智能体';
+  }
+
+  @override
+  String sidebarProjectRemoved(String name) {
+    return '已从列表移除「$name」';
+  }
+
+  @override
+  String sidebarWorkspaceDeleted(String name) {
+    return '已删除工作区「$name」';
+  }
 
   @override
   String get sidebarDropToPin => '拖到这里置顶';
@@ -5912,6 +5904,26 @@ class AppLocalizationsZh extends AppLocalizations {
       '例如 .git, node_modules, *.log';
 
   @override
+  String get gitAutoFetchSetting => 'Git 自动获取';
+
+  @override
+  String get gitAutoFetchSettingDescription =>
+      '定期在后台获取当前分支的远端更新，无需手动获取即可看到落后提交数。（git.autofetchInterval）';
+
+  @override
+  String get gitAutoFetchOff => '关闭';
+
+  @override
+  String gitAutoFetchMinutes(int minutes) {
+    return '每 $minutes 分钟';
+  }
+
+  @override
+  String gitAutoFetchSeconds(int seconds) {
+    return '每 $seconds 秒';
+  }
+
+  @override
   String get claudePathSetting => '路径';
 
   @override
@@ -6388,6 +6400,9 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get modelsDragToReorder => '拖动排序';
+
+  @override
   String get modelsFeaturedWhy => '为什么我看到这个？';
 
   @override
@@ -6762,6 +6777,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsProtocolAnthropic => 'Anthropic 兼容';
 
   @override
+  String get modelsProtocolGemini => 'Gemini 兼容';
+
+  @override
   String get modelsConnection => '连接';
 
   @override
@@ -6782,7 +6800,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsProtocolDescription =>
-      'OpenAI 接口经本地代理转换 Claude Code 的请求和响应。';
+      'OpenAI 与 Gemini 接口经本地代理转换 Claude Code 的请求和响应。';
 
   @override
   String get modelsBaseUrl => 'Base URL';
@@ -6793,6 +6811,10 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsBaseUrlOpenAIHint => '按上游文档填写；路径里没有版本号（…/v1）时自动加 /v1。';
+
+  @override
+  String get modelsBaseUrlGeminiHint =>
+      '按上游文档填写（通常以 /v1beta 结尾）；只填域名时自动补 /v1beta。';
 
   @override
   String get modelsCustomUrls => '自定义地址';
@@ -7256,7 +7278,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsEndpointDescription =>
-      '这个模型的请求发往哪种接口，Base URL 和 Key 与上游相同。中转站同时提供多种接口时，可以让 Claude 模型走 Anthropic 接口、GPT 模型走 Responses。';
+      '这个模型的请求发往哪种接口，Base URL 和 Key 与上游相同。中转站同时提供多种接口时，可以让 Claude 模型走 Anthropic 接口、GPT 模型走 Responses、Gemini 模型走 Gemini 兼容。';
 
   @override
   String get modelsModelEndpointUrlDescription =>
@@ -9342,6 +9364,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get stashPolishing => '润色中…';
 
   @override
+  String get stashCancelPolish => '停止润色';
+
+  @override
   String get stashPolishHint => '让 AI 把选中的文字理顺，保持你的原意，不加结构';
 
   @override
@@ -9349,6 +9374,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get composerPolishing => '增强中…';
+
+  @override
+  String get composerCancelPolish => '停止增强';
 
   @override
   String get composerPolishHint =>
@@ -10433,6 +10461,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdModelWelcome => '设置模型...';
 
   @override
+  String get cmdWelcomeDemo => '查看演示对话';
+
+  @override
   String get modelWelcomeTitle => '选一个模型开始';
 
   @override
@@ -10498,7 +10529,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsSshKeywords =>
-      'ssh 远程 服务器 主机 跳板机 私钥 密码 内核 remote server host';
+      'ssh 远程 服务器 主机 跳板机 私钥 密码 内核 技能 skills remote server host';
 
   @override
   String get sshSettingsDescription => '远程项目连接的服务器：地址、登录方式、跳板机，以及每台用的内核。';
@@ -13630,6 +13661,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get remoteLocalAccessAskAgain => '改回每次询问';
 
   @override
+  String get remoteShareUserSkillsGroup => '技能';
+
+  @override
+  String get remoteShareUserSkills => '共享本机用户级 Skills';
+
+  @override
+  String get remoteShareUserSkillsDetail =>
+      '将本机的用户级 skills（~/.claude/skills）映射到远端临时目录供 SSH 内核使用，不改动远端原有配置。若远端已有同名 skill，优先保留远端版本。';
+
+  @override
   String get sidePanelPorts => '端口';
 
   @override
@@ -14003,4 +14044,22 @@ class AppLocalizationsZh extends AppLocalizations {
   String remoteBrowserReplace(String name) {
     return '“$name”已存在，要替换它吗？';
   }
+
+  @override
+  String get tailStart => '实时追踪(tail -f)';
+
+  @override
+  String get tailStop => '停止实时追踪(tail -f)';
+
+  @override
+  String get tailSaveFirst => '请先保存更改后再开启实时追踪';
+
+  @override
+  String get tailResume => '滚动到底部并继续追踪';
+
+  @override
+  String get cmdToggleTail => '切换实时追踪(tail -f)';
+
+  @override
+  String get tailReadOnlyHint => '实时追踪(tail -f)中为只读，关闭追踪后可编辑';
 }

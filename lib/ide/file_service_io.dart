@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bao_remote/local.dart';
 import 'package:path/path.dart' as p;
@@ -22,6 +23,47 @@ Future<int> fileByteSize(String path) async {
     return await File(path).length();
   } on PathNotFoundException {
     throw IdeFileNotFoundException(path);
+  }
+}
+
+/// The file at [path]'s size, and its bytes read [length] at a time as
+/// they are listened for (it opened only then).
+Future<({int size, Stream<Uint8List> bytes})> readFilePieces(
+  String path,
+  int length,
+) async {
+  final file = File(path);
+  final size = await file.length();
+  Stream<Uint8List> bytes() async* {
+    final handle = await file.open();
+    try {
+      var left = size;
+      while (left > 0) {
+        final piece = await handle.read(left < length ? left : length);
+        if (piece.isEmpty) break;
+        left -= piece.length;
+        yield piece;
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+
+  return (size: size, bytes: bytes());
+}
+
+/// [bytes] written to the file at [path] as they come; nothing left of it
+/// when they fail.
+Future<void> writeFilePieces(String path, Stream<Uint8List> bytes) async {
+  final file = File(path);
+  final sink = file.openWrite();
+  try {
+    await sink.addStream(bytes);
+    await sink.close();
+  } on Object {
+    await sink.close().catchError((Object _) {});
+    await file.delete().catchError((Object _) => file);
+    rethrow;
   }
 }
 

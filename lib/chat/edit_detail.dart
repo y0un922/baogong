@@ -12,7 +12,8 @@ enum EditDetail {
   static const settingKey = 'chat.editDetail';
 
   /// [value] as settings.json has it.
-  static EditDetail parse(Object? value) => value == card.name ? card : compact;
+  static EditDetail parse(Object? value) =>
+      value == card.name ? card : compact;
 
   /// As settings.json keeps it; null (not written) for [compact].
   Object? get setting => this == compact ? null : name;

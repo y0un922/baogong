@@ -267,8 +267,13 @@ class IdeGitCommitPanelState extends State<IdeGitCommitPanel>
   IdeScmSession _sessionOf(IdeGitRepository git) =>
       identical(git, _git) ? _session : widget.sessionOf?.call(git) ?? _session;
 
-  /// The repositories listed: each of the host's, else its one.
-  List<IdeGitRepository> get _repositories {
+  /// The repositories listed: the one chosen in the log's repository menu
+  /// alone, not each of the host's.
+  List<IdeGitRepository> get _repositories => [?_git];
+
+  /// Each of the host's repositories, else its one: the changelists span
+  /// them all.
+  List<IdeGitRepository> get _allRepositories {
     final repositories = widget.host.repositories;
     if (repositories.isEmpty) return [?_git];
     return [for (final (_, git) in repositories) git];
@@ -489,7 +494,7 @@ class IdeGitCommitPanelState extends State<IdeGitCommitPanel>
   Future<void> fetch() async => _run(() async => _git?.fetch());
 
   Future<void> fetchAll() => _run(() async {
-    for (final git in _repositories) {
+    for (final git in _allRepositories) {
       await git.fetch();
     }
   });
@@ -511,11 +516,35 @@ class IdeGitCommitPanelState extends State<IdeGitCommitPanel>
         ai: widget.commitMessage,
       );
 
-  Future<void> _run(Future<void> Function() operation) async {
+  void _report(Object error, {IdeGitRepository? git}) {
+    if (!mounted) return;
+    final target = git ?? _git;
+    if (target != null &&
+        target.state?.head.upstream != null &&
+        isGitPushRejected(error)) {
+      widget.notifications.notify(
+        IdeSeverity.error,
+        '$error',
+        primary: [
+          IdeNotificationAction(
+            context.l10n.scmSyncChanges,
+            () => unawaited(_run(target.sync, git: target)),
+          ),
+        ],
+      );
+      return;
+    }
+    widget.notifications.notify(IdeSeverity.error, '$error');
+  }
+
+  Future<void> _run(
+    Future<void> Function() operation, {
+    IdeGitRepository? git,
+  }) async {
     try {
       await operation();
     } catch (error) {
-      if (mounted) widget.notifications.notify(IdeSeverity.error, '$error');
+      _report(error, git: git);
     }
   }
 
@@ -645,7 +674,8 @@ class IdeGitCommitPanelState extends State<IdeGitCommitPanel>
       for (final git in _repositories)
         if (git.state != null) git,
     ];
-    final several = repositories.length > 1;
+    // Under its header where the host has several: which one is committed.
+    final several = _allRepositories.length > 1;
     final rows = <_Row>[];
     for (final git in repositories) {
       final state = git.state!;
@@ -733,15 +763,17 @@ class IdeGitCommitPanelState extends State<IdeGitCommitPanel>
         addGroup(kind, files);
       }
     }
-    _pruneChangelists(repositories);
+    _pruneChangelists();
     return rows;
   }
 
   /// The changelists told which changes there are, once every repository's
   /// are known: those gone leave their lists.
-  void _pruneChangelists(List<IdeGitRepository> known) {
+  void _pruneChangelists() {
     final lists = widget.changelists;
-    if (lists == null || known.length != _repositories.length) return;
+    if (lists == null) return;
+    final known = _allRepositories;
+    if (known.any((git) => git.state == null)) return;
     final changed = {
       for (final git in known)
         for (final files in _changesOf(git.state!).values)
@@ -1092,6 +1124,7 @@ class IdeGitCommitPanelState extends State<IdeGitCommitPanel>
     // In the history, whether the commit is made or not (a hook says no).
     if (message.isNotEmpty) _session.rememberMessage(message);
     final options = _session.commitOptions;
+    IdeGitRepository? pushingGit;
     try {
       if (work.isEmpty) {
         // Amend alone: the last commit's message.
@@ -1116,11 +1149,12 @@ class IdeGitCommitPanelState extends State<IdeGitCommitPanel>
           for (final (git, _) in work) git,
           if (work.isEmpty) ?_git,
         }) {
+          pushingGit = git;
           await ideGitPushOrPublish(git);
         }
       }
     } catch (error) {
-      if (mounted) widget.notifications.notify(IdeSeverity.error, '$error');
+      _report(error, git: pushingGit);
     } finally {
       if (mounted) setState(() => _committing = false);
     }
@@ -2402,7 +2436,8 @@ class IdeGitCommitPanelState extends State<IdeGitCommitPanel>
             ),
             IdeMenuAction(
               l10n.scmPush,
-              onSelected: () => unawaited(_run(() => ideGitPushOrPublish(git))),
+              onSelected: () =>
+                  unawaited(_run(() => ideGitPushOrPublish(git), git: git)),
             ),
           ],
         ],

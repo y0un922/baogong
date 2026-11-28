@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:bao_agent/bao_agent.dart'
     show AgentPaths, ForeignBrief, SessionStore, newUuid;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../acp/acp_connection.dart';
 import '../acp/mcp_endpoint.dart';
@@ -176,6 +177,7 @@ class AgyTransport implements ClaudeCodeTransport {
       case 'control_response':
         _kernel.receive(message);
       case 'user':
+        if (_steer(message)) return;
         _queue.add(message);
         _next();
     }
@@ -275,8 +277,8 @@ class AgyTransport implements ClaudeCodeTransport {
 
   // --- Turns -----------------------------------------------------------------------
 
-  /// Messages waiting for the turn running to end: agy takes one prompt
-  /// at a time.
+  /// Messages waiting for the turn running to end (as the user would have
+  /// them, or the turn not yet prompted; see [_steer]).
   final List<Map<String, Object?>> _queue = [];
   _Turn? _turn;
 
@@ -285,30 +287,14 @@ class AgyTransport implements ClaudeCodeTransport {
     unawaited(_run(_queue.removeAt(0)));
   }
 
-  Future<void> _run(Map<String, Object?> message) async {
-    final uuid = message['uuid'] as String? ?? newUuid();
-    final turn = _turn = _Turn(uuid);
-    _idleTimer?.cancel();
-    final content = ((message['message'] as Map?)?['content'] as List? ?? [])
-        .whereType<Map<Object?, Object?>>()
-        .map((block) => block.cast<String, Object?>())
-        .toList();
-    _emit({
-      'type': 'system',
-      'subtype': 'init',
-      'cwd': launch.cwd,
-      'model': _model,
-      'effort': _effort,
-      'permissionMode': _mode,
-      'tools': const <String>[],
-    });
-    _emit({
-      'type': 'system',
-      'subtype': 'session_state_changed',
-      'state': 'running',
-    });
-    // What agy has not seen: the conversation as it was before this.
-    final before = [..._store.chain];
+  static List<Map<String, Object?>> _contentOf(Map<String, Object?> message) =>
+      ((message['message'] as Map?)?['content'] as List? ?? [])
+          .whereType<Map<Object?, Object?>>()
+          .map((block) => block.cast<String, Object?>())
+          .toList();
+
+  /// The user's message [uuid] kept, and told as taken up.
+  void _takeUp(String uuid, List<Map<String, Object?>> content) {
     final entry = _store.append({
       'type': 'user',
       'message': {'role': 'user', 'content': content},
@@ -327,13 +313,78 @@ class AgyTransport implements ClaudeCodeTransport {
       'command_uuid': uuid,
       'state': 'started',
     });
+  }
+
+  /// Folds [message] into the turn running, where the user would have it
+  /// so (`priority` next or now, as the CLI folds one in between its tool
+  /// calls): agy takes a prompt sent mid-turn in, ending the one before at
+  /// once, the turn going on in the new one's. Not while a question or an
+  /// approval waits on the user.
+  bool _steer(Map<String, Object?> message) {
+    final turn = _turn;
+    final connection = _connection;
+    final session = _agySession;
+    if (message['priority'] case 'next' || 'now') {
+    } else {
+      return false;
+    }
+    if (turn == null ||
+        turn.cancelled ||
+        turn.prompt == null ||
+        !_open ||
+        connection == null ||
+        session == null ||
+        _asked.isNotEmpty) {
+      return false;
+    }
+    final uuid = message['uuid'] as String? ?? newUuid();
+    final content = _contentOf(message);
+    _closeOpen();
+    _takeUp(uuid, content);
+    turn
+      ..begun = DateTime.now()
+      ..prompt = connection.request('session/prompt', {
+        'sessionId': session,
+        'prompt': _acpPrompt(content),
+      });
+    return true;
+  }
+
+  Future<void> _run(Map<String, Object?> message) async {
+    final uuid = message['uuid'] as String? ?? newUuid();
+    final turn = _turn = _Turn(uuid);
+    _idleTimer?.cancel();
+    final content = _contentOf(message);
+    _emit({
+      'type': 'system',
+      'subtype': 'init',
+      'cwd': launch.cwd,
+      'model': _model,
+      'effort': _effort,
+      'permissionMode': _mode,
+      'tools': const <String>[],
+    });
+    _emit({
+      'type': 'system',
+      'subtype': 'session_state_changed',
+      'state': 'running',
+    });
+    // What agy has not seen: the conversation as it was before this.
+    final before = [..._store.chain];
+    _takeUp(uuid, content);
     String? error;
     String? stopReason;
-    final watchdog = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (_asked.isNotEmpty ||
-          DateTime.now().difference(turn.heard) < stallAfter) {
+    var checked = DateTime.now();
+    final watchdog = Timer.periodic(checkEvery, (_) {
+      final now = DateTime.now();
+      // Woken from sleep: the time asleep is not agy's silence.
+      final slept = now.difference(checked) > checkEvery + _sleepTolerance;
+      checked = now;
+      if (slept || _waiting(turn)) {
+        turn.heard = now;
         return;
       }
+      if (now.difference(turn.heard) < stallAfter) return;
       turn.stalled = true;
       _interrupt();
       _dropConnection();
@@ -342,15 +393,22 @@ class AgyTransport implements ClaudeCodeTransport {
       final session = await _session();
       final handoff = handoffReminder(before, syncedUuid: _synced);
       if (handoff != null) _handedOff += agyTokens(handoff);
-      final response = await _connection!.request('session/prompt', {
+      turn.prompt = _connection!.request('session/prompt', {
         'sessionId': session,
         'prompt': [
           if (handoff != null) {'type': 'text', 'text': handoff},
           ..._acpPrompt(content),
         ],
       });
-      stopReason = response['stopReason'] as String?;
-      _usageOf(response['usage']);
+      // Ended by one the user folded in ([_steer]): on in that one.
+      while (true) {
+        final prompt = turn.prompt!;
+        final response = await prompt;
+        _usageOf(response['usage']);
+        if (!identical(prompt, turn.prompt)) continue;
+        stopReason = response['stopReason'] as String?;
+        break;
+      }
     } on AgyUnavailable catch (unavailable) {
       error = unavailable.signIn
           ? 'Sign in to Antigravity in Settings → Models → Antigravity.'
@@ -389,7 +447,7 @@ class AgyTransport implements ClaudeCodeTransport {
           : 'success',
       'is_error': error != null,
       'result': ?error,
-      'duration_ms': DateTime.now().difference(turn.started).inMilliseconds,
+      'duration_ms': DateTime.now().difference(turn.begun).inMilliseconds,
       'usage': {
         'input_tokens': turn.inputTokens ?? _used ?? 0,
         'output_tokens': turn.outputTokens ?? 0,
@@ -441,11 +499,31 @@ class AgyTransport implements ClaudeCodeTransport {
     _ => message,
   };
 
-  /// How long a turn goes without a word from agy before it is taken to
-  /// hang (a known fault of agy's: no word after a tool is approved, and
-  /// a cancel not heard): Google's models take a minute or two at times,
-  /// retrying when busy, saying nothing meanwhile.
-  static const stallAfter = Duration(minutes: 8);
+  /// How long a turn goes without a word from agy, nothing waited on,
+  /// before it is taken to hang: Google's models take a minute or two at
+  /// times, retrying when busy, saying nothing meanwhile.
+  @visibleForTesting
+  static Duration stallAfter = const Duration(minutes: 15);
+
+  /// How often a turn's silence is checked.
+  @visibleForTesting
+  static Duration checkEvery = const Duration(minutes: 1);
+
+  /// A check this much later than due: the machine slept in between.
+  static const _sleepTolerance = Duration(seconds: 10);
+
+  /// How long agy has to end a turn cancelled, before its process is
+  /// ended (a known fault of agy's: a cancel not heard).
+  @visibleForTesting
+  static Duration cancelGrace = const Duration(seconds: 15);
+
+  /// Whether agy's silence in [turn] is a wait, not a hang: on the user
+  /// (an approval), on a tool running (a long command; with no limit, as
+  /// a build or tests may take long), on one of the app's MCP servers.
+  bool _waiting(_Turn turn) =>
+      _asked.isNotEmpty ||
+      _mcpOpen > 0 ||
+      turn.calls.any((id) => _calls[id]?.acp.running ?? false);
 
   void _interrupt() {
     final turn = _turn;
@@ -458,6 +536,9 @@ class AgyTransport implements ClaudeCodeTransport {
     if (_agySession case final session?) {
       _connection?.notify('session/cancel', {'sessionId': session});
     }
+    Timer(cancelGrace, () {
+      if (identical(_turn, turn)) _dropConnection();
+    });
   }
 
   Future<Map<String, Object?>> _rewind(Map<String, Object?> request) async {
@@ -660,12 +741,47 @@ class AgyTransport implements ClaudeCodeTransport {
     String server,
     Map<String, Object?> message,
   ) async {
-    final response = await _kernel.request('mcp_message', {
-      'server_name': server,
-      'message': message,
-    }, const Duration(hours: 1));
-    if (!message.containsKey('id')) return null;
-    return (response['mcp_response'] as Map?)?.cast<String, Object?>();
+    _mcpOpen++;
+    try {
+      final response = await _kernel.request('mcp_message', {
+        'server_name': server,
+        'message': message,
+      }, const Duration(hours: 1));
+      if (!message.containsKey('id')) return null;
+      final answer = (response['mcp_response'] as Map?)
+          ?.cast<String, Object?>();
+      _noteMcpResult(server, message, answer);
+      return answer;
+    } finally {
+      _mcpOpen--;
+    }
+  }
+
+  /// Messages to the app's MCP servers not answered yet.
+  int _mcpOpen = 0;
+
+  /// What a tool of [server]'s answered, kept for its call to show: agy
+  /// tells none of it. Its message names no call, so the first of that
+  /// tool's not answered yet takes it; not one of a subagent's (another
+  /// conversation of agy's), whose calls are not this session's.
+  void _noteMcpResult(
+    String server,
+    Map<String, Object?> message,
+    Map<String, Object?>? answer,
+  ) {
+    if (message['method'] != 'tools/call') return;
+    if (answer?['result'] case final Map<Object?, Object?> result) {
+      final params = message['params'] as Map? ?? const {};
+      final meta = params['_meta'] as Map? ?? const {};
+      final conversation = meta['antigravity.google/conversation_id'];
+      if (conversation != null && conversation != _agySession) return;
+      final name = 'mcp__${server}__${params['name']}';
+      final call = _calls.values
+          .where((c) => c.told && !c.done && c.mcpResult == null)
+          .where((c) => c.name == name)
+          .firstOrNull;
+      call?.mcpResult = result.cast();
+    }
   }
 
   /// Ends agy's process: the session stays agy's, resumed on the next.
@@ -706,6 +822,7 @@ class AgyTransport implements ClaudeCodeTransport {
     String method,
     Map<String, Object?> params,
   ) async {
+    if (method == 'elicitation/create') return _elicit(params);
     if (method != 'session/request_permission') {
       throw AcpError(-32601, 'Method not found: $method');
     }
@@ -727,6 +844,42 @@ class AgyTransport implements ClaudeCodeTransport {
             'outcome': {'outcome': 'selected', 'optionId': id},
           };
     final update = (params['toolCall'] as Map?)?.cast<String, Object?>();
+    // Not a tool to approve: a question (a subagent's), its options the
+    // answers.
+    if (update?['toolCallId'] case final String id
+        when id.startsWith('interaction_')) {
+      if (_turn?.cancelled != false) return selected(null);
+      final labels = {
+        for (final option in options)
+          if (option['optionId'] case final String id)
+            '${option['name'] ?? id}': id,
+      };
+      final question = '${update!['title'] ?? 'Choose an option.'}';
+      _closeOpen();
+      final answer = await _canUseTool({
+        'tool_name': 'AskUserQuestion',
+        'input': {
+          'questions': [
+            {
+              'question': question,
+              'header': '',
+              'options': [
+                for (final label in labels.keys)
+                  {'label': label, 'description': ''},
+              ],
+              'multiSelect': false,
+            },
+          ],
+        },
+        'tool_use_id': claudeToolId(id),
+        'permission_suggestions': const [],
+      });
+      final picked = switch (answer?['updatedInput']) {
+        {'answers': final Map<Object?, Object?> answers} => answers[question],
+        _ => null,
+      };
+      return selected(labels[picked]);
+    }
     final call = update == null ? null : _toolCall(update);
     if (call == null || _turn?.cancelled != false) return selected(null);
     _closeOpen();
@@ -759,43 +912,24 @@ class AgyTransport implements ClaudeCodeTransport {
         return true;
       }
     }
-    final requestId = 'agy-perm-${++_requests}';
-    final asked = _asked[requestId] = Completer();
-    unawaited(
-      _kernel
-          .request('can_use_tool', {
-            'tool_name': call.name,
-            'input': input,
-            'tool_use_id': call.claudeId,
-            'permission_suggestions': [
-              if (call.name == 'Bash' && command != null)
-                {
-                  'type': 'addRules',
-                  'rules': [
-                    {'toolName': 'Bash', 'ruleContent': command},
-                  ],
-                  'behavior': 'allow',
-                  'destination': 'session',
-                }
-              else if (call.edits)
-                {
-                  'type': 'setMode',
-                  'mode': 'acceptEdits',
-                  'destination': 'session',
-                },
+    final answer = await _canUseTool({
+      'tool_name': call.name,
+      'input': input,
+      'tool_use_id': call.claudeId,
+      'permission_suggestions': [
+        if (call.name == 'Bash' && command != null)
+          {
+            'type': 'addRules',
+            'rules': [
+              {'toolName': 'Bash', 'ruleContent': command},
             ],
-          }, const Duration(days: 1))
-          .then<void>(
-            (answer) {
-              if (!asked.isCompleted) asked.complete(answer);
-            },
-            onError: (Object _) {
-              if (!asked.isCompleted) asked.complete(null);
-            },
-          ),
-    );
-    final answer = await asked.future;
-    _asked.remove(requestId);
+            'behavior': 'allow',
+            'destination': 'session',
+          }
+        else if (call.edits)
+          {'type': 'setMode', 'mode': 'acceptEdits', 'destination': 'session'},
+      ],
+    });
     if (answer == null || answer['behavior'] != 'allow') {
       if (call.edits) await _hook('PermissionDenied', call);
       return false;
@@ -820,6 +954,62 @@ class AgyTransport implements ClaudeCodeTransport {
   }
 
   int _requests = 0;
+
+  /// Asks the kernel `can_use_tool` [request], as the CLI does: its answer
+  /// (`behavior`, `updatedInput`, …), null for the turn cancelled first.
+  Future<Map<String, Object?>?> _canUseTool(
+    Map<String, Object?> request,
+  ) async {
+    final requestId = 'agy-perm-${++_requests}';
+    final asked = _asked[requestId] = Completer();
+    unawaited(
+      _kernel
+          .request('can_use_tool', request, const Duration(days: 1))
+          .then<void>(
+            (answer) {
+              if (!asked.isCompleted) asked.complete(answer);
+            },
+            onError: (Object _) {
+              if (!asked.isCompleted) asked.complete(null);
+            },
+          ),
+    );
+    final answer = await asked.future;
+    _asked.remove(requestId);
+    return answer;
+  }
+
+  /// A form agy asks the user to fill in (its ask_question's), put to them
+  /// as Claude Code's AskUserQuestion; what they picked given back as the
+  /// form has it.
+  Future<Map<String, Object?>> _elicit(Map<String, Object?> params) async {
+    final form = AgyQuestionForm.of(params['requestedSchema']);
+    if (_turn?.cancelled != false) return const {'action': 'cancel'};
+    if (form == null) return const {'action': 'decline'};
+    _closeOpen();
+    final call = switch (params['toolCallId']) {
+      final String id => _calls[id],
+      _ => null,
+    };
+    if (call != null) _tell(call);
+    final answer = await _canUseTool({
+      'tool_name': 'AskUserQuestion',
+      'input': {'questions': form.questions},
+      'tool_use_id': call?.claudeId ?? claudeToolId('ask_${_requests + 1}'),
+      'permission_suggestions': const [],
+    });
+    if (answer == null) return const {'action': 'cancel'};
+    if (answer['behavior'] != 'allow') return const {'action': 'decline'};
+    final given = switch (answer['updatedInput']) {
+      {'answers': final Map<Object?, Object?> answers} => answers,
+      _ => const <Object?, Object?>{},
+    };
+    final answers = {
+      for (final MapEntry(:key, :value) in given.entries) '$key': '$value',
+    };
+    call?.answers = answers;
+    return {'action': 'accept', 'content': form.content(answers)};
+  }
 
   /// Calls back the kernel's hooks of [event] for [call], as Claude Code
   /// does, each once the one before is answered.
@@ -875,7 +1065,9 @@ class AgyTransport implements ClaudeCodeTransport {
       case 'session_info_update':
         if (update['title'] case final String said) {
           final title = withoutReminders(said);
-          if (title.isNotEmpty) {
+          // agy does not learn of renames, so it keeps sending its own title
+          // on resume: only name an untitled session (matching bao_agent).
+          if (title.isNotEmpty && _store.title == null) {
             _store.note({'type': 'ai-title', 'aiTitle': title});
             _emit({
               'type': 'system',
@@ -911,22 +1103,24 @@ class AgyTransport implements ClaudeCodeTransport {
     if (usage['size'] case final num size when size > 0) {
       _size = size.toInt();
     }
+    // A prompt's, added up: a turn the user folded a message into is
+    // told in two prompts or more (see [_steer]).
     final turn = _turn;
     if (turn == null) return;
     if (usage['inputTokens'] case final num input) {
-      turn.inputTokens = input.toInt();
+      turn.inputTokens = (turn.inputTokens ?? 0) + input.toInt();
     }
     if (usage['outputTokens'] case final num output) {
-      turn.outputTokens = output.toInt();
+      turn.outputTokens = (turn.outputTokens ?? 0) + output.toInt();
     }
     if (usage['cachedReadTokens'] case final num read) {
-      turn.cacheRead = read.toInt();
+      turn.cacheRead += read.toInt();
     }
     if (usage['cachedWriteTokens'] case final num written) {
-      turn.cacheWrite = written.toInt();
+      turn.cacheWrite += written.toInt();
     }
     if (usage['thoughtTokens'] case final num thought) {
-      turn.thought = thought.toInt();
+      turn.thought += thought.toInt();
     }
   }
 
@@ -1068,6 +1262,7 @@ class AgyTransport implements ClaudeCodeTransport {
   _Call? _toolCall(Map<String, Object?> update) {
     final id = update['toolCallId'];
     if (id is! String) return null;
+    _turn?.calls.add(id);
     final call = _calls.putIfAbsent(id, () => _Call(AcpToolCall(id)));
     call.acp.merge(update);
     return call;
@@ -1111,7 +1306,13 @@ class AgyTransport implements ClaudeCodeTransport {
         // Gone, or not text: the patch numbered from its start.
       }
     }
-    final result = claudeToolResult(call.acp, call.name, fileText: fileText);
+    final result = claudeToolResult(
+      call.acp,
+      call.name,
+      fileText: fileText,
+      answers: call.answers,
+      mcpResult: call.mcpResult,
+    );
     _result(
       call,
       result.content,
@@ -1125,9 +1326,10 @@ class AgyTransport implements ClaudeCodeTransport {
     }
   }
 
+  /// [content] is text, or Claude's blocks (an MCP tool's image).
   void _result(
     _Call call,
-    String content, {
+    Object content, {
     bool isError = false,
     Map<String, Object?>? structured,
   }) {
@@ -1227,10 +1429,19 @@ class _Turn {
   _Turn(this.uuid);
 
   final String uuid;
-  final DateTime started = DateTime.now();
+
+  /// When its last message was taken up (one folded in, see
+  /// AgyTransport._steer): the kernel's turn from there.
+  DateTime begun = DateTime.now();
   DateTime heard = DateTime.now();
   bool cancelled = false;
   bool stalled = false;
+
+  /// The prompt it waits on: the last sent.
+  Future<Map<String, Object?>>? prompt;
+
+  /// The tool calls agy made in it, by id.
+  final Set<String> calls = {};
   int? inputTokens;
   int? outputTokens;
   int cacheRead = 0;
@@ -1261,6 +1472,12 @@ class _Call {
   bool preHooked = false;
   String name = '';
   Map<String, Object?> input = const {};
+
+  /// For a question asked: what the user answered, by the question.
+  Map<String, String>? answers;
+
+  /// For a tool of the app's MCP servers: what it answered (`result`).
+  Map<String, Object?>? mcpResult;
 
   /// Whether it changes a file.
   bool get edits => acp.kind == 'edit' || name == 'Edit' || name == 'Write';

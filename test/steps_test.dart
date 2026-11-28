@@ -242,6 +242,8 @@ void main() {
     testWidgets('an edit: one line with its counts, opening to the diff', (
       tester,
     ) async {
+      EditDetail.current.value = EditDetail.compact;
+      addTearDown(() => EditDetail.current.value = EditDetail.card);
       await pumpStep(tester, edit);
       expect(find.text('main.dart'), findsOneWidget);
       expect(find.text('+12 -1', findRichText: true), findsOneWidget);
@@ -258,7 +260,6 @@ void main() {
 
     testWidgets('an edit, as a card: the diff always open', (tester) async {
       EditDetail.current.value = EditDetail.card;
-      addTearDown(() => EditDetail.current.value = EditDetail.compact);
       await pumpStep(tester, edit);
       expect(find.text('main.dart'), findsOneWidget);
       expect(find.byType(IdeCodeDiff), findsOneWidget);
@@ -723,7 +724,8 @@ void main() {
     );
   });
 
-  testWidgets('more than three subagents fold under a count', (tester) async {
+  testWidgets('more than three subagents come under a count, which folds '
+      'them', (tester) async {
     Future<void> pump(int count) => tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -752,6 +754,9 @@ void main() {
     expect(find.textContaining('subagents running'), findsNothing);
     await pump(4);
     expect(find.text('4 subagents running'), findsOneWidget);
+    expect(find.text('agent 0'), findsOneWidget);
+    await tester.tap(find.text('4 subagents running'));
+    await tester.pump();
     expect(find.text('agent 0'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
@@ -783,11 +788,8 @@ void main() {
         ),
       ),
     );
-    // Folded under a line counting them.
+    // Under a line counting them, shown.
     expect(find.text('10 background tasks running'), findsOneWidget);
-    expect(find.text('task 0'), findsNothing);
-    await tester.tap(find.text('10 background tasks running'));
-    await tester.pump();
     // That line and four rows, the strip's padding and its border.
     expect(tester.getSize(find.byType(ActivityStrip)).height, 28 * 5 + 6 + 2);
     expect(find.text('task 0').hitTestable(), findsOneWidget);
@@ -796,6 +798,10 @@ void main() {
     await tester.drag(find.text('task 0'), const Offset(0, -400));
     await tester.pump();
     expect(find.text('task 9').hitTestable(), findsOneWidget);
+    // Folded under it, clicked.
+    await tester.tap(find.text('10 background tasks running'));
+    await tester.pump();
+    expect(find.text('task 0'), findsNothing);
     // The ticking clock stopped.
     await tester.pumpWidget(const SizedBox());
   });

@@ -235,6 +235,165 @@ static gboolean on_key_press(GtkWidget* widget, GdkEventKey* event,
   return FALSE;
 }
 
+// The widget the view takes its pointer events in: FlView's event box.
+static GtkWidget* find_event_box(GtkWidget* widget) {
+  if (GTK_IS_EVENT_BOX(widget)) return widget;
+  if (!GTK_IS_CONTAINER(widget)) return nullptr;
+  GList* children = gtk_container_get_children(GTK_CONTAINER(widget));
+  GtkWidget* found = nullptr;
+  for (GList* item = children; item != nullptr && found == nullptr;
+       item = item->next) {
+    found = find_event_box(GTK_WIDGET(item->data));
+  }
+  g_list_free(children);
+  return found;
+}
+
+// dragWindow: moves the window with the press under way, by the header the
+// app draws (see WindowControls.movesByHeader). The press is the window
+// manager's from then on, and its release never comes to the view, which
+// would take the next press for the same one still held: the view is told
+// of the release here, at [time] (the pointer event's, in milliseconds).
+static void drag_window(MyApplication* self, guint32 time) {
+  if (self->window == nullptr) return;
+  GdkDisplay* display = gtk_widget_get_display(GTK_WIDGET(self->window));
+  GdkSeat* seat = gdk_display_get_default_seat(display);
+  GdkDevice* pointer = seat == nullptr ? nullptr : gdk_seat_get_pointer(seat);
+  if (pointer == nullptr) return;
+  // Where it is on the screen, for X11; Wayland's compositor knows.
+  gint x = 0;
+  gint y = 0;
+  gdk_device_get_position(pointer, nullptr, &x, &y);
+  gtk_window_begin_move_drag(self->window, GDK_BUTTON_PRIMARY, x, y, time);
+
+  GtkWidget* target =
+      self->view == nullptr ? nullptr : find_event_box(self->view);
+  if (target == nullptr) target = self->view;
+  GdkWindow* window = target == nullptr ? nullptr : gtk_widget_get_window(target);
+  if (window == nullptr) return;
+  GdkEvent* release = gdk_event_new(GDK_BUTTON_RELEASE);
+  release->button.window = GDK_WINDOW(g_object_ref(window));
+  release->button.send_event = TRUE;
+  release->button.time = time;
+  release->button.button = GDK_BUTTON_PRIMARY;
+  gdk_window_get_device_position_double(window, pointer, &release->button.x,
+                                        &release->button.y, nullptr);
+  gdk_event_set_device(release, pointer);
+  gdk_event_set_source_device(release, pointer);
+  gboolean handled = FALSE;
+  g_signal_emit_by_name(target, "button-release-event", release, &handled);
+  gdk_event_free(release);
+}
+
+static void toggle_maximized(GtkWindow* window) {
+  if (gtk_window_is_maximized(window)) {
+    gtk_window_unmaximize(window);
+  } else {
+    gtk_window_maximize(window);
+  }
+}
+
+// handleTitleDoubleClick: what GTK's settings say a double click on a title
+// bar does (maximize, by default).
+static void title_double_click(GtkWindow* window) {
+  g_autofree gchar* action = nullptr;
+  g_object_get(gtk_widget_get_settings(GTK_WIDGET(window)),
+               "gtk-titlebar-double-click", &action, nullptr);
+  if (action == nullptr || strcmp(action, "toggle-maximize") == 0) {
+    toggle_maximized(window);
+  } else if (strcmp(action, "minimize") == 0) {
+    gtk_window_iconify(window);
+  } else if (strcmp(action, "lower") == 0) {
+    GdkWindow* gdk_window = gtk_widget_get_window(GTK_WIDGET(window));
+    if (gdk_window != nullptr) gdk_window_lower(gdk_window);
+  }
+}
+
+// The window's corners, rounded as the system's windows are: GTK draws the
+// frame (its shadow) round by the CSS below, the app clips what it draws to
+// the same corners (see WindowControls.roundCornersOf), the view's
+// background left clear under them. Only where the screen is composited:
+// without, what is clear would be black.
+static const int kCornerRadius = 8;
+
+static const GdkWindowState kEdgeStates = static_cast<GdkWindowState>(
+    GDK_WINDOW_STATE_MAXIMIZED | GDK_WINDOW_STATE_FULLSCREEN |
+    GDK_WINDOW_STATE_TILED | GDK_WINDOW_STATE_TOP_TILED |
+    GDK_WINDOW_STATE_RIGHT_TILED | GDK_WINDOW_STATE_BOTTOM_TILED |
+    GDK_WINDOW_STATE_LEFT_TILED);
+
+static void style_window_frame(GtkWindow* window) {
+  GdkScreen* screen = gtk_widget_get_screen(GTK_WIDGET(window));
+  GdkVisual* visual = gdk_screen_get_rgba_visual(screen);
+  if (visual == nullptr || !gdk_screen_is_composited(screen)) return;
+  gtk_widget_set_visual(GTK_WIDGET(window), visual);
+  gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(window)),
+                              "baocode-frame");
+  g_autofree gchar* css = g_strdup_printf(
+      "window.baocode-frame { background-color: transparent; }"
+      "window.baocode-frame decoration { border-radius: %dpx; }"
+      "window.baocode-frame.maximized decoration,"
+      "window.baocode-frame.fullscreen decoration,"
+      "window.baocode-frame.tiled decoration,"
+      "window.baocode-frame.tiled-top decoration,"
+      "window.baocode-frame.tiled-right decoration,"
+      "window.baocode-frame.tiled-bottom decoration,"
+      "window.baocode-frame.tiled-left decoration { border-radius: 0; }",
+      kCornerRadius);
+  g_autoptr(GtkCssProvider) provider = gtk_css_provider_new();
+  gtk_css_provider_load_from_data(provider, css, -1, nullptr);
+  gtk_style_context_add_provider_for_screen(
+      screen, GTK_STYLE_PROVIDER(provider),
+      GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+}
+
+// How round the app draws the window's corners now: not at all while it
+// fills the screen or sits against its edges, nor where the frame isn't
+// round (above).
+static int corner_radius(GtkWindow* window) {
+  GtkWidget* widget = GTK_WIDGET(window);
+  if (!gtk_style_context_has_class(gtk_widget_get_style_context(widget),
+                                   "baocode-frame") ||
+      !gdk_screen_is_composited(gtk_widget_get_screen(widget))) {
+    return 0;
+  }
+  GdkWindow* gdk_window = gtk_widget_get_window(widget);
+  if (gdk_window != nullptr &&
+      (gdk_window_get_state(gdk_window) & kEdgeStates) != 0) {
+    return 0;
+  }
+  return kCornerRadius;
+}
+
+static void send_corners(MyApplication* self) {
+  if (self->window == nullptr || self->window_channel == nullptr) return;
+  g_autoptr(FlValue) radius = fl_value_new_int(corner_radius(self->window));
+  fl_method_channel_invoke_method(self->window_channel, "corners", radius,
+                                  nullptr, nullptr, nullptr);
+}
+
+// Tells the app whether the window is maximized, for its maximize button,
+// and how round its corners are.
+static gboolean window_state_cb(GtkWidget* widget, GdkEventWindowState* event,
+                                gpointer user_data) {
+  (void)widget;
+  MyApplication* self = MY_APPLICATION(user_data);
+  if ((event->changed_mask & GDK_WINDOW_STATE_MAXIMIZED) != 0 &&
+      self->window_channel != nullptr) {
+    g_autoptr(FlValue) maximized = fl_value_new_bool(
+        (event->new_window_state & GDK_WINDOW_STATE_MAXIMIZED) != 0);
+    fl_method_channel_invoke_method(self->window_channel, "maximized",
+                                    maximized, nullptr, nullptr, nullptr);
+  }
+  if ((event->changed_mask & kEdgeStates) != 0) send_corners(self);
+  return FALSE;
+}
+
+static void composited_changed_cb(GdkScreen* screen, gpointer user_data) {
+  (void)screen;
+  send_corners(MY_APPLICATION(user_data));
+}
+
 static void reveal_path(const char* path) {
   if (path == nullptr || path[0] == '\0') return;
   g_autofree char* target = g_file_test(path, G_FILE_TEST_IS_DIR)
@@ -403,6 +562,31 @@ static void window_method_call_cb(FlMethodChannel* channel, FlMethodCall* call,
     }
     g_autoptr(FlValue) result = fl_value_new_bool(!full_screen);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else if (strcmp(name, "windowCommand") == 0) {
+    const char* command = nullptr;
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_STRING) {
+      command = fl_value_get_string(args);
+    }
+    if (self->window != nullptr && command != nullptr) {
+      if (strcmp(command, "minimize") == 0) {
+        gtk_window_iconify(self->window);
+      } else if (strcmp(command, "maximize") == 0) {
+        toggle_maximized(self->window);
+      } else if (strcmp(command, "close") == 0) {
+        gtk_window_close(self->window);
+      }
+    }
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+  } else if (strcmp(name, "corners") == 0) {
+    g_autoptr(FlValue) radius = fl_value_new_int(
+        self->window == nullptr ? 0 : corner_radius(self->window));
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(radius));
+  } else if (strcmp(name, "dragWindow") == 0) {
+    drag_window(self, static_cast<guint32>(map_number(args, "time")));
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+  } else if (strcmp(name, "handleTitleDoubleClick") == 0) {
+    if (self->window != nullptr) title_double_click(self->window);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   } else if (strcmp(name, "showContextMenu") == 0) {
     FlValue* items = nullptr;
     if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
@@ -442,9 +626,18 @@ static void my_application_activate(GApplication* application) {
   self->window = window;
   g_object_add_weak_pointer(G_OBJECT(window), (gpointer*)&self->window);
 
-  // The app paints its own header on Windows only. Everywhere else the
-  // system draws the caption, so this is a normal title bar (no GTK
-  // header bar stacked on top of the Flutter view).
+  // The app draws its own header, the window buttons at its right as on
+  // Windows (see WindowControls.drawsHeader). A title bar of GTK's own that
+  // is never shown makes GTK draw the window's frame itself: its shadow and
+  // resize edges, with no caption of the system's over the view.
+  gtk_window_set_titlebar(window, gtk_drawing_area_new());
+  style_window_frame(window);
+  g_signal_connect(window, "window-state-event", G_CALLBACK(window_state_cb),
+                   self);
+  g_signal_connect_object(gtk_widget_get_screen(GTK_WIDGET(window)),
+                          "composited-changed",
+                          G_CALLBACK(composited_changed_cb), self,
+                          static_cast<GConnectFlags>(0));
   gtk_window_set_title(window, "Baogong");
   gtk_window_set_default_size(window, kDefaultWidth, kDefaultHeight);
   GdkGeometry geometry = {};
@@ -460,8 +653,11 @@ static void my_application_activate(GApplication* application) {
   self->view = GTK_WIDGET(view);
   g_object_add_weak_pointer(G_OBJECT(view), (gpointer*)&self->view);
   g_signal_connect(view, "key-press-event", G_CALLBACK(on_key_press), self);
+  // Clear: what the app leaves undrawn at the window's round corners (see
+  // style_window_frame) shows what is behind the window.
   GdkRGBA background_color;
-  gdk_rgba_parse(&background_color, "#000000");
+  gdk_rgba_parse(&background_color,
+                 corner_radius(window) > 0 ? "rgba(0,0,0,0)" : "#000000");
   fl_view_set_background_color(view, &background_color);
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));

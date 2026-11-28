@@ -5,6 +5,8 @@
 /// upstream reads them on as its own.
 library;
 
+import 'dart:convert';
+
 /// A tool call as agy reported it so far: `tool_call`, then its updates.
 class AcpToolCall {
   AcpToolCall(this.id);
@@ -94,6 +96,44 @@ class AcpToolCall {
 String claudeToolId(String acpId) =>
     'toolu_agy_${acpId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}';
 
+/// The MCP tool [call] reaches through call_mcp_tool, if it is one.
+({String server, String tool})? agyMcpCall(AcpToolCall call) {
+  if (call.name != 'call_mcp_tool' &&
+      !(call.title?.startsWith('MCP Tool ') ?? false)) {
+    return null;
+  }
+  return switch (call.input) {
+    {'ServerName': final String server, 'ToolName': final String tool}
+        when server.isNotEmpty && tool.isNotEmpty =>
+      (server: server, tool: tool),
+    _ => null,
+  };
+}
+
+/// update_steps' input as TodoWrite's.
+Map<String, Object?> _steps(Map<String, Object?> input) => {
+  'todos': [
+    for (final step in input['steps'] as List? ?? const [])
+      if (step case {'title': final String title})
+        _todo(title, switch (step['status']) {
+          'done' || 'completed' => 'completed',
+          final String status => status,
+          _ => null,
+        }),
+  ],
+};
+
+/// A todo of TodoWrite's: [status] one of its own, else pending.
+Map<String, Object?> _todo(String content, Object? status) => {
+  'content': content,
+  'status': switch (status) {
+    'in_progress' => 'in_progress',
+    'completed' => 'completed',
+    _ => 'pending',
+  },
+  'activeForm': content,
+};
+
 /// [call] as Claude Code's tool: its name and input. [servers] are the
 /// app's own MCP servers agy was given, whose tools agy names
 /// `mcp_<server>_<tool>` (Claude Code `mcp__<server>__<tool>`).
@@ -122,6 +162,42 @@ String claudeToolId(String acpId) =>
         input: {...input}..remove('toolSummary'),
       );
     }
+  }
+  // An MCP tool reached through call_mcp_tool, as agy calls those its
+  // context has no room to list: of kind `execute`, yet not a command.
+  if (agyMcpCall(call) case (:final server, :final tool)) {
+    return (
+      name: 'mcp__${server}__$tool',
+      input: switch (input['Arguments']) {
+        final Map<Object?, Object?> arguments => arguments.cast(),
+        _ => const {},
+      },
+    );
+  }
+  // Its steps, as Claude Code's todos.
+  if (name == 'update_steps') {
+    return (name: 'TodoWrite', input: _steps(input));
+  }
+  // A question to the user, as Claude Code asks one.
+  if (name == 'ask_question') {
+    return (
+      name: 'AskUserQuestion',
+      input: {
+        'questions': [
+          for (final question in input['questions'] as List? ?? const [])
+            if (question case {'question': final String text})
+              {
+                'question': text,
+                'header': '',
+                'options': [
+                  for (final option in question['options'] as List? ?? const [])
+                    {'label': '$option', 'description': ''},
+                ],
+                'multiSelect': question['is_multi_select'] == true,
+              },
+        ],
+      },
+    );
   }
   // A search of the web is of kind `search` too.
   if (name == 'search_web') {
@@ -215,12 +291,45 @@ String claudeToolId(String acpId) =>
 /// it failed, and its `tool_use_result` (an edit's patch, a command's
 /// output) for the chat to show. [fileText] is the file's text as it stands
 /// after an edit (null where it could not be read), to number the patch's
-/// lines as in it.
-({String content, bool isError, Map<String, Object?>? structured})
-claudeToolResult(AcpToolCall call, String name, {String? fileText}) {
+/// lines as in it. [answers] are what the user answered to a question it
+/// asked, by the question. [mcpResult] is what one of the app's MCP
+/// servers answered it (agy tells none of it): its content Claude's
+/// blocks, or text alone.
+({Object content, bool isError, Map<String, Object?>? structured})
+claudeToolResult(
+  AcpToolCall call,
+  String name, {
+  String? fileText,
+  Map<String, String>? answers,
+  Map<String, Object?>? mcpResult,
+}) {
   final output = call.output ?? '';
   final content = _cut(output.isEmpty ? '(no output)' : output);
+  if (mcpResult != null) {
+    return (
+      content: _mcpContent(mcpResult['content']),
+      isError: mcpResult['isError'] == true || call.failed,
+      structured: null,
+    );
+  }
   switch (name) {
+    case 'TodoWrite':
+      return (
+        content: 'Todos have been modified successfully.',
+        isError: false,
+        structured: {'newTodos': _steps(call.input)['todos']},
+      );
+    case 'AskUserQuestion' when answers != null:
+      final said = [
+        for (final MapEntry(:key, :value) in answers.entries) '"$key"="$value"',
+      ].join(', ');
+      return (
+        content:
+            'User has answered your questions: $said. You can now continue '
+            'with the user\'s answers in mind.',
+        isError: false,
+        structured: {'answers': answers},
+      );
     // agy keeps a search's results to itself: nothing to show.
     case 'WebSearch' when output.isEmpty && !call.failed:
       return (content: '', isError: false, structured: null);
@@ -340,22 +449,158 @@ String _commandOutput(String output) {
       .trim();
 }
 
+/// An MCP result's content as a tool result's: its text alone, or
+/// Claude's blocks where it holds images.
+Object _mcpContent(Object? content) {
+  final blocks = <Map<String, Object?>>[
+    for (final block in content is List ? content : const [])
+      switch (block) {
+        {'type': 'text', 'text': final String text} => {
+          'type': 'text',
+          'text': _cut(text),
+        },
+        {
+          'type': 'image',
+          'data': final String data,
+          'mimeType': final String type,
+        } =>
+          {
+            'type': 'image',
+            'source': {'type': 'base64', 'media_type': type, 'data': data},
+          },
+        _ => {'type': 'text', 'text': _cut(jsonEncode(block))},
+      },
+  ];
+  if (blocks.any((block) => block['type'] == 'image')) return blocks;
+  final text = blocks.map((block) => block['text']).join('\n');
+  return text.isEmpty ? '(no output)' : _cut(text);
+}
+
 /// An `update` of `plan` as Claude Code's `TodoWrite` input.
 Map<String, Object?> claudeTodos(Map<String, Object?> update) => {
   'todos': [
     for (final entry in update['entries'] as List? ?? const [])
-      if (entry is Map)
-        {
-          'content': '${entry['content'] ?? ''}',
-          'status': switch (entry['status']) {
-            'in_progress' => 'in_progress',
-            'completed' => 'completed',
-            _ => 'pending',
-          },
-          'activeForm': '${entry['content'] ?? ''}',
-        },
+      if (entry is Map) _todo('${entry['content'] ?? ''}', entry['status']),
   ],
 };
+
+/// A form agy asks the user to fill in (`elicitation/create`), as its
+/// ask_question sends one: each question a field, its title the question,
+/// its choices numbered (`oneOf`; `items.anyOf` for a pick of several),
+/// and beside it `<field>_other` for an answer in the user's words.
+class AgyQuestionForm {
+  AgyQuestionForm._(this._fields);
+
+  final List<_FormField> _fields;
+
+  /// [schema] (its `requestedSchema`) as questions; null for a form that
+  /// is not all questions with choices.
+  static AgyQuestionForm? of(Object? schema) {
+    if (schema case {'properties': final Map<Object?, Object?> properties}) {
+      final fields = <_FormField>[];
+      for (final MapEntry(:key, :value) in properties.entries) {
+        if (key is! String || value is! Map) return null;
+        if (key.endsWith('_other') &&
+            properties.containsKey(key.substring(0, key.length - 6))) {
+          continue;
+        }
+        final items = value['items'];
+        final many = value['type'] == 'array';
+        final choices = <(String, String)>[
+          for (final choice in [
+            ...?value['oneOf'] as List?,
+            if (items is Map) ...?(items['anyOf'] ?? items['oneOf']) as List?,
+          ])
+            if (choice case {'const': final Object id})
+              ('$id', '${choice['title'] ?? id}'),
+          for (final id in [
+            ...?value['enum'] as List?,
+            if (items is Map) ...?items['enum'] as List?,
+          ])
+            ('$id', '$id'),
+        ];
+        if (choices.isEmpty) return null;
+        fields.add(
+          _FormField(
+            key,
+            '${value['title'] ?? key}',
+            choices,
+            many: many,
+            other: properties.containsKey('${key}_other')
+                ? '${key}_other'
+                : null,
+          ),
+        );
+      }
+      if (fields.isNotEmpty) return AgyQuestionForm._(fields);
+    }
+    return null;
+  }
+
+  /// The questions, as AskUserQuestion's input has them.
+  List<Map<String, Object?>> get questions => [
+    for (final field in _fields)
+      {
+        'question': field.title,
+        'header': '',
+        'options': [
+          for (final (_, label) in field.choices)
+            {'label': label, 'description': ''},
+        ],
+        'multiSelect': field.many,
+      },
+  ];
+
+  /// The form filled in with [answers] (AskUserQuestion's: by question,
+  /// the choices picked joined by `, `): the choices as their numbers,
+  /// what matches none in the user's words.
+  Map<String, Object?> content(Map<String, String> answers) {
+    final content = <String, Object?>{};
+    for (final field in _fields) {
+      final answer = answers[field.title];
+      if (answer == null) continue;
+      final picked = <String>[];
+      var rest = answer.trim();
+      // Labels may hold `, `: the longest that fits is taken first.
+      final byLength = [...field.choices]
+        ..sort((a, b) => b.$2.length.compareTo(a.$2.length));
+      while (rest.isNotEmpty) {
+        final match = byLength
+            .where((c) => rest == c.$2 || rest.startsWith('${c.$2}, '))
+            .firstOrNull;
+        if (match == null || !field.many && picked.isNotEmpty) break;
+        picked.add(match.$1);
+        rest = rest.substring(match.$2.length);
+        if (rest.startsWith(', ')) rest = rest.substring(2);
+      }
+      if (picked.isNotEmpty) {
+        content[field.key] = field.many ? picked : picked.first;
+      }
+      if (rest.isNotEmpty && field.other != null) content[field.other!] = rest;
+    }
+    return content;
+  }
+}
+
+class _FormField {
+  _FormField(
+    this.key,
+    this.title,
+    this.choices, {
+    this.many = false,
+    this.other,
+  });
+
+  final String key;
+  final String title;
+
+  /// Each choice's id and label.
+  final List<(String, String)> choices;
+  final bool many;
+
+  /// The field for an answer in the user's words.
+  final String? other;
+}
 
 /// What a tool's output keeps in the conversation, at most.
 const maxResultChars = 30000;

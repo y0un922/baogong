@@ -887,6 +887,14 @@
   "@agentImageUntitled": {
     "description": "The title of an agent first asked something with images alone, none from a file (pasted)."
   },
+  "welcomeDemoTitle": "Demo: a rate limiter, compared and rewritten",
+  "@welcomeDemoTitle": {
+    "description": "The title of the demo conversation a new user first sees: nothing in it ran; what they send starts a conversation of their own."
+  },
+  "welcomeDemoNoModel": "This is a demo. To start a real conversation, set up a model of your own.",
+  "@welcomeDemoNoModel": {
+    "description": "Above the composer of the demo conversation, beside the Set Up a Model button, while no model is set up."
+  },
   "chatTitleSummarize": "Summarize into a new title",
   "@chatTitleSummarize": {
     "description": "In the list under a chat's title being renamed: has a model title the conversation from what the user asked."
@@ -1009,35 +1017,6 @@
       }
     }
   },
-  "sidebarDeleteAgentTitle": "Delete agent?",
-  "sidebarDeleteAgentMessage": "“{title}” and its conversation will be removed.",
-  "@sidebarDeleteAgentMessage": {
-    "placeholders": {
-      "title": {
-        "type": "String"
-      }
-    }
-  },
-  "sidebarDeleteAgentsTitle": "Delete agents?",
-  "sidebarDeleteAgentsMessage": "{count, plural, =1{The agent and its conversation will be deleted} other{The {count} agents and their conversations will be deleted}}, from their kernels too. This cannot be undone.",
-  "@sidebarDeleteAgentsMessage": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "sidebarDeleteAgentMessageKernel": "“{title}” and its conversation will be deleted, from {kernel} too. This cannot be undone.",
-  "@sidebarDeleteAgentMessageKernel": {
-    "placeholders": {
-      "title": {
-        "type": "String"
-      },
-      "kernel": {
-        "type": "String"
-      }
-    }
-  },
   "sidebarSearchAgents": "Search agents…",
   "ideChatHistory": "Agent History",
   "@ideChatHistory": {
@@ -1113,7 +1092,7 @@
       }
     }
   },
-  "sidebarDeleteCount": "Delete {count} Agents…",
+  "sidebarDeleteCount": "Delete {count} Agents",
   "@sidebarDeleteCount": {
     "placeholders": {
       "count": {
@@ -1140,15 +1119,6 @@
   "sidebarDetachAside": "Detach from Conversation",
   "@sidebarDetachAside": {
     "description": "The menu of a conversation asked beside another with /btw, listed under it in the sidebar: makes it a conversation of its own."
-  },
-  "sidebarDeleteAsidesToo": "{count, plural, =1{Its /btw conversation is deleted with it.} other{Its {count} /btw conversations are deleted with it.}}",
-  "@sidebarDeleteAsidesToo": {
-    "description": "After the message asking to delete an agent that has conversations asked beside it with /btw.",
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
   },
   "btwCommandDetail": "Ask in a conversation of its own, beside this one",
   "@btwCommandDetail": {
@@ -1196,17 +1166,41 @@
   "sidebarSortByTime": "Sort by Time",
   "sidebarArchiveAll": "Archive All",
   "sidebarUnarchiveAll": "Unarchive All",
-  "sidebarDeleteArchived": "Delete All Archived…",
-  "sidebarDeleteArchivedTitle": "Delete archived agents?",
-  "sidebarDeleteArchivedMessage": "{count, plural, =1{The archived agent and its conversation will be deleted} other{The {count} archived agents and their conversations will be deleted}}, from their kernels too. This cannot be undone.",
-  "@sidebarDeleteArchivedMessage": {
+  "sidebarDeleteArchived": "Delete All Archived",
+  "sidebarRemoveFromList": "Remove from List",
+  "sidebarAgentDeleted": "Deleted “{title}”",
+  "@sidebarAgentDeleted": {
+    "description": "The note at the bottom of the window, Undo beside it, once an agent is deleted.",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "sidebarAgentsDeleted": "{count, plural, =1{Deleted 1 agent} other{Deleted {count} agents}}",
+  "@sidebarAgentsDeleted": {
     "placeholders": {
       "count": {
         "type": "int"
       }
     }
   },
-  "sidebarRemoveFromList": "Remove from List",
+  "sidebarProjectRemoved": "Removed “{name}” from the list",
+  "@sidebarProjectRemoved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sidebarWorkspaceDeleted": "Deleted workspace “{name}”",
+  "@sidebarWorkspaceDeleted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "sidebarDropToPin": "Drop here to pin",
   "sidebarMoreActions": "More Actions…",
   "sidebarChangeIcon": "Change Icon…",
@@ -4621,6 +4615,25 @@
   "explorerExcludeSetting": "Hidden files and folders",
   "explorerExcludeSettingDescription": "Files and folders the explorer does not show, comma separated: a name (`node_modules`, `*.log`) matches anywhere, a path (`build/**`, `src/generated`) matches within the folder.",
   "explorerExcludeSettingPlaceholder": "e.g. .git, node_modules, *.log",
+  "gitAutoFetchSetting": "Git auto-fetch",
+  "gitAutoFetchSettingDescription": "Periodically fetch the current branch's remote in the background so incoming commits appear without a manual Fetch. (git.autofetchInterval)",
+  "gitAutoFetchOff": "Off",
+  "gitAutoFetchMinutes": "{minutes, plural, =1{Every 1 minute} other{Every {minutes} minutes}}",
+  "@gitAutoFetchMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "gitAutoFetchSeconds": "Every {seconds} seconds",
+  "@gitAutoFetchSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
   "claudePathSetting": "Path",
   "claudePathSettingDescription": "Empty: the newest Claude Code on this machine, downloaded if there is none. A path: always that one, e.g. one you built. (claudeCode.path)",
   "claudePathSettingHint": "Automatic",
@@ -4888,6 +4901,7 @@
       }
     }
   },
+  "modelsDragToReorder": "Drag to reorder",
   "modelsFeaturedWhy": "Why am I seeing this?",
   "modelsFeaturedNote": "These sites are officially listed by BaoCode",
   "modelsFeaturedNoteHow": "Add the one-click import to be listed too, for free",
@@ -5193,16 +5207,18 @@
   "modelsAccountCallback": "Address after sign-in",
   "modelsAccountCallbackDetail": "If the browser does not come back by itself, paste the address it ended on.",
   "modelsProtocolAnthropic": "Anthropic-compatible",
+  "modelsProtocolGemini": "Gemini-compatible",
   "modelsConnection": "Connection",
   "modelsName": "Name",
   "modelsIcon": "Icon",
   "modelsIconDescription": "Heads its models in the model picker: a maker's logo, the site's icon or a picture of your own. Unset, the maker's logo its base URL names.",
   "modelsIconChange": "Change Icon",
   "modelsProtocol": "Protocol",
-  "modelsProtocolDescription": "OpenAI's APIs go through the local proxy, which translates Claude Code's requests and the answers.",
+  "modelsProtocolDescription": "OpenAI and Gemini APIs go through the local proxy, which translates Claude Code's requests and the answers.",
   "modelsBaseUrl": "Base URL",
   "modelsBaseUrlAnthropicHint": "Without /v1, as ANTHROPIC_BASE_URL: Claude Code adds /v1/messages.",
   "modelsBaseUrlOpenAIHint": "As the upstream documents it; without a version in its path (…/v1), /v1 is added.",
+  "modelsBaseUrlGeminiHint": "As the upstream documents it (usually ending in /v1beta); a bare host gets /v1beta.",
   "modelsCustomUrls": "Custom URLs",
   "modelsCustomUrlsDescription": "Where models are listed and conversations go is made from the Base URL. When the upstream has them elsewhere, give them in full here.",
   "modelsModelsUrl": "Models URL",
@@ -5460,7 +5476,7 @@
       }
     }
   },
-  "modelsEndpointDescription": "Which API this model's requests go to, at the upstream's base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one and its GPT at Responses, say.",
+  "modelsEndpointDescription": "Which API this model's requests go to, at the upstream's base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one, its GPT at Responses and its Gemini at Gemini-compatible, say.",
   "modelsModelEndpointUrlDescription": "Where this model's requests go, in full. Apart from the endpoint type: that says how a request is made, this only where it goes. Empty, the one in grey is used.",
   "modelsImageBadge": "Image",
   "modelsImage": "Image model",
@@ -7072,9 +7088,11 @@
   "stashFormatClear": "Clear formatting",
   "stashPolish": "Polish",
   "stashPolishing": "Polishing…",
+  "stashCancelPolish": "Stop polishing",
   "stashPolishHint": "Has AI make the selection clearer, in your words, without adding structure",
   "composerPolish": "Enhance prompt",
   "composerPolishing": "Enhancing…",
+  "composerCancelPolish": "Stop enhancing",
   "composerPolishHint": "Enhance prompt: the auxiliary model makes the message a clearer, more specific prompt for the agent, filling in what you left vague; pictures, files, code and links stay as they are; Undo takes it back",
   "composerPolishFailed": "Could not enhance the prompt: {error}",
   "composerTranslating": "Translating…",
@@ -7798,6 +7816,7 @@
   "cmdBrowserWelcome": "Connect Your Browser...",
   "cmdStashWelcome": "Meet Stash...",
   "cmdModelWelcome": "Set Up a Model...",
+  "cmdWelcomeDemo": "Show the Demo Conversation",
   "modelWelcomeTitle": "Pick a Model to Start",
   "modelWelcomeLead": "Baogong runs your agents on a model of your choosing. Add an upstream, a service with an API key, and its models are ready to use.",
   "modelWelcomeAnyTitle": "Any upstream",
@@ -7825,7 +7844,7 @@
   "remoteAddServer": "Add SSH Server...",
   "remoteEditServer": "Edit",
   "settingsSectionSsh": "SSH Servers",
-  "settingsSshKeywords": "ssh remote server host jump bastion key password core",
+  "settingsSshKeywords": "ssh remote server host jump bastion key password core skills",
   "sshSettingsDescription": "The servers remote projects connect to: their address, how they sign in, a jump host, and the core each runs.",
   "sshSettingsServers": "Servers",
   "sshSettingsServersDescription": "Those added in the app, and the hosts the sidebar has.",
@@ -9172,6 +9191,9 @@
   "remoteLocalAccessDetail": "Agents on these hosts may run commands on this computer (asking you each time), copy files both ways and forward ports.",
   "remoteLocalAccessNoAsking": "Runs commands without asking",
   "remoteLocalAccessAskAgain": "Ask Each Time",
+  "remoteShareUserSkillsGroup": "Skills",
+  "remoteShareUserSkills": "Share Local User Skills",
+  "remoteShareUserSkillsDetail": "Project this computer’s user skills (~/.claude/skills) into a temporary directory for remote agents without changing files on the remote host. Remote skills with the same name take precedence.",
   "sidePanelPorts": "Ports",
   "portsEmpty": "No ports are forwarded. A server on {host} that prints its http://localhost address is forwarded here on its own.",
   "@portsEmpty": {
@@ -9378,5 +9400,29 @@
   "remoteBrowserSaveName": "Save As:",
   "remoteBrowserSave": "Save",
   "remoteBrowserReplace": "“{name}” already exists. Replace it?",
-  "@remoteBrowserReplace": {"placeholders": {"name": {"type": "String"}}}
+  "@remoteBrowserReplace": {"placeholders": {"name": {"type": "String"}}},
+  "tailStart": "Tail File (Follow Changes)",
+  "@tailStart": {
+    "description": "Tooltip for the eye icon button that starts Notepad++-style tailing on the active file."
+  },
+  "tailStop": "Stop Tailing",
+  "@tailStop": {
+    "description": "Tooltip for the eye icon button when tailing is active."
+  },
+  "tailSaveFirst": "Save changes to start tailing",
+  "@tailSaveFirst": {
+    "description": "Tooltip for the disabled tail button when the file has unsaved changes."
+  },
+  "tailResume": "Scroll to Bottom & Resume Tail",
+  "@tailResume": {
+    "description": "Tooltip for the floating button shown when tailing is paused by scrolling up."
+  },
+  "cmdToggleTail": "Toggle Tail (Follow File)",
+  "@cmdToggleTail": {
+    "description": "Command palette title for toggling tail mode on the active file."
+  },
+  "tailReadOnlyHint": "Read-only while tailing (tail -f). Stop tailing to edit.",
+  "@tailReadOnlyHint": {
+    "description": "Inline tooltip shown at the caret when trying to edit a file while tail mode is active."
+  }
 }

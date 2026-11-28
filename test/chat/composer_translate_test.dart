@@ -41,7 +41,7 @@ void main() {
         'were', () async {
       String? asked;
       composerTranslateAsker =
-          (system, prompt, {model, exact = false, location}) async {
+          (system, prompt, {cancel, model, exact = false, location}) async {
             asked = prompt;
             return 'Fix the bug in ⟦1⟧:\n⟦2⟧\nThe log is in ⟦3⟧.';
           };
@@ -66,6 +66,7 @@ void main() {
       composerTranslateAsker = (
         system,
         prompt, {
+        cancel,
         model,
         exact = false,
         location,
@@ -78,6 +79,7 @@ void main() {
       composerTranslateAsker = (
         system,
         prompt, {
+        cancel,
         model,
         exact = false,
         location,
@@ -89,6 +91,7 @@ void main() {
       composerTranslateAsker = (
         system,
         prompt, {
+        cancel,
         model,
         exact = false,
         location,
@@ -101,6 +104,7 @@ void main() {
       composerTranslateAsker = (
         system,
         prompt, {
+        cancel,
         model,
         exact = false,
         location,
@@ -149,7 +153,7 @@ void main() {
       final reply = Completer<String>();
       String? prompt;
       composerTranslateAsker =
-          (system, asked, {model, exact = false, location}) {
+          (system, asked, {cancel, model, exact = false, location}) {
             prompt = asked;
             return reply.future;
           };
@@ -191,7 +195,7 @@ void main() {
     ) async {
       var asked = 0;
       composerTranslateAsker =
-          (system, prompt, {model, exact = false, location}) async {
+          (system, prompt, {cancel, model, exact = false, location}) async {
             asked++;
             return 'Fix it.';
           };

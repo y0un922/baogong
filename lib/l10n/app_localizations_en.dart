@@ -1874,6 +1874,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentImageUntitled => 'Image';
 
   @override
+  String get welcomeDemoTitle => 'Demo: a rate limiter, compared and rewritten';
+
+  @override
+  String get welcomeDemoNoModel =>
+      'This is a demo. To start a real conversation, set up a model of your own.';
+
+  @override
   String get chatTitleSummarize => 'Summarize into a new title';
 
   @override
@@ -2019,33 +2026,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get sidebarDeleteAgentTitle => 'Delete agent?';
-
-  @override
-  String sidebarDeleteAgentMessage(String title) {
-    return '“$title” and its conversation will be removed.';
-  }
-
-  @override
-  String get sidebarDeleteAgentsTitle => 'Delete agents?';
-
-  @override
-  String sidebarDeleteAgentsMessage(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: 'The $count agents and their conversations will be deleted',
-      one: 'The agent and its conversation will be deleted',
-    );
-    return '$_temp0, from their kernels too. This cannot be undone.';
-  }
-
-  @override
-  String sidebarDeleteAgentMessageKernel(String title, String kernel) {
-    return '“$title” and its conversation will be deleted, from $kernel too. This cannot be undone.';
-  }
-
-  @override
   String get sidebarSearchAgents => 'Search agents…';
 
   @override
@@ -2116,7 +2096,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String sidebarDeleteCount(int count) {
-    return 'Delete $count Agents…';
+    return 'Delete $count Agents';
   }
 
   @override
@@ -2132,17 +2112,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sidebarDetachAside => 'Detach from Conversation';
-
-  @override
-  String sidebarDeleteAsidesToo(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: 'Its $count /btw conversations are deleted with it.',
-      one: 'Its /btw conversation is deleted with it.',
-    );
-    return '$_temp0';
-  }
 
   @override
   String get btwCommandDetail =>
@@ -2195,25 +2164,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarUnarchiveAll => 'Unarchive All';
 
   @override
-  String get sidebarDeleteArchived => 'Delete All Archived…';
-
-  @override
-  String get sidebarDeleteArchivedTitle => 'Delete archived agents?';
-
-  @override
-  String sidebarDeleteArchivedMessage(int count) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other:
-          'The $count archived agents and their conversations will be deleted',
-      one: 'The archived agent and its conversation will be deleted',
-    );
-    return '$_temp0, from their kernels too. This cannot be undone.';
-  }
+  String get sidebarDeleteArchived => 'Delete All Archived';
 
   @override
   String get sidebarRemoveFromList => 'Remove from List';
+
+  @override
+  String sidebarAgentDeleted(String title) {
+    return 'Deleted “$title”';
+  }
+
+  @override
+  String sidebarAgentsDeleted(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Deleted $count agents',
+      one: 'Deleted 1 agent',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String sidebarProjectRemoved(String name) {
+    return 'Removed “$name” from the list';
+  }
+
+  @override
+  String sidebarWorkspaceDeleted(String name) {
+    return 'Deleted workspace “$name”';
+  }
 
   @override
   String get sidebarDropToPin => 'Drop here to pin';
@@ -6306,6 +6286,32 @@ class AppLocalizationsEn extends AppLocalizations {
       'e.g. .git, node_modules, *.log';
 
   @override
+  String get gitAutoFetchSetting => 'Git auto-fetch';
+
+  @override
+  String get gitAutoFetchSettingDescription =>
+      'Periodically fetch the current branch\'s remote in the background so incoming commits appear without a manual Fetch. (git.autofetchInterval)';
+
+  @override
+  String get gitAutoFetchOff => 'Off';
+
+  @override
+  String gitAutoFetchMinutes(int minutes) {
+    String _temp0 = intl.Intl.pluralLogic(
+      minutes,
+      locale: localeName,
+      other: 'Every $minutes minutes',
+      one: 'Every 1 minute',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String gitAutoFetchSeconds(int seconds) {
+    return 'Every $seconds seconds';
+  }
+
+  @override
   String get claudePathSetting => 'Path';
 
   @override
@@ -6795,6 +6801,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get modelsDragToReorder => 'Drag to reorder';
+
+  @override
   String get modelsFeaturedWhy => 'Why am I seeing this?';
 
   @override
@@ -7194,6 +7203,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelsProtocolAnthropic => 'Anthropic-compatible';
 
   @override
+  String get modelsProtocolGemini => 'Gemini-compatible';
+
+  @override
   String get modelsConnection => 'Connection';
 
   @override
@@ -7214,7 +7226,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsProtocolDescription =>
-      'OpenAI\'s APIs go through the local proxy, which translates Claude Code\'s requests and the answers.';
+      'OpenAI and Gemini APIs go through the local proxy, which translates Claude Code\'s requests and the answers.';
 
   @override
   String get modelsBaseUrl => 'Base URL';
@@ -7226,6 +7238,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get modelsBaseUrlOpenAIHint =>
       'As the upstream documents it; without a version in its path (…/v1), /v1 is added.';
+
+  @override
+  String get modelsBaseUrlGeminiHint =>
+      'As the upstream documents it (usually ending in /v1beta); a bare host gets /v1beta.';
 
   @override
   String get modelsCustomUrls => 'Custom URLs';
@@ -7703,7 +7719,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsEndpointDescription =>
-      'Which API this model\'s requests go to, at the upstream\'s base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one and its GPT at Responses, say.';
+      'Which API this model\'s requests go to, at the upstream\'s base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one, its GPT at Responses and its Gemini at Gemini-compatible, say.';
 
   @override
   String get modelsModelEndpointUrlDescription =>
@@ -9878,6 +9894,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get stashPolishing => 'Polishing…';
 
   @override
+  String get stashCancelPolish => 'Stop polishing';
+
+  @override
   String get stashPolishHint =>
       'Has AI make the selection clearer, in your words, without adding structure';
 
@@ -9886,6 +9905,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get composerPolishing => 'Enhancing…';
+
+  @override
+  String get composerCancelPolish => 'Stop enhancing';
 
   @override
   String get composerPolishHint =>
@@ -11011,6 +11033,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdModelWelcome => 'Set Up a Model...';
 
   @override
+  String get cmdWelcomeDemo => 'Show the Demo Conversation';
+
+  @override
   String get modelWelcomeTitle => 'Pick a Model to Start';
 
   @override
@@ -11081,7 +11106,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsSshKeywords =>
-      'ssh remote server host jump bastion key password core';
+      'ssh remote server host jump bastion key password core skills';
 
   @override
   String get sshSettingsDescription =>
@@ -14421,6 +14446,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get remoteLocalAccessAskAgain => 'Ask Each Time';
 
   @override
+  String get remoteShareUserSkillsGroup => 'Skills';
+
+  @override
+  String get remoteShareUserSkills => 'Share Local User Skills';
+
+  @override
+  String get remoteShareUserSkillsDetail =>
+      'Project this computer’s user skills (~/.claude/skills) into a temporary directory for remote agents without changing files on the remote host. Remote skills with the same name take precedence.';
+
+  @override
   String get sidePanelPorts => 'Ports';
 
   @override
@@ -14831,4 +14866,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String remoteBrowserReplace(String name) {
     return '“$name” already exists. Replace it?';
   }
+
+  @override
+  String get tailStart => 'Tail File (Follow Changes)';
+
+  @override
+  String get tailStop => 'Stop Tailing';
+
+  @override
+  String get tailSaveFirst => 'Save changes to start tailing';
+
+  @override
+  String get tailResume => 'Scroll to Bottom & Resume Tail';
+
+  @override
+  String get cmdToggleTail => 'Toggle Tail (Follow File)';
+
+  @override
+  String get tailReadOnlyHint =>
+      'Read-only while tailing (tail -f). Stop tailing to edit.';
 }

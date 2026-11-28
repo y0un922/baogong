@@ -80,6 +80,20 @@ abstract final class LinkMethods {
   /// `{"session"}`: stops the turn under way.
   static const stop = 'stop';
 
+  /// `{"session", "id"}`: takes back the queued message `id` before its turn
+  /// starts. Answered with `{"cancelled": bool}`. `unknown` from a desktop
+  /// before queue sync.
+  static const cancelQueued = 'cancelQueued';
+
+  /// `{"session", "id"}`: takes up the queued message `id` at once, stopping
+  /// the turn running for it. `unknown` from a desktop before queue sync.
+  static const sendQueuedNow = 'sendQueuedNow';
+
+  /// `{"session", "id", "index"}`: puts the queued message `id` at `index`
+  /// among those queued (0 is next). `unknown` from a desktop before queue
+  /// sync.
+  static const moveQueued = 'moveQueued';
+
   /// `{"session", "request", "answer"}`: answers what the agent asked (see
   /// [LinkSessionUpdate.interaction]).
   static const answer = 'answer';
@@ -177,14 +191,17 @@ abstract final class LinkMethods {
 
   /// `{"project", "path"}`: a picture of the project (PNG, JPEG, GIF,
   /// WebP), as a reply names it: `{"type", "data"}` (its media type, and
-  /// base64), or `{"tooLarge": true, "size"}` past [LinkLimits.image].
-  /// `bad` for a file that is not a picture.
+  /// base64), or `{"tooLarge": true, "size"}` past [LinkLimits.image]
+  /// (then had in pieces, by [download]). `bad` for a file that is not a
+  /// picture.
   static const image = 'image';
 
-  /// `{"project", "path"}`: any file of the machine, its bytes, for the
-  /// phone to open in an app of its own (a video, a PDF, an archive):
-  /// `{"data"}` (base64), or `{"tooLarge": true, "size"}` past
-  /// [LinkLimits.download].
+  /// `{"project", "path", "pieces"?}`: any file of the machine, its bytes,
+  /// for the phone to open in an app of its own (a video, a PDF, an
+  /// archive). With `pieces`, however large: `{"size", "pieces": true}`,
+  /// then the bytes on the stream, [LinkPieces]. Without (a phone before
+  /// those), `{"data"}` (base64), or `{"tooLarge": true, "size"}` past
+  /// [LinkLimits.download]; as a desktop before pieces answers either.
   static const download = 'download';
 
   /// `{"project"?, "bot"?, "name", "data"}` (base64): a file of the
@@ -192,8 +209,13 @@ abstract final class LinkMethods {
   /// the project's agent, or the bot's, reads it without asking: on its
   /// host, apart from the project. Answered with `{"path"}`, full, for a
   /// message to name (`@path`, in its mentions); with `{"tooLarge": true}`
-  /// past [LinkLimits.upload].
+  /// past [LinkLimits.upload]. For a desktop before [uploadPieces].
   static const upload = 'upload';
+
+  /// `{"project"?, "bot"?, "name", "size"}`, the bytes after it on the
+  /// stream ([LinkPeer.callWithPieces]): [upload], of any size. `unknown`
+  /// from a desktop before it.
+  static const uploadPieces = 'uploadPieces';
 
   /// `{"bot"?, "name", "avatar"?, "avatarImage"?, "identity", "abilities",
   /// "proactive", "chatOnly"?, "writesFirst"?}` (as [LinkBot]'s JSON;
@@ -292,6 +314,9 @@ abstract final class LinkMethods {
   static const bulk = {
     read,
     image,
+    download,
+    upload,
+    uploadPieces,
     icon,
     files,
     folder,
@@ -314,19 +339,26 @@ abstract final class LinkLimits {
   /// A project's files listed.
   static const files = 20000;
 
-  /// A picture's bytes.
+  /// A picture's bytes, in one answer; one larger comes in pieces
+  /// ([LinkMethods.download]).
   static const image = 8 * 1024 * 1024;
 
   /// A bot's picture's bytes.
   static const avatar = 1024 * 1024;
 
-  /// A file's bytes, opened in another app: base64, under the relay's
-  /// burst (16 MiB).
+  /// A file's bytes, opened in another app, in one answer of base64: what
+  /// a phone or desktop before pieces sends. In pieces ([LinkPieces]) any
+  /// size goes; the relay, when the way is through one, slows what it
+  /// carries to its rate.
   static const download = 8 * 1024 * 1024;
 
-  /// A file's bytes, from the phone ([LinkMethods.upload]): as
-  /// [download].
+  /// A file's bytes, from the phone ([LinkMethods.upload]), to a desktop
+  /// before [LinkMethods.uploadPieces]: as [download].
   static const upload = 8 * 1024 * 1024;
+
+  /// A piece's bytes ([LinkPieces]): one message each, well under a
+  /// message's most.
+  static const piece = 1024 * 1024;
 }
 
 /// A task an agent left running beside the conversation: a command, a
@@ -445,6 +477,12 @@ abstract final class LinkEvents {
 
   /// A [LinkSessionUpdate] of a session followed.
   static const session = 'session';
+
+  /// `{"session", "seq"}`: phone -> desktop acknowledgement that a
+  /// [session] update carrying `seq` arrived, so the desktop caps in-flight
+  /// updates and coalesces changes instead of queueing stale frames over a
+  /// slow link.
+  static const ack = 'ack';
 
   /// The desktop unpaired the phone; the connection ends.
   static const unpaired = 'unpaired';
@@ -859,6 +897,7 @@ class LinkSessionUpdate {
     this.goal,
     this.context,
     this.quota,
+    this.queued,
   });
 
   factory LinkSessionUpdate.fromJson(Map<String, Object?> json) =>
@@ -895,6 +934,10 @@ class LinkSessionUpdate {
         },
         quota: switch (json['quota']) {
           final Map<String, Object?> map => map,
+          _ => null,
+        },
+        queued: switch (json['queued']) {
+          final List<Object?> list => [for (final entry in list) _map(entry)],
           _ => null,
         },
       );
@@ -947,6 +990,12 @@ class LinkSessionUpdate {
   /// learned; `left`, a percentage. Times in milliseconds since the epoch.
   final Map<String, Object?>? quota;
 
+  /// The messages waiting in the desktop's queue for this session: each
+  /// `{"id", "item"}` (`item` a `UserMessageItem` encoded by `chat_codec.dart`),
+  /// the next first. Present (empty when none wait) when the desktop and this
+  /// session's kernel support server-side queueing; null when they do not.
+  final List<Map<String, Object?>>? queued;
+
   Map<String, Object?> toJson() => {
     'session': session,
     'start': start,
@@ -961,6 +1010,7 @@ class LinkSessionUpdate {
     'goal': ?goal,
     'context': ?context,
     'quota': ?quota,
+    'queued': ?queued,
   };
 }
 

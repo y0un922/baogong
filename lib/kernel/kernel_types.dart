@@ -525,6 +525,7 @@ class KernelHealth {
     this.detail,
     this.missingFolder,
     this.noModel = false,
+    this.noModelNote,
   });
 
   static const idle = KernelHealth(KernelHealthStatus.idle);
@@ -545,6 +546,10 @@ class KernelHealth {
   /// Whether what it lacks is a model to run on (BaoCode's own core with
   /// no upstream turned on): offered setting one up rather than a retry.
   final bool noModel;
+
+  /// With [noModel]: said in place of the usual offer, for the user (the
+  /// welcome demo's: that it is one).
+  final String? noModelNote;
 }
 
 /// A task the kernel runs beside the conversation: a background command, a

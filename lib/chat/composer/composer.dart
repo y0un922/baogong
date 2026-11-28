@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:bao_markdown/bao_markdown.dart';
 
 import '../../kernel/agent_kernel.dart';
+import '../../kernel/claude_code/claude_haiku.dart' show ClaudeHaikuCancelled;
 import '../../kernel/kernel_types.dart';
 import '../../keybindings/chat_keybindings.dart';
 import '../../l10n/l10n.dart';
@@ -177,11 +178,17 @@ class ChatComposerState extends State<ChatComposer>
 
   bool _hasContent = false;
 
-  /// Polish asked, its answer awaited (see [_aiRewrite]).
-  bool _polishing = false;
+  /// Polish or translation asked, its answer awaited (see [_aiRewrite]);
+  /// completing it stops the request.
+  Completer<void>? _polishCancel;
+
+  /// What [_polishCancel]'s request is: a translation, not a polish.
+  bool _translateAsked = false;
+
+  bool get _polishing => _polishCancel != null && !_translateAsked;
 
   /// Translation asked, its answer awaited (see [_aiRewrite]).
-  bool _translating = false;
+  bool get _translating => _polishCancel != null && _translateAsked;
 
   /// Every image put in, by number, kept until sent: the text's references
   /// pick which go (see [_images]), so one taken out and brought back by
@@ -379,6 +386,9 @@ class ChatComposerState extends State<ChatComposer>
   @override
   void didUpdateWidget(covariant ChatComposer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.session, widget.session)) {
+      _stopPolish();
+    }
     if (!identical(oldWidget.draft, widget.draft)) {
       oldWidget.draft?.removeListener(_handleDraftChanged);
       widget.draft?.addListener(_handleDraftChanged);
@@ -392,6 +402,7 @@ class ChatComposerState extends State<ChatComposer>
 
   @override
   void dispose() {
+    _stopPolish();
     widget.draft?.removeListener(_handleDraftChanged);
     ComposerPolishSetting.changes?.removeListener(_handleSettingsChanged);
     FloatingRegistry.closePopover(_menuOwner);
@@ -1424,6 +1435,21 @@ class ChatComposerState extends State<ChatComposer>
   /// [composerPolishText]).
   ComposerPolishText _polishText() => composerPolishText(_controller.text);
 
+  /// Stops an in-flight polish request without scheduling a rebuild.
+  void _stopPolish() {
+    final cancel = _polishCancel;
+    if (cancel == null) return;
+    _polishCancel = null;
+    if (!cancel.isCompleted) cancel.complete();
+  }
+
+  /// Stops an in-flight polish request at once so a new one may start.
+  void _cancelPolish() {
+    if (_polishCancel == null) return;
+    _stopPolish();
+    if (mounted) setState(() {});
+  }
+
   /// Has the auxiliary model polish the text into a clearer, more specific
   /// prompt (Enhance prompt; see [polishComposerText]), the agent's last
   /// turn told to know what it answers, or, with [translate], put it in the
@@ -1431,7 +1457,7 @@ class ChatComposerState extends State<ChatComposer>
   /// and links kept as they are; put in its place as one change (⌘Z takes it
   /// back), unless the text changed meanwhile. Why not, in a notification.
   Future<void> _aiRewrite({required bool translate}) async {
-    if (_polishing || _translating) return;
+    if (_polishCancel != null) return;
     final asked = _polishText();
     if (!asked.hasWords) return;
     final before = _controller.text;
@@ -1439,37 +1465,52 @@ class ChatComposerState extends State<ChatComposer>
     final l10n = context.l10n;
     final model = widget.session.selected(KernelChoiceKind.model);
     final location = widget.session.kernelContext.cwd;
-    setState(() => translate ? _translating = true : _polishing = true);
+    final cancel = Completer<void>();
+    bool current() => identical(_polishCancel, cancel);
+    setState(() {
+      _polishCancel = cancel;
+      _translateAsked = translate;
+    });
     try {
       final String rewritten;
       try {
         rewritten = await (translate
-            ? translateComposerText(asked, model: model, location: location)
+            ? translateComposerText(
+                asked,
+                model: model,
+                location: location,
+                cancel: cancel.future,
+              )
             : polishComposerText(
                 asked,
                 reply: widget.session.lastTurnReply,
                 model: model,
                 location: location,
+                cancel: cancel.future,
               ));
+      } on ClaudeHaikuCancelled {
+        return;
       } on ComposerPolishException catch (error) {
-        final message = switch (error.problem) {
-          ComposerRewriteProblem.empty => l10n.aiRewriteEmpty,
-          ComposerRewriteProblem.tooLong => l10n.aiRewriteTooLong(
-            '${error.length}',
-            '${error.askedLength}',
-          ),
-          ComposerRewriteProblem.markers => l10n.aiRewriteMarkers,
-          null => error.message ?? l10n.stashAiNoAnswer,
-        };
-        notifications?.notify(
-          IdeSeverity.error,
-          translate
-              ? l10n.composerTranslateFailed(message)
-              : l10n.composerPolishFailed(message),
-        );
+        if (current()) {
+          final message = switch (error.problem) {
+            ComposerRewriteProblem.empty => l10n.aiRewriteEmpty,
+            ComposerRewriteProblem.tooLong => l10n.aiRewriteTooLong(
+              '${error.length}',
+              '${error.askedLength}',
+            ),
+            ComposerRewriteProblem.markers => l10n.aiRewriteMarkers,
+            null => error.message ?? l10n.stashAiNoAnswer,
+          };
+          notifications?.notify(
+            IdeSeverity.error,
+            translate
+                ? l10n.composerTranslateFailed(message)
+                : l10n.composerPolishFailed(message),
+          );
+        }
         return;
       }
-      if (!mounted || _controller.text != before) return;
+      if (!mounted || !current() || _controller.text != before) return;
       // One change of its own to undo: not merged with what was typed just
       // before it, nor with what is typed next.
       _controller
@@ -1483,8 +1524,9 @@ class ChatComposerState extends State<ChatComposer>
         ..breakUndo();
       _focusNode.requestFocus();
     } finally {
-      if (mounted) {
-        setState(() => translate ? _translating = false : _polishing = false);
+      if (current()) {
+        _polishCancel = null;
+        if (mounted) setState(() {});
       }
     }
   }
@@ -1541,6 +1583,7 @@ class ChatComposerState extends State<ChatComposer>
   /// Emptied: what was in it sent from elsewhere (a suggested reply put
   /// in at a click, sent at a second).
   void clear() {
+    _cancelPolish();
     _pool = {};
     _controller.clear();
     _leaveHistory();
@@ -1560,6 +1603,7 @@ class ChatComposerState extends State<ChatComposer>
     if (_showsStop) return;
     final message = _buildMessage();
     if (message.text.isEmpty && message.images.isEmpty) return;
+    _cancelPolish();
     if (widget.onIntercept case final intercept? when intercept(message)) {
       _pool = {};
       _controller.clear();
@@ -1686,6 +1730,7 @@ class ChatComposerState extends State<ChatComposer>
       _shownBuilt,
       _editor,
       _polishing,
+      _translating,
       ComposerPolishSetting.current(),
       l10n,
       themeColors,
@@ -2057,10 +2102,12 @@ class ChatComposerState extends State<ChatComposer>
               icon: Codicons.sparkle,
               busy: _polishing,
               message: _polishing
-                  ? l10n.composerPolishing
+                  ? l10n.composerCancelPolish
                   : l10n.composerPolishHint,
               enabled: _polishing || _shownBuilt!.polishable,
-              onTap: () => unawaited(_aiRewrite(translate: false)),
+              onTap: _polishing
+                  ? _cancelPolish
+                  : () => unawaited(_aiRewrite(translate: false)),
             ),
             const SizedBox(width: 2),
           ],
@@ -2073,7 +2120,9 @@ class ChatComposerState extends State<ChatComposer>
                 ? l10n.composerTranslateToEnglishHint
                 : l10n.composerTranslateToChineseHint,
             enabled: _translating || _shownBuilt!.words,
-            onTap: () => unawaited(_aiRewrite(translate: true)),
+            onTap: _translating
+                ? _cancelPolish
+                : () => unawaited(_aiRewrite(translate: true)),
           ),
           const SizedBox(width: 2),
           if ((widget.onToggleContextPanel, context) case (
@@ -2103,8 +2152,8 @@ class ChatComposerState extends State<ChatComposer>
 }
 
 /// Polish, Enhance prompt as it says (see [ChatComposerState._aiRewrite]):
-/// a sparkle; and Translate, a globe: spinning while the model answers,
-/// faint with no words to polish or translate.
+/// a sparkle; and Translate, a globe: turning into a clickable stop spinner
+/// while the model answers, faint with no words to polish or translate.
 class _ComposerAiButton extends StatelessWidget {
   const _ComposerAiButton({
     required this.icon,
@@ -2123,12 +2172,7 @@ class _ComposerAiButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = themeColors;
-    final active = enabled && !busy;
-    final glyph = Icon(
-      busy ? Codicons.loading : icon,
-      size: 14,
-      color: enabled ? colors['icon.foreground'] : AppColors.textFaint,
-    );
+    final active = busy || enabled;
     return IdeHover(
       message: message,
       child: HoverBuilder(
@@ -2148,7 +2192,20 @@ class _ComposerAiButton extends StatelessWidget {
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(5),
             ),
-            child: busy ? IdeSpinning(glyph) : glyph,
+            child: busy
+                ? IdeStopSpinner(
+                    size: 16,
+                    color: hovered
+                        ? AppColors.textPrimary
+                        : colors['icon.foreground'],
+                  )
+                : Icon(
+                    icon,
+                    size: 14,
+                    color: enabled
+                        ? colors['icon.foreground']
+                        : AppColors.textFaint,
+                  ),
           ),
         ),
       ),

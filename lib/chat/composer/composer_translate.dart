@@ -5,6 +5,8 @@
 // are each a marker it is told to keep, put back as they were; a reply that
 // loses, doubles or makes up one is not taken.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../kernel/claude_code/claude_haiku.dart';
@@ -16,6 +18,7 @@ import 'composer_polish.dart';
 Future<String> Function(
   String system,
   String prompt, {
+  Future<void>? cancel,
   String? model,
   bool exact,
   String? location,
@@ -56,7 +59,10 @@ Future<String> translateComposerText(
   ComposerPolishText asked, {
   String? model,
   String? location,
+  Future<void>? cancel,
 }) async {
+  var cancelled = false;
+  unawaited(cancel?.then((_) => cancelled = true));
   final target = composerTranslateToEnglish(asked) ? 'English' : 'Chinese';
   final auxiliary = ModelProviders.current.auxiliary(model);
   final String reply;
@@ -64,13 +70,18 @@ Future<String> translateComposerText(
     reply = await (composerTranslateAsker ?? askClaudeHaiku)(
       _system(target),
       '<message>\n${asked.text}\n</message>',
+      cancel: cancel,
       model: auxiliary.model,
       exact: auxiliary.exact,
       location: location,
     );
+  } on ClaudeHaikuCancelled {
+    rethrow;
   } on Object catch (error) {
+    if (cancelled) throw const ClaudeHaikuCancelled();
     throw ComposerPolishException('$error');
   }
+  if (cancelled) throw const ClaudeHaikuCancelled();
   final cleaned = reply
       .trim()
       .replaceFirst(RegExp(r'^<message>\s*'), '')

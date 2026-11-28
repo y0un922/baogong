@@ -125,7 +125,7 @@ class FakeRuntime implements AgyRuntime {
 /// The kernel's side: what the transport printed, and answers to what it
 /// asks (approvals, hooks).
 class Kernel {
-  Kernel(this.transport, {this.allow = true}) {
+  Kernel(this.transport, {this.allow = true, this.answers = const {}}) {
     transport.messages.listen((message) {
       seen.add(message);
       if (message['type'] == 'control_request') {
@@ -136,9 +136,35 @@ class Kernel {
           'response': {
             'subtype': 'success',
             'request_id': message['request_id'],
-            'response': request['subtype'] == 'can_use_tool'
-                ? {'behavior': allow ? 'allow' : 'deny', 'message': 'no'}
-                : const <String, Object?>{},
+            'response': switch (request) {
+              {'subtype': 'can_use_tool', 'tool_name': 'AskUserQuestion'} => {
+                'behavior': 'allow',
+                'updatedInput': {
+                  ...request['input'] as Map,
+                  'answers': answers,
+                },
+              },
+              {'subtype': 'can_use_tool'} => {
+                'behavior': allow ? 'allow' : 'deny',
+                'message': 'no',
+              },
+              {
+                'subtype': 'mcp_message',
+                'message': {'method': 'tools/call', 'id': final Object id},
+              } =>
+                {
+                  'mcp_response': {
+                    'jsonrpc': '2.0',
+                    'id': id,
+                    'result': {
+                      'content': [
+                        {'type': 'text', 'text': 'page opened'},
+                      ],
+                    },
+                  },
+                },
+              _ => const <String, Object?>{},
+            },
           },
         });
       }
@@ -148,6 +174,9 @@ class Kernel {
 
   final ClaudeCodeTransport transport;
   final bool allow;
+
+  /// What the user answers to questions, by the question.
+  final Map<String, String> answers;
   final List<Map<String, Object?>> seen = [];
   final List<Map> asked = [];
   final List<Map<String, Object?>> results = [];
@@ -458,4 +487,464 @@ void main() {
     expect(runtime.deleted, ['agy-1']);
     expect(runtime.started.single.exited, completes);
   });
+
+  test('a question asked: put to the user, the answer given back', () async {
+    Object? filled;
+    Future<Object?> agentAsking(
+      FakeAgent agent,
+      String method,
+      Map params,
+    ) async {
+      if (method != 'session/prompt') {
+        return agentSaying('')(agent, method, params);
+      }
+      final session = params['sessionId'] as String;
+      agent.say(session, {
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'call_9',
+        'name': 'ask_question',
+        'kind': 'other',
+        'status': 'in_progress',
+        'rawInput': {
+          'questions': [
+            {
+              'question': 'Which color?',
+              'options': ['Red', 'Blue'],
+              'is_multi_select': false,
+            },
+          ],
+        },
+      });
+      filled = await agent.ask('elicitation/create', {
+        'sessionId': session,
+        'toolCallId': 'call_9',
+        'mode': 'form',
+        'message': 'The agent has a question.',
+        'requestedSchema': {
+          'type': 'object',
+          'properties': {
+            'q1': {
+              'type': 'string',
+              'title': 'Which color?',
+              'oneOf': [
+                {'const': '1', 'title': 'Red'},
+                {'const': '2', 'title': 'Blue'},
+              ],
+            },
+            'q1_other': {'type': 'string', 'title': 'Other'},
+          },
+        },
+      });
+      agent.say(session, {
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'call_9',
+        'status': 'completed',
+      });
+      return {'stopReason': 'end_turn'};
+    }
+
+    final runtime = FakeRuntime(() => FakeAgent(agentAsking));
+    final transport = await AgyTransport.start(
+      ClaudeLaunch(cwd: cwd, model: 'gemini-3.8-flash'),
+      runtime: runtime,
+    );
+    final kernel = Kernel(transport, answers: {'Which color?': 'Blue'});
+    await kernel.send('ask me');
+
+    final hello = runtime.started.single.requests.first.$2;
+    expect((hello['clientCapabilities'] as Map)['elicitation'], isNotNull);
+    final asked = kernel.asked.singleWhere(
+      (r) => r['subtype'] == 'can_use_tool',
+    );
+    expect(asked['tool_name'], 'AskUserQuestion');
+    expect(asked['tool_use_id'], 'toolu_agy_call_9');
+    expect(filled, {
+      'action': 'accept',
+      'content': {'q1': '2'},
+    });
+    final result = kernel.seen.lastWhere(
+      (m) => m['type'] == 'user' && m['tool_use_result'] != null,
+    );
+    expect(result['tool_use_result'], {
+      'answers': {'Which color?': 'Blue'},
+    });
+    expect(kernel.results.single['subtype'], 'success');
+    transport.close();
+  });
+
+  test('a message folded into the turn running, as the user has it', () async {
+    final first = Completer<Object?>();
+    Future<Object?> agent(FakeAgent agent, String method, Map params) async {
+      if (method != 'session/prompt') {
+        return agentSaying('')(agent, method, params);
+      }
+      final session = params['sessionId'] as String;
+      final text = ((params['prompt'] as List).last as Map)['text'];
+      if (text == 'build it') {
+        agent.say(session, {
+          'sessionUpdate': 'agent_message_chunk',
+          'content': {'type': 'text', 'text': 'Building.'},
+        });
+        return first.future;
+      }
+      // As agy does: the prompt before ends at once, this one goes on.
+      first.complete({
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 1},
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      agent.say(session, {
+        'sessionUpdate': 'agent_message_chunk',
+        'content': {'type': 'text', 'text': 'Built, and tested.'},
+      });
+      return {
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 2},
+      };
+    }
+
+    final runtime = FakeRuntime(() => FakeAgent(agent));
+    final transport = await AgyTransport.start(
+      ClaudeLaunch(cwd: cwd, model: 'gemini-3.8-flash'),
+      runtime: runtime,
+    );
+    final kernel = Kernel(transport);
+    final sent = kernel.send('build it', uuid: 'u1');
+    while (!kernel.seen.any((m) => m['type'] == 'stream_event')) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    transport.write({
+      'type': 'user',
+      'uuid': 'u2',
+      'priority': 'next',
+      'message': {
+        'role': 'user',
+        'content': [
+          {'type': 'text', 'text': 'and test it'},
+        ],
+      },
+    });
+    await sent;
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(
+      runtime.started.single.requests.where((r) => r.$1 == 'session/prompt'),
+      hasLength(2),
+    );
+    expect(kernel.results, hasLength(1));
+    expect(kernel.results.single['subtype'], 'success');
+    expect((kernel.results.single['usage'] as Map)['input_tokens'], 15);
+    expect(
+      [
+        for (final m in kernel.seen)
+          if (m['type'] == 'command_lifecycle') m['command_uuid'],
+      ],
+      ['u1', 'u2'],
+    );
+    final id = kernel.seen.first['session_id']! as String;
+    final said = [
+      for (final line in lines(id))
+        if (line['type'] == 'user' || line['type'] == 'assistant')
+          (((line['message'] as Map)['content'] as List).first as Map)['text'],
+    ];
+    expect(said, [
+      'build it',
+      'Building.',
+      'and test it',
+      'Built, and tested.',
+    ]);
+    transport.close();
+  });
+
+  test('a message to wait for the turn: sent once it ends', () async {
+    final runtime = FakeRuntime(() => FakeAgent(agentSaying('Done.')));
+    final transport = await AgyTransport.start(
+      ClaudeLaunch(cwd: cwd, model: 'gemini-3.8-flash'),
+      runtime: runtime,
+    );
+    final kernel = Kernel(transport);
+    final sent = kernel.send('first');
+    transport.write({
+      'type': 'user',
+      'uuid': 'later-1',
+      'priority': 'later',
+      'message': {
+        'role': 'user',
+        'content': [
+          {'type': 'text', 'text': 'second'},
+        ],
+      },
+    });
+    await sent;
+    while (kernel.results.length < 2) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(kernel.results, hasLength(2));
+    transport.close();
+  });
+
+  test('an app MCP tool\'s result shown as its server gave it', () async {
+    // flutter_test's own HttpClient answers all with 400.
+    final overrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = overrides);
+    Future<Object?> agent(FakeAgent agent, String method, Map params) async {
+      if (method != 'session/prompt') {
+        return agentSaying('')(agent, method, params);
+      }
+      final session = params['sessionId'] as String;
+      final created = agent.requests.firstWhere((r) => r.$1 == 'session/new');
+      final server = (created.$2['mcpServers'] as List).single as Map;
+      agent.say(session, {
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'call_m',
+        'name': 'mcp_baocode_browser_open',
+        'kind': 'other',
+        'status': 'in_progress',
+        'rawInput': {'url': 'https://example.com'},
+      });
+      final client = HttpClient();
+      final request = await client.postUrl(Uri.parse(server['url'] as String));
+      for (final header in server['headers'] as List) {
+        request.headers.set(
+          (header as Map)['name'] as String,
+          header['value'] as String,
+        );
+      }
+      request.headers.contentType = ContentType.json;
+      request.write(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': 4,
+          'method': 'tools/call',
+          'params': {
+            '_meta': {'antigravity.google/conversation_id': session},
+            'name': 'browser_open',
+            'arguments': {'url': 'https://example.com'},
+          },
+        }),
+      );
+      await (await request.close()).drain<void>();
+      client.close();
+      agent.say(session, {
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'call_m',
+        'status': 'completed',
+      });
+      return {'stopReason': 'end_turn'};
+    }
+
+    final runtime = FakeRuntime(() => FakeAgent(agent));
+    final transport = await AgyTransport.start(
+      ClaudeLaunch(
+        cwd: cwd,
+        model: 'gemini-3.8-flash',
+        sdkServers: const ['baocode'],
+      ),
+      runtime: runtime,
+    );
+    final kernel = Kernel(transport);
+    await kernel.send('open it');
+    final result = kernel.seen.lastWhere(
+      (m) =>
+          m['type'] == 'user' &&
+          m['isReplay'] != true &&
+          (((m['message'] as Map)['content'] as List).first as Map)['type'] ==
+              'tool_result',
+    );
+    final block =
+        (((result['message'] as Map)['content'] as List).first as Map);
+    expect(block['tool_use_id'], 'toolu_agy_call_m');
+    expect(block['content'], 'page opened');
+    transport.close();
+  });
+
+  group('a turn agy goes silent in', () {
+    setUp(() {
+      AgyTransport.stallAfter = const Duration(milliseconds: 200);
+      AgyTransport.checkEvery = const Duration(milliseconds: 20);
+      AgyTransport.cancelGrace = const Duration(milliseconds: 100);
+    });
+
+    tearDown(() {
+      AgyTransport.stallAfter = const Duration(minutes: 15);
+      AgyTransport.checkEvery = const Duration(minutes: 1);
+      AgyTransport.cancelGrace = const Duration(seconds: 15);
+    });
+
+    /// An agent whose prompt does as [prompt] says.
+    Future<Object?> Function(FakeAgent, String, Map) agentPrompting(
+      Future<Object?> Function(FakeAgent agent, String session) prompt,
+    ) => (agent, method, params) async {
+      if (method == 'session/prompt') {
+        return prompt(agent, params['sessionId'] as String);
+      }
+      return agentSaying('')(agent, method, params);
+    };
+
+    test('saying nothing, nothing waited on: stopped, restarted', () async {
+      final runtime = FakeRuntime(
+        () => FakeAgent(agentPrompting((_, _) => Completer<Object?>().future)),
+      );
+      final transport = await AgyTransport.start(
+        ClaudeLaunch(cwd: cwd, model: 'gemini-3.8-flash'),
+        runtime: runtime,
+      );
+      final kernel = Kernel(transport);
+      await kernel.send('hello');
+      expect(kernel.results.single['is_error'], true);
+      expect(kernel.results.single['result'], contains('stopped answering'));
+      expect(runtime.started.single.exited, completes);
+      transport.close();
+    });
+
+    test('a tool running long is waited for', () async {
+      final runtime = FakeRuntime(
+        () => FakeAgent(
+          agentPrompting((agent, session) async {
+            agent.say(session, {
+              'sessionUpdate': 'tool_call',
+              'toolCallId': 'build',
+              'name': 'run_command',
+              'kind': 'execute',
+              'status': 'in_progress',
+              'rawInput': {'CommandLine': 'make'},
+            });
+            await Future<void>.delayed(const Duration(milliseconds: 500));
+            agent.say(session, {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'build',
+              'status': 'completed',
+            });
+            return {'stopReason': 'end_turn'};
+          }),
+        ),
+      );
+      final transport = await AgyTransport.start(
+        ClaudeLaunch(cwd: cwd, model: 'gemini-3.8-flash'),
+        runtime: runtime,
+      );
+      final kernel = Kernel(transport);
+      await kernel.send('build it');
+      expect(kernel.results.single['subtype'], 'success');
+      transport.close();
+    });
+
+    test('a cancel not heard: its process ended', () async {
+      AgyTransport.stallAfter = const Duration(minutes: 1);
+      final runtime = FakeRuntime(
+        () => FakeAgent(agentPrompting((_, _) => Completer<Object?>().future)),
+      );
+      final transport = await AgyTransport.start(
+        ClaudeLaunch(cwd: cwd, model: 'gemini-3.8-flash'),
+        runtime: runtime,
+      );
+      final kernel = Kernel(transport);
+      final sent = kernel.send('hello');
+      while (runtime.started.isEmpty ||
+          !runtime.started.single.requests.any(
+            (r) => r.$1 == 'session/prompt',
+          )) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      transport.write({
+        'type': 'control_request',
+        'request_id': 'stop-1',
+        'request': {'subtype': 'interrupt'},
+      });
+      await sent;
+      expect(kernel.results.single['is_error'], false);
+      expect(
+        runtime.started.single.requests.map((r) => r.$1),
+        contains('session/cancel'),
+      );
+      expect(runtime.started.single.exited, completes);
+      transport.close();
+    });
+  });
+
+  test(
+    'an automatic title names an untitled session, not a named one',
+    () async {
+      Future<Object?> agentWithTitle(
+        FakeAgent agent,
+        String method,
+        Map params,
+      ) async {
+        if (method == 'session/prompt') {
+          final session = params['sessionId'] as String;
+          agent.say(session, {
+            'sessionUpdate': 'session_info_update',
+            'title': 'Uninstall MCP Servers',
+          });
+        }
+        return agentSaying('Done.')(agent, method, params);
+      }
+
+      final runtime = FakeRuntime(() => FakeAgent(agentWithTitle));
+      final first = await AgyTransport.start(
+        ClaudeLaunch(cwd: cwd, model: 'gemini-3.8-flash'),
+        runtime: runtime,
+      );
+      final kernel = Kernel(first);
+      await kernel.send('remove mcp');
+      final id = kernel.seen.first['session_id']! as String;
+
+      // Untitled session takes agy's generated title once.
+      final initialTitleEvents = [
+        for (final message in kernel.seen)
+          if (message['type'] == 'system' &&
+              message['subtype'] == 'session_title_changed')
+            message['title'],
+      ];
+      expect(initialTitleEvents, ['Uninstall MCP Servers']);
+      expect(
+        lines(id)
+            .where((l) => l['type'] == 'ai-title')
+            .map((l) => l['aiTitle']),
+        ['Uninstall MCP Servers'],
+      );
+
+      // User renames the session.
+      first.write({
+        'type': 'control_request',
+        'request_id': 'rename-1',
+        'request': {
+          'subtype': 'rename_session',
+          'title': '3.杂活',
+          'source': 'host',
+        },
+      });
+      while (!lines(
+        id,
+      ).any((l) => l['type'] == 'custom-title' && l['customTitle'] == '3.杂活')) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      first.close();
+
+      // Resuming and sending another message: agy pushes its stale title again,
+      // which must neither emit session_title_changed nor append ai-title.
+      final second = await AgyTransport.start(
+        ClaudeLaunch(cwd: cwd, model: 'gemini-3.8-flash', resume: id),
+        runtime: runtime,
+      );
+      final resumed = Kernel(second);
+      await resumed.send('follow up');
+
+      final resumedTitleEvents = [
+        for (final message in resumed.seen)
+          if (message['type'] == 'system' &&
+              message['subtype'] == 'session_title_changed')
+            message['title'],
+      ];
+      expect(resumedTitleEvents, isEmpty);
+      final kept = lines(id);
+      expect(kept.where((l) => l['type'] == 'ai-title').length, 1);
+      expect(
+        kept.lastWhere((l) => l['type'] == 'custom-title')['customTitle'],
+        '3.杂活',
+      );
+      second.close();
+    },
+  );
 }

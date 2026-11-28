@@ -41,6 +41,7 @@ import 'chat/side_panel/side_panel_view.dart';
 import 'chat/side_panel/web_page_opener.dart';
 import 'chat/side_panel/terminal_split.dart';
 import 'chat/widgets/hover_scroll_text.dart';
+import 'chat/widgets/undo_toast.dart';
 import 'customize/customization_store.dart';
 import 'customize/customizations.dart';
 import 'customize/customize_view.dart';
@@ -447,6 +448,15 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     return defaultTargetPlatform == TargetPlatform.macOS
         ? keyboard.isMetaPressed
         : keyboard.isControlPressed;
+  }
+
+  /// Whether this window is the one in front of the app's windows.
+  bool get _windowInFront {
+    if (!_multi) return true;
+    if (widget.window case final window?) {
+      return identical(_windows?.active, window);
+    }
+    return WindowControls.activeViewId == _viewId;
   }
 
   /// Whether the keyboard is in this window (each window's workbench sees
@@ -1092,6 +1102,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         if (BrowserBridge.instance.supported)
           browserWelcomeCommandId: _showBrowserWelcome,
         modelWelcomeCommandId: _showModelWelcome,
+        if (_workspace.welcome != null) welcomeDemoCommandId: _showWelcomeDemo,
         ChatCommandIds.search: () => unawaited(_openPalette()),
         ..._sidePanelCommands(),
         ..._terminalCommands(),
@@ -1117,6 +1128,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       if (StashController.current != null)
         stashWelcomeCommandId: _showStashWelcome,
       modelWelcomeCommandId: _showModelWelcome,
+      if (_workspace.welcome != null) welcomeDemoCommandId: _showWelcomeDemo,
       // As the sidebar's New Agent button: a folder first, without one.
       if (_workspace.sidebarProjects.isNotEmpty)
         ChatCommandIds.newChat: _newAgent
@@ -1684,6 +1696,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ?action(browserWelcomeCommandId, Codicons.globe),
       ?action(stashWelcomeCommandId, Codicons.note),
       ?action(modelWelcomeCommandId, Codicons.sparkle),
+      ?action(welcomeDemoCommandId, Codicons.commentDiscussion),
       ?action(
         'workbench.action.toggleSidebarVisibility',
         Codicons.layoutSidebarLeft,
@@ -1813,6 +1826,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       label: commandCatalog[modelWelcomeCommandId]!.title,
       run: _showModelWelcome,
     ),
+    if (_workspace.welcome != null)
+      IdeCommand(
+        id: welcomeDemoCommandId,
+        category: 'Help',
+        label: commandCatalog[welcomeDemoCommandId]!.title,
+        run: _showWelcomeDemo,
+      ),
   ];
 
   // --- Feature tips ----------------------------------------------------------
@@ -1923,6 +1943,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   }
 
   /// Set Up a Model…, the command: what an upstream is, and adding one.
+  /// Opens the demo conversation a new user first sees, in the chat.
+  void _showWelcomeDemo() {
+    if (!mounted) return;
+    _showTipsChat();
+    unawaited(_workspace.showWelcomeDemo());
+  }
+
   void _showModelWelcome() {
     if (!mounted) return;
     unawaited(
@@ -2694,28 +2721,16 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _openIdeChat(folder, forked);
   }
 
-  /// Deletes [thread]'s conversation once confirmed, as the sidebar's
-  /// Delete asks.
-  Future<void> _confirmDeleteThread(AgentThread thread) async {
+  /// Deletes [thread]'s conversation at once, a moment left to undo it,
+  /// as the sidebar's Delete does.
+  void _deleteThread(AgentThread thread) {
     final l10n = context.l10n;
-    final title = thread.localizedTitle(l10n);
-    final choice = await showIdeDialog(
+    showUndoToast(
       context,
-      message: l10n.sidebarDeleteAgentTitle,
-      detail: [
-        thread.kernel.catalog == null
-            ? l10n.sidebarDeleteAgentMessage(title)
-            : l10n.sidebarDeleteAgentMessageKernel(title, thread.kernel.label),
-        // Its asides go with it.
-        if (_workspace.asidesOf(thread).length case final asides
-            when asides > 0)
-          l10n.sidebarDeleteAsidesToo(asides),
-      ].join(' '),
-      buttons: [l10n.commonDelete],
-      type: IdeDialogType.warning,
+      l10n.sidebarAgentDeleted(thread.localizedTitle(l10n)),
+      onUndo: _workspace.deleteLater([thread]),
+      shown: Workspace.deleteDelay,
     );
-    if (choice != 0) return;
-    _workspace.delete(thread);
   }
 
   /// The IDE's chat in [folder]: its tabs over the one shown, the agent
@@ -2781,7 +2796,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             onFork: (thread) => unawaited(_forkIdeChat(folder, thread)),
             onArchive: (thread) =>
                 _workspace.setArchived(thread, !thread.archived),
-            onDelete: (thread) => unawaited(_confirmDeleteThread(thread)),
+            onDelete: _deleteThread,
             historyOpen: historyFolder == folder,
             onHistory: () => historyFolder == folder
                 ? _closeIdeHistory(folder)
@@ -2821,8 +2836,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                           _ideHistory.value = null;
                           unawaited(_forkIdeChat(folder, thread));
                         },
-                        onDelete: (thread) =>
-                            unawaited(_confirmDeleteThread(thread)),
+                        onDelete: _deleteThread,
                         onDismiss: () => _closeIdeHistory(folder),
                       ),
               ),
@@ -5559,6 +5573,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             _openChange(thread, change, original),
         onOpenCode: (path, start, end) => _openCode(thread, path, start, end),
         fileLinks: _fileLinks(thread, embedded: embedded),
+        followPlan: () => _windowInFront,
         onOpenTerminalTask: embedded
             ? (task) => _ide?.showTerminalTask(task.id)
             : (task) => _sidePanel.openTerminal(thread.session, task.id),
@@ -5877,10 +5892,17 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// Shows [thread] in the IDE (its project's window, with the IDE's
   /// windows), the tab of its chat there, then [open]s in its workspace.
+  /// Already in that IDE here, opens directly without switching windows or
+  /// stealing focus.
   void _inIdeOf(
     AgentThread thread,
     Future<Object?> Function(IdeWorkspace ide) open,
   ) {
+    if (_showsIde &&
+        (_ideFolder == thread.project.path || _ideFolder == _noFolder)) {
+      unawaited(open(_ideSpace(_ideFolder)));
+      return;
+    }
     if (_windows case final windows? when _multi) {
       unawaited(() async {
         final window = await windows.showFolder(

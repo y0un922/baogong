@@ -835,6 +835,28 @@ void main() {
       'path': pdf.path,
     }) as Map;
     expect(base64.decode(download['data'] as String), pdf.readAsBytesSync());
+    // In pieces, of any size: a stretch at a time from the disk.
+    final video = File('${folder.path}/clip.mp4')
+      ..writeAsBytesSync([
+        for (var i = 0; i < LinkLimits.download + 3; i++) i % 256,
+      ]);
+    final inPieces = await withBots.handle(LinkMethods.download, {
+      'bot': 'assistant',
+      'path': video.path,
+      'pieces': true,
+    }) as LinkPieces;
+    expect(inPieces.size, video.lengthSync());
+    final parts = await inPieces.bytes.toList();
+    expect(parts.every((p) => p.length <= LinkLimits.piece), isTrue);
+    expect([for (final p in parts) ...p], video.readAsBytesSync());
+    expect(
+      withBots.handle(LinkMethods.download, {
+        'bot': 'assistant',
+        'path': '${folder.path}/none.mp4',
+        'pieces': true,
+      }),
+      throwsA(isA<LinkRemoteException>()),
+    );
     expect(
       withBots.handle(LinkMethods.read, {'bot': 'nobody', 'path': pdf.path}),
       throwsA(
@@ -887,6 +909,64 @@ void main() {
     );
   });
 
+  test('a file from the phone in pieces: of any size', () async {
+    final workspace = Workspace();
+    addTearDown(workspace.dispose);
+    final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
+    await bots.start();
+    addTearDown(bots.dispose);
+    final (phone, desktop) = await peers();
+    final uploads = Directory.systemTemp.createTempSync('phone_uploads');
+    addTearDown(() => uploads.deleteSync(recursive: true));
+    final withBots = WorkspaceBridge(
+      workspace: workspace,
+      peer: desktop,
+      device: () => const DeviceInfo(name: 'PC', kind: 'pc', system: 'Win'),
+      bots: bots,
+      uploadsOf: (_, _) => '${uploads.path}/phone',
+    );
+    addTearDown(withBots.dispose);
+    desktop.onRequest = withBots.handle;
+    final bytes = Uint8List.fromList([
+      for (var i = 0; i < LinkLimits.upload + 5; i++) i % 253,
+    ]);
+    final answer = await phone.callWithPieces(
+      LinkMethods.uploadPieces,
+      {'bot': 'assistant', 'name': '录屏.mov'},
+      bytes.length,
+      Stream.fromIterable([
+        Uint8List.sublistView(bytes, 0, 1000),
+        Uint8List.sublistView(bytes, 1000),
+      ]),
+    ) as Map;
+    final path = answer['path'] as String;
+    expect(path, startsWith('${uploads.path}/phone/'));
+    expect(path, endsWith('/录屏.mov'));
+    expect(File(path).readAsBytesSync(), bytes);
+    // Cut short: nothing of it left.
+    final folders = uploads.listSync(recursive: true).whereType<File>().length;
+    Stream<Uint8List> half() async* {
+      yield Uint8List(10);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      throw const FileSystemException('gone');
+    }
+
+    await expectLater(
+      phone.callWithPieces(
+        LinkMethods.uploadPieces,
+        {'bot': 'assistant', 'name': 'half.bin'},
+        100,
+        half(),
+      ),
+      throwsA(anything),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(
+      uploads.listSync(recursive: true).whereType<File>(),
+      hasLength(folders),
+    );
+  });
+
   test('a file from the phone keeps its name, not its folders', () {
     expect(WorkspaceBridge.uploadName('../../etc/passwd'), 'passwd');
     expect(WorkspaceBridge.uploadName(r'C:\x\a:b?.txt'), 'a_b_.txt');
@@ -925,6 +1005,206 @@ void main() {
       ],
     });
   });
+
+  test(
+    'with acks, a stalled phone never accumulates stale updates and jumps '
+    'straight to the latest state once it acks',
+    () async {
+      // A fresh pair without a mirror so we control acks manually.
+      final (rawPhone, rawDesktop) = await peers();
+      final ackBridge = WorkspaceBridge(
+        workspace: workspace,
+        peer: rawDesktop,
+        device: () => const DeviceInfo(name: 'M', kind: 'mac', system: 'macOS'),
+        throttle: const Duration(milliseconds: 5),
+        acks: true,
+        maxInFlight: 1,
+      )..start();
+      addTearDown(() async {
+        ackBridge.dispose();
+        await rawPhone.close();
+        await rawDesktop.close();
+      });
+      final received = <Map<String, Object?>>[];
+      rawPhone.events
+          .where((e) => e.name == LinkEvents.session)
+          .listen((e) => received.add(e.data! as Map<String, Object?>));
+
+      final id = WorkspaceBridge.idOf(workspace.threads.first);
+      await ackBridge.handle(LinkMethods.open, {'session': id});
+
+      final session = workspace.threads.first.session;
+      session.send(const ComposerMessage(text: 'go'));
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      // First update went out (seq 1); without an ack, further chunks coalesce.
+      expect(received, hasLength(1));
+      expect(received.first['seq'], 1);
+
+      for (final chunk in ['one ', 'two ', 'three ', 'four']) {
+        cli.push({
+          'type': 'stream_event',
+          'event': {
+            'type': 'content_block_delta',
+            'index': 0,
+            'delta': {'type': 'text_delta', 'text': chunk},
+          },
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      cli.push({'type': 'result', 'is_error': false});
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+
+      // Still paused at 1 unacked frame — zero queue buildup!
+      expect(received, hasLength(1));
+
+      // Phone catches up and acks seq 1 -> desktop sends ONE update with the
+      // final finished state (live: false) instead of replaying every chunk.
+      await rawPhone.emit(LinkEvents.ack, {'session': id, 'seq': 1});
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(received, hasLength(2));
+      expect(received.last['seq'], 2);
+      expect(received.last['live'], isFalse);
+    },
+  );
+
+  test('streaming thinking items use append patches', () {
+    final slimmer = LinkSessionSlimmer();
+    final t0 = DateTime(2026, 11, 27, 10, 0);
+    final first = ChatCodec.encode(
+      ThinkingItem(text: 'step 1', tokens: 10, startedAt: t0),
+    );
+    final second = ChatCodec.encode(
+      ThinkingItem(text: 'step 1\nstep 2', tokens: 25, startedAt: t0),
+    );
+    final patch = jsonAppendPatch(first, second);
+    expect(patch?.$1, ['text']);
+    expect(patch?.$2, '\nstep 2');
+    final wire = slimmer.encode(
+      LinkSessionUpdate(
+        session: 's',
+        start: 0,
+        count: 1,
+        items: [second],
+        live: true,
+      ),
+      before: first,
+    );
+    expect(wire['append'], {
+      'index': 0,
+      'path': ['text'],
+      'text': '\nstep 2',
+    });
+  });
+
+  test(
+    'reopening with have snaps to the latest window when many items came since',
+    () async {
+      final id = WorkspaceBridge.idOf(workspace.threads.first);
+      final session = workspace.threads.first.session;
+      session.send(const ComposerMessage(text: 'm0'));
+      cli.push({'type': 'result', 'is_error': false});
+      await settle();
+      final first = LinkSessionUpdate.fromJson(
+        (await bridge.handle(LinkMethods.open, {'session': id, 'window': 2}))!
+            as Map<String, Object?>,
+      );
+      final have = [for (final item in first.items) linkDigest(item)];
+
+      // Add more turns than the window (2) so the gap exceeds window.
+      for (var i = 1; i <= 4; i++) {
+        session.send(ComposerMessage(text: 'm$i'));
+        cli.push({'type': 'result', 'is_error': false});
+        await settle();
+      }
+      final again = LinkSessionUpdate.fromJson(
+        (await bridge.handle(LinkMethods.open, {
+              'session': id,
+              'window': 2,
+              'have': have,
+            }))!
+            as Map<String, Object?>,
+      );
+      expect(again.start, 0);
+      expect(again.count, 2);
+      expect(again.items, hasLength(2));
+      expect(again.earlier, isTrue);
+    },
+  );
+
+  test(
+    'queued messages sync to the phone and can be moved, cancelled, or sent now',
+    () async {
+      final opened = await open();
+      expect(opened.queued, isEmpty);
+
+      // Start a turn, then send three messages with now: false so they queue
+      // (q1 is handed to the CLI, q2 & q3 are held in the kernel queue).
+      await bridge.handle(LinkMethods.send, {'session': id, 'text': 'turn 1'});
+      final r1 =
+          (await bridge.handle(LinkMethods.send, {
+                'session': id,
+                'text': 'queued 1',
+                'now': false,
+              }))!
+              as Map<String, Object?>;
+      final r2 =
+          (await bridge.handle(LinkMethods.send, {
+                'session': id,
+                'text': 'queued 2',
+                'now': false,
+              }))!
+              as Map<String, Object?>;
+      final r3 =
+          (await bridge.handle(LinkMethods.send, {
+                'session': id,
+                'text': 'queued 3',
+                'now': false,
+              }))!
+              as Map<String, Object?>;
+      final q1 = r1['turn'] as String;
+      final q2 = r2['turn'] as String;
+      final q3 = r3['turn'] as String;
+      await settle();
+
+      List<String> queuedTexts(LinkSessionUpdate u) => [
+        for (final entry in u.queued ?? const <Map<String, Object?>>[])
+          (ChatCodec.decode(entry['item']) as UserMessageItem).text,
+      ];
+      expect(queuedTexts(updates.last), ['queued 1', 'queued 2', 'queued 3']);
+
+      // Reorder q3 ahead of q2.
+      await bridge.handle(LinkMethods.moveQueued, {
+        'session': id,
+        'id': q3,
+        'index': 1,
+      });
+      await settle();
+      expect(queuedTexts(updates.last), ['queued 1', 'queued 3', 'queued 2']);
+
+      // Cancel q2 (held in queue, so it cancels immediately).
+      final cancelled =
+          (await bridge.handle(LinkMethods.cancelQueued, {
+                'session': id,
+                'id': q2,
+              }))!
+              as Map<String, Object?>;
+      expect(cancelled['cancelled'], isTrue);
+      await settle();
+      expect(queuedTexts(updates.last), ['queued 1', 'queued 3']);
+
+      // Send q1 now (interrupts turn 1).
+      await bridge.handle(LinkMethods.sendQueuedNow, {'session': id, 'id': q1});
+      await settle();
+      expect(
+        cli.written.any(
+          (m) =>
+              m['type'] == 'control_request' &&
+              (m['request'] as Map?)?['subtype'] == 'interrupt',
+        ),
+        isTrue,
+      );
+    },
+  );
 }
 
 /// A phone's end and a desktop's, connected.

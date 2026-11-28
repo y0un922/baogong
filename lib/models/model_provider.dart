@@ -18,6 +18,10 @@ enum ProviderProtocol {
   /// OpenAI's Responses API: through the local proxy, translated.
   openaiResponses('openai-responses'),
 
+  /// Google's Gemini API (`generateContent`), or a compatible upstream:
+  /// through the local proxy, translated.
+  gemini('gemini'),
+
   /// ChatGPT's Codex backend, signed in with ChatGPT accounts (OAuth), not
   /// a key: through the local proxy, as Responses.
   codex('codex'),
@@ -52,7 +56,7 @@ enum ProviderProtocol {
   /// Those a model may be spoken to at instead of its upstream's
   /// ([ProviderModel.protocol]): at the same base URL and key, so not
   /// Codex's, signed in to.
-  static const forModels = [anthropic, openaiChat, openaiResponses];
+  static const forModels = [anthropic, openaiChat, openaiResponses, gemini];
 
   static ProviderProtocol parse(Object? id) =>
       values.where((value) => value.id == id).firstOrNull ?? anthropic;
@@ -637,6 +641,7 @@ class ModelProvider {
     this.auth = ProviderAuth.auto,
     this.enabled = true,
     this.models = const [],
+    this.modelsOrdered = false,
     this.roles = const ProviderRoles(),
     this.disableNonessentialTraffic = false,
     this.preserveThinking = false,
@@ -675,6 +680,10 @@ class ModelProvider {
   /// Offered in the picker.
   final bool enabled;
   final List<ProviderModel> models;
+
+  /// Whether the user has put [models] in an order of their own (dragged
+  /// in Settings → Models): listed so, not by name ([sortedModels]).
+  final bool modelsOrdered;
   final ProviderRoles roles;
 
   /// `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`: no telemetry, update
@@ -756,12 +765,15 @@ class ModelProvider {
   ProviderAccount? account(String id) =>
       accounts.where((account) => account.id == id).firstOrNull;
 
-  /// [models] by name ([compareModelNames]): as they are listed.
+  /// [models] as they are listed: in the user's order ([modelsOrdered]),
+  /// else by name ([compareModelNames]).
   List<ProviderModel> get sortedModels => _sorted[this] ??= List.unmodifiable(
-    [...models]..sort((a, b) {
-      final byName = compareModelNames(a.displayName, b.displayName);
-      return byName != 0 ? byName : a.id.compareTo(b.id);
-    }),
+    modelsOrdered
+        ? models
+        : ([...models]..sort((a, b) {
+            final byName = compareModelNames(a.displayName, b.displayName);
+            return byName != 0 ? byName : a.id.compareTo(b.id);
+          })),
   );
 
   /// The conversation models offered in the picker.
@@ -911,6 +923,7 @@ class ModelProvider {
     ProviderAuth? auth,
     bool? enabled,
     List<ProviderModel>? models,
+    bool? modelsOrdered,
     ProviderRoles? roles,
     bool? disableNonessentialTraffic,
     bool? preserveThinking,
@@ -932,6 +945,7 @@ class ModelProvider {
     auth: auth ?? this.auth,
     enabled: enabled ?? this.enabled,
     models: models ?? this.models,
+    modelsOrdered: modelsOrdered ?? this.modelsOrdered,
     roles: roles ?? this.roles,
     disableNonessentialTraffic:
         disableNonessentialTraffic ?? this.disableNonessentialTraffic,
@@ -977,6 +991,7 @@ class ModelProvider {
     if (auth != ProviderAuth.auto) 'auth': auth.id,
     if (!enabled) 'enabled': false,
     'models': [for (final model in models) model.toJson()],
+    if (modelsOrdered) 'modelsOrdered': true,
     if (roles.toJson() case final roles when roles.isNotEmpty) 'roles': roles,
     if (disableNonessentialTraffic) 'disableNonessentialTraffic': true,
     if (preserveThinking) 'preserveThinking': true,
@@ -1012,6 +1027,7 @@ class ModelProvider {
         for (final model in json['models'] as List? ?? const [])
           ?ProviderModel.fromJson(model),
       ],
+      modelsOrdered: json['modelsOrdered'] == true,
       roles: ProviderRoles.fromJson(json['roles']),
       disableNonessentialTraffic: json['disableNonessentialTraffic'] == true,
       preserveThinking: json['preserveThinking'] == true,
@@ -1055,12 +1071,13 @@ class ModelProvider {
     ?endpointUrl,
     auth.id,
     roles.toJson().toString(),
-    [
+    // Not their order: a model dragged elsewhere starts nothing anew.
+    ([
       for (final model in models) ...[
         if (model.protocol case final protocol?) '${model.id}=${protocol.id}',
         if (model.endpointUrl case final url?) '${model.id}@$url',
       ],
-    ].join(','),
+    ]..sort()).join(','),
     disableNonessentialTraffic,
     preserveThinking,
     env.toString(),
@@ -1099,6 +1116,7 @@ bool isHeaderName(String name) =>
 const reservedHeaderNames = {
   'authorization',
   'x-api-key',
+  'x-goog-api-key',
   'proxy-authorization',
   'cookie',
   'set-cookie',

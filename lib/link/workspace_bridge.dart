@@ -89,6 +89,8 @@ class WorkspaceBridge {
     this.quota,
     this.throttle = const Duration(milliseconds: 150),
     this.outputEvery = const Duration(milliseconds: 500),
+    this.acks = false,
+    this.maxInFlight = 2,
   });
 
   final Workspace workspace;
@@ -135,6 +137,14 @@ class WorkspaceBridge {
   /// How often a watched task's output is looked at.
   final Duration outputEvery;
 
+  /// Whether the phone acknowledges [LinkEvents.session] updates
+  /// ([LinkEvents.ack]), letting the desktop cap in-flight updates.
+  final bool acks;
+
+  /// Unacknowledged session updates allowed in flight per followed session
+  /// when [acks] is enabled.
+  final int maxInFlight;
+
   /// How many agents the phone gets listed, the most recent first.
   static const maxSessions = 300;
 
@@ -145,8 +155,11 @@ class WorkspaceBridge {
 
   /// Task outputs the phone watches, by session and task.
   final Map<String, OutputWatch> _watches = {};
+  StreamSubscription<LinkEvent>? _events;
   Timer? _stateTimer;
   String? _stateSent;
+  bool _stateSending = false;
+  bool _stateDirty = false;
   bool _disposed = false;
 
   /// Starts telling the phone of changes; what it asks goes to [handle].
@@ -154,7 +167,15 @@ class WorkspaceBridge {
     workspace.addListener(_stateChanged);
     bots?.addListener(_stateChanged);
     bots?.groups.addListener(_groupsChanged);
+    _events = peer.events.listen(_event);
     unawaited(peer.done.then((_) => dispose()));
+  }
+
+  void _event(LinkEvent event) {
+    if (_disposed || event.name != LinkEvents.ack) return;
+    if (event.data case {'session': final String id, 'seq': final int seq}) {
+      _follows[id]?.ack(seq);
+    }
   }
 
   void dispose() {
@@ -163,6 +184,8 @@ class WorkspaceBridge {
     workspace.removeListener(_stateChanged);
     bots?.removeListener(_stateChanged);
     bots?.groups.removeListener(_groupsChanged);
+    unawaited(_events?.cancel());
+    _events = null;
     _stateTimer?.cancel();
     for (final follow in _follows.values) {
       follow.dispose();
@@ -447,16 +470,32 @@ class WorkspaceBridge {
   void _stateChanged() {
     if (_disposed) return;
     _refollow();
+    if (_stateSending) {
+      _stateDirty = true;
+      return;
+    }
     if (_stateTimer != null) return;
-    _stateTimer = Timer(throttle, () {
-      _stateTimer = null;
-      if (_disposed) return;
-      final json = state().toJson();
-      final text = jsonEncode(json);
-      if (text == _stateSent) return;
-      _stateSent = text;
-      peer.emit(LinkEvents.state, json);
-    });
+    _stateTimer = Timer(throttle, _sendState);
+  }
+
+  void _sendState() {
+    _stateTimer = null;
+    if (_disposed || _stateSending) return;
+    final json = state().toJson();
+    final text = jsonEncode(json);
+    if (text == _stateSent) return;
+    _stateSent = text;
+    _stateSending = true;
+    _stateDirty = false;
+    unawaited(
+      peer.emit(LinkEvents.state, json).whenComplete(() {
+        _stateSending = false;
+        if (_stateDirty && !_disposed) {
+          _stateDirty = false;
+          _stateChanged();
+        }
+      }),
+    );
   }
 
   /// Follows anew the agents whose conversation was opened again (see
@@ -519,13 +558,13 @@ class WorkspaceBridge {
     if (!session.canSend) {
       throw const LinkRemoteException('busy', 'The agent is at work');
     }
-    session.send(
+    final turnId = session.send(
       _message(thread, params, images),
       now: params['now'] == true,
       from: _from(thread),
       notes: notes,
     );
-    return {'session': idOf(thread)};
+    return {'session': idOf(thread), 'turn': ?turnId};
   }
 
   Future<Object?> handle(String method, Map<String, Object?> params) async {
@@ -550,6 +589,8 @@ class WorkspaceBridge {
           pathOf: (full) => _phonePath(thread.project, full),
           sessionOf: _phoneSession,
           quota: quota,
+          acks: acks,
+          maxInFlight: maxInFlight,
         );
         return follow.start(
           have: [
@@ -619,6 +660,30 @@ class WorkspaceBridge {
         };
       case LinkMethods.stop:
         _thread(params['session']).session.stop();
+        return null;
+      case LinkMethods.cancelQueued:
+        final session = _thread(params['session']).session;
+        final id = params['id'];
+        if (id is! String) {
+          throw const LinkRemoteException('bad', 'No queued message id');
+        }
+        return {'cancelled': await session.cancelQueued(id)};
+      case LinkMethods.sendQueuedNow:
+        final session = _thread(params['session']).session;
+        final id = params['id'];
+        if (id is! String) {
+          throw const LinkRemoteException('bad', 'No queued message id');
+        }
+        session.sendQueuedNow(id);
+        return null;
+      case LinkMethods.moveQueued:
+        final session = _thread(params['session']).session;
+        final id = params['id'];
+        final index = params['index'];
+        if (id is! String || index is! int) {
+          throw const LinkRemoteException('bad', 'Bad queued move');
+        }
+        session.moveQueued(id, index);
         return null;
       case LinkMethods.answer:
         final session = _thread(params['session']).session;
@@ -774,9 +839,12 @@ class WorkspaceBridge {
         return _download(
           _filesProject(params),
           params['path'] as String? ?? '',
+          pieces: params['pieces'] == true,
         );
       case LinkMethods.upload:
         return _upload(_filesProject(params), params);
+      case LinkMethods.uploadPieces:
+        return _uploadPieces(_filesProject(params), params);
       case LinkMethods.extensions:
         return {
           'items': [for (final item in await _extensions()) item.toJson()],
@@ -1040,11 +1108,25 @@ class WorkspaceBridge {
   }
 
   /// A file of [project], or any of its machine, as it is: for the phone
-  /// to open in an app of its own.
-  Future<Map<String, Object?>> _download(Project project, String path) async {
+  /// to open in an app of its own. In [pieces], of any size; else whole,
+  /// for a phone before them.
+  Future<Object?> _download(
+    Project project,
+    String path, {
+    bool pieces = false,
+  }) async {
     await _reach(project);
     final (:files, paths: _) = _filesOf(project);
     for (final full in _candidates(project, path)) {
+      if (pieces) {
+        final ({int size, Stream<Uint8List> bytes}) read;
+        try {
+          read = await readPiecesThrough(files, full, length: LinkLimits.piece);
+        } on Object {
+          continue; // Not there: the next place it may be.
+        }
+        return LinkPieces(read.size, read.bytes);
+      }
       final Uint8List bytes;
       try {
         bytes = await readBytesThrough(files, full);
@@ -1075,6 +1157,31 @@ class WorkspaceBridge {
     if (bytes.length > LinkLimits.upload) {
       return {'tooLarge': true, 'size': bytes.length};
     }
+    final (:files, :path) = await _uploadPath(project, params['name']);
+    await files.writeBytes(path, bytes);
+    return {'path': path};
+  }
+
+  /// [_upload], the file's bytes in pieces after the request
+  /// ([LinkMethods.uploadPieces]): of any size, written as they come.
+  Future<Map<String, Object?>> _uploadPieces(
+    Project project,
+    Map<String, Object?> params,
+  ) async {
+    final pieces =
+        LinkPeer.piecesOf(params) ??
+        (throw const LinkRemoteException('bad', 'No pieces'));
+    final (:files, :path) = await _uploadPath(project, params['name']);
+    await writePiecesThrough(files, path, pieces.bytes);
+    return {'path': path};
+  }
+
+  /// Where a file the phone sends, [name], goes for [project]'s agent
+  /// ([uploadsOf]): in a folder of its own, so that it keeps its name.
+  Future<({IdeFileService files, String path})> _uploadPath(
+    Project project,
+    Object? name,
+  ) async {
     await _reach(project);
     final (:files, :paths) = _filesOf(project);
     final folder = uploadsOf(project, files);
@@ -1092,9 +1199,7 @@ class WorkspaceBridge {
         // Made before.
       }
     }
-    final path = paths.join(into, uploadName(params['name']));
-    await files.writeBytes(path, bytes);
-    return {'path': path};
+    return (files: files, path: paths.join(into, uploadName(name)));
   }
 
   /// [name], the phone's for a file it sends, as one to keep it by on any
@@ -1467,12 +1572,16 @@ class _Follow {
     required this.sessionOf,
     this.window,
     this.quota,
+    this.acks = false,
+    this.maxInFlight = 2,
   });
 
   final String id;
   final ChatSession session;
   final LinkPeer peer;
   final Duration throttle;
+  final bool acks;
+  final int maxInFlight;
 
   /// The same following, of [session] (its conversation read anew).
   _Follow over(ChatSession session) => _Follow(
@@ -1484,6 +1593,8 @@ class _Follow {
     sessionOf: sessionOf,
     window: window,
     quota: quota,
+    acks: acks,
+    maxInFlight: maxInFlight,
   );
 
   /// How many of the last items the phone follows at first, if it pages
@@ -1525,7 +1636,14 @@ class _Follow {
   List<String> _sentJson = const [];
   String? _restSent;
   Timer? _timer;
+  int _seq = 0;
+  int _acked = 0;
+  bool _sending = false;
+  bool _dirty = false;
+  DateTime? _lastSent;
   bool _disposed = false;
+
+  bool get _paused => _sending || (acks && _seq - _acked >= maxInFlight);
 
   /// Slims what follows the first update against what was sent (see
   /// [LinkSessionWire]).
@@ -1570,9 +1688,14 @@ class _Follow {
   ({int from, int same})? _had(List<String> have) {
     if (have.isEmpty) return null;
     final total = session.itemCount;
-    // Looked for among the last items: as many as the phone has and as
-    // came since, and a window more.
-    final lowest = math.max(0, total - have.length - (window ?? 0) - 200);
+    final cap = window;
+    // With a window, only reuse `have` when the new items since what the
+    // phone had fit within one window; a bigger gap snaps to the latest
+    // window instead of sending hundreds of stale items at once.
+    final lowest = math.max(
+      0,
+      cap != null ? total - have.length - cap : total - have.length - 200,
+    );
     final digests = <int, String>{};
     String digestAt(int i) =>
         digests[i] ??= linkDigest(_encode(session.itemAt(i)));
@@ -1588,22 +1711,74 @@ class _Follow {
       if (best == null || same > best.same) best = (from: from, same: same);
       if (same == have.length) break;
     }
+    if (best != null && cap != null && total - (best.from + best.same) > cap) {
+      return null;
+    }
     return best;
   }
 
   void _changed() {
-    if (_disposed || _timer != null) return;
-    _timer = Timer(throttle, () {
-      _timer = null;
-      if (_disposed) return;
-      final update = _update();
-      if (update == null) return;
-      final full = update.start == 0 && _wasFull;
-      peer.emit(
-        LinkEvents.session,
-        _slimmer.encode(update, full: full, before: full ? null : _before),
-      );
-    });
+    if (_disposed) return;
+    if (_paused) {
+      _dirty = true;
+      return;
+    }
+    if (_timer != null) return;
+    _schedule();
+  }
+
+  void _schedule() {
+    if (_disposed || _paused || _timer != null) return;
+    final remaining = switch (_lastSent) {
+      final at? => throttle - DateTime.now().difference(at),
+      null => throttle,
+    };
+    _timer = Timer(
+      remaining > Duration.zero ? remaining : Duration.zero,
+      _flush,
+    );
+  }
+
+  void _flush() {
+    _timer = null;
+    if (_disposed) return;
+    if (_paused) {
+      _dirty = true;
+      return;
+    }
+    final update = _update();
+    if (update == null) {
+      _dirty = false;
+      return;
+    }
+    final full = update.start == 0 && _wasFull;
+    final wire = _slimmer.encode(
+      update,
+      full: full,
+      before: full ? null : _before,
+    );
+    if (acks) wire['seq'] = ++_seq;
+    _sending = true;
+    _dirty = false;
+    _lastSent = DateTime.now();
+    unawaited(
+      peer.emit(LinkEvents.session, wire).whenComplete(() {
+        _sending = false;
+        if (_dirty && !_disposed && !_paused) {
+          _dirty = false;
+          _schedule();
+        }
+      }),
+    );
+  }
+
+  void ack(int seq) {
+    if (_disposed || seq <= _acked || seq > _seq) return;
+    _acked = seq;
+    if (_dirty && !_paused) {
+      _dirty = false;
+      _schedule();
+    }
   }
 
   /// The last [_update] was a whole one (rewound before the window).
@@ -1647,6 +1822,12 @@ class _Follow {
     final goal = _goal(session.goal);
     final context = _context(session.context);
     final quota = this.quota?.of(session);
+    final queued = session.canQueue
+        ? [
+            for (final (id, item) in session.queued)
+              {'id': id, 'item': _encode(item)},
+          ]
+        : null;
     final restText = jsonEncode([
       earlier,
       goal,
@@ -1657,6 +1838,7 @@ class _Follow {
       changes,
       [for (final task in tasks) task.toJson()],
       quota,
+      queued,
     ]);
     if (!full &&
         start == count &&
@@ -1691,6 +1873,7 @@ class _Follow {
       goal: goal,
       context: context,
       quota: quota,
+      queued: queued,
     );
   }
 
